@@ -4,6 +4,16 @@
     { "src": "app/package.json", "use": "@vercel/next" }
   ],
   "routes": [
-    { "src": "/(.*)", "dest": "/app/$1" }
+    { "src": "^/api/topics/reorder/?$", "dest": "/app/api/topics/reorder" },
+    { "src": "^/api/topics/process/?$", "dest": "/app/api/topics/process" },
+    { "src": "^/api/topics/([^/]+)/approve/?$", "dest": "/app/api/topics/[id]/approve?id=$1" },
+    { "src": "^/api/topics/([^/]+)/?$", "dest": "/app/api/topics/[id]?id=$1" },
+    { "src": "^/api/articles/([^/]+)/media/?$", "dest": "/app/api/articles/[id]/media?id=$1" },
+    { "src": "^/api/articles/([^/]+)/item-media/?$", "dest": "/app/api/articles/[id]/item-media?id=$1" },
+    { "src": "^/api/articles/([^/]+)/publish/?$", "dest": "/app/api/articles/[id]/publish?id=$1" },
+    { "src": "^/api/articles/([^/]+)/?$", "dest": "/app/api/articles/[id]?id=$1" },
+    { "src": "^/api/prompts/([^/]+)/activate/?$", "dest": "/app/api/prompts/[id]/activate?id=$1" },
+    { "src": "^/artikel/([^/]+)/?$", "dest": "/app/artikel/[id]?id=$1" },
+    { "src": "/(.*)", "dest": "/app/$1", "check": true }
   ]
 }
