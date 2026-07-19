@@ -70,7 +70,7 @@ export function articlePhase(a: Article): ArticlePhase {
 
 export interface PromptVersion {
   id: number;
-  kind: 'schrijf' | 'seo';
+  kind: 'research' | 'schrijf' | 'seo';
   version: number;
   content: string;
   note: string;

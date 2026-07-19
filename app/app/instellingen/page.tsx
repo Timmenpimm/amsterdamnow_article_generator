@@ -5,13 +5,16 @@ import TopBar from '@/components/TopBar';
 import { toast } from '@/components/toast';
 import type { PromptVersion } from '@/lib/types';
 
-const VARS: Record<'schrijf' | 'seo', string[]> = {
+type PromptKind = 'research' | 'schrijf' | 'seo';
+
+const VARS: Record<PromptKind, string[]> = {
+  research: ['{{onderwerp}}', '{{tavily_bronnen}}', '{{categorieën}}', '{{districten}}'],
   schrijf: ['{{onderwerp}}', '{{research}}', '{{categorieën}}', '{{districten}}'],
   seo: ['{{post_title}}', '{{post_content}}', '{{category}}', '{{district}}'],
 };
 
 export default function Instellingen() {
-  const [kind, setKind] = useState<'schrijf' | 'seo'>('schrijf');
+  const [kind, setKind] = useState<PromptKind>('research');
   const [versions, setVersions] = useState<PromptVersion[]>([]);
   const [content, setContent] = useState('');
   const [viewing, setViewing] = useState<PromptVersion | null>(null);
@@ -20,7 +23,7 @@ export default function Instellingen() {
   const active = versions.find(v => v.active === 1);
   const dirty = !viewing && active && content !== active.content;
 
-  const load = useCallback(async (k: 'schrijf' | 'seo') => {
+  const load = useCallback(async (k: PromptKind) => {
     const res = await fetch(`/api/prompts?kind=${k}`);
     const data = await res.json();
     setVersions(data.versions);
@@ -62,6 +65,16 @@ export default function Instellingen() {
         {/* editor */}
         <div style={{ flex: 1, minWidth: 0, padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14, background: 'var(--card)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button
+              onClick={() => setKind('research')}
+              style={{
+                fontSize: 13, fontWeight: kind === 'research' ? 700 : 600, padding: '7px 14px', borderRadius: 999,
+                background: kind === 'research' ? 'var(--ink)' : 'transparent', color: kind === 'research' ? '#fff' : 'var(--gray)',
+                border: kind === 'research' ? 'none' : '1px solid var(--border)',
+              }}
+            >
+              Research-prompt
+            </button>
             <button
               onClick={() => setKind('schrijf')}
               style={{
@@ -200,9 +213,11 @@ export default function Instellingen() {
             <span style={{ fontWeight: 800 }}>Let op:</span> de prompt geldt voor élk volgend artikel. Check na een wijziging het eerstvolgende draft-artikel extra goed.
           </div>
           <div style={{ fontSize: 12, color: 'var(--gray)', lineHeight: 1.5 }}>
-            {kind === 'schrijf'
-              ? 'De SEO-prompt (RankMath-titel, meta description, focus keyword, slug) staat in het tweede tabblad en werkt op dezelfde manier.'
-              : 'De schrijf-prompt (titel, subregel, intro, artikeltekst, quote) staat in het eerste tabblad en werkt op dezelfde manier.'}
+            {kind === 'research'
+              ? 'De research-prompt zet Tavily-bronnen om naar controleerbare feiten en WordPress-metadata.'
+              : kind === 'schrijf'
+                ? 'De SEO-prompt (RankMath-titel, meta description, focus keyword, slug) staat in het derde tabblad en werkt op dezelfde manier.'
+                : 'De schrijf-prompt (titel, subregel, intro, artikeltekst, quote) staat in het tweede tabblad en werkt op dezelfde manier.'}
           </div>
         </div>
       </div>

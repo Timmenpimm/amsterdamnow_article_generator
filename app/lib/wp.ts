@@ -43,6 +43,36 @@ async function loadTaxonomies() {
   districtCache = Object.fromEntries(districts.map((d: any) => [d.id, d.name]));
 }
 
+export async function taxonomyChoices(): Promise<{ categories: string[]; districts: string[] }> {
+  if (!LIVE) return { categories: ['Cultuur', 'Uitgaan', 'Restaurants', 'Lifestyle'], districts: ['Amsterdam Centrum', 'Amsterdam Noord', 'Amsterdam Oost', 'Amsterdam Zuid'] };
+  await loadTaxonomies();
+  return { categories: Object.values(catCache || {}), districts: Object.values(districtCache || {}) };
+}
+
+function normalized(value: string) {
+  return value.toLocaleLowerCase('nl-NL').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+}
+
+function idForName(items: Record<number, string>, name: string, type: string): number {
+  const id = Object.entries(items).find(([, value]) => normalized(value) === normalized(name))?.[0];
+  if (!id) throw new Error(`${type} “${name}” bestaat niet in WordPress.`);
+  return Number(id);
+}
+
+async function tagIdsForNames(names: string[]): Promise<number[]> {
+  const ids: number[] = [];
+  for (const name of [...new Set(names.map(n => n.trim()).filter(Boolean))]) {
+    const existing = await wpFetch(`/wp/v2/tags?search=${encodeURIComponent(name)}&per_page=100`);
+    const match = existing.find((tag: any) => normalized(tag.name) === normalized(name));
+    if (match) ids.push(match.id);
+    else {
+      const created = await wpFetch('/wp/v2/tags', { method: 'POST', body: JSON.stringify({ name }) });
+      ids.push(created.id);
+    }
+  }
+  return ids;
+}
+
 async function tagNames(ids: number[]): Promise<string[]> {
   const missing = ids.filter(id => !(id in tagCache));
   if (missing.length) {
@@ -201,6 +231,14 @@ export interface GeneratedDraft {
   slug: string;
   seoTitle: string;
   metaDescription: string;
+  categories: string[];
+  district: string;
+  tags: string[];
+  rubriek: string;
+  naamLocatie: string;
+  adres: string;
+  stad: string;
+  website: string;
 }
 
 export async function createDraft(draft: GeneratedDraft): Promise<Article> {
@@ -217,8 +255,8 @@ export async function createDraft(draft: GeneratedDraft): Promise<Article> {
       link: `https://www.amsterdamnow.com/?p=${id}`,
       modified: new Date().toISOString(),
       date: new Date().toISOString(),
-      category: '', district: '', rubriek: '', featured: null, slider: [], fotograaf: '',
-      naam_locatie: '', adres: '', stad: 'Amsterdam', website: '', cordA: '', cordB: '', tags: [],
+      category: draft.categories.join(', '), district: draft.district, rubriek: draft.rubriek, featured: null, slider: [], fotograaf: '',
+      naam_locatie: draft.naamLocatie, adres: draft.adres, stad: draft.stad, website: draft.website, cordA: '', cordB: '', tags: draft.tags,
       focusKeyword: draft.focusKeyword, slug: draft.slug, seoTitle: draft.seoTitle,
       metaDescription: draft.metaDescription,
       flags: { new_in_town: false, featured_item: false, beste_van_amsterdam: false, homepage_carousel: false },
@@ -227,6 +265,10 @@ export async function createDraft(draft: GeneratedDraft): Promise<Article> {
     return article;
   }
 
+  await loadTaxonomies();
+  const categoryIds = draft.categories.map(name => idForName(catCache || {}, name, 'Categorie'));
+  const districtId = idForName(districtCache || {}, draft.district, 'District');
+  const tagIds = await tagIdsForNames(draft.tags);
   const post = await wpFetch('/wp/v2/posts', {
     method: 'POST',
     body: JSON.stringify({
@@ -235,6 +277,9 @@ export async function createDraft(draft: GeneratedDraft): Promise<Article> {
       content: draft.contentHtml,
       excerpt: draft.intro,
       slug: draft.slug,
+      categories: categoryIds,
+      tags: tagIds,
+      district: [districtId],
       meta: {
         rank_math_focus_keyword: draft.focusKeyword,
         rank_math_title: draft.seoTitle,
@@ -244,6 +289,11 @@ export async function createDraft(draft: GeneratedDraft): Promise<Article> {
         subregel: draft.subregel,
         introductie_tekst: draft.intro,
         quote: draft.quote,
+        rubriek: draft.rubriek,
+        naam_locatie: draft.naamLocatie,
+        adres: draft.adres,
+        stad: draft.stad,
+        website: draft.website,
       },
     }),
   });

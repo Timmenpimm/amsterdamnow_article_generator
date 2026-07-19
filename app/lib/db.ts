@@ -138,16 +138,17 @@ async function getDb(): Promise<DB> {
 }
 
 async function seedPrompts(db: DB) {
-  const row = await db.get('SELECT COUNT(*) AS c FROM prompts');
-  if (Number(row.c) > 0) return;
-  await db.run(
-    `INSERT INTO prompts (kind, version, content, note, author, created_at, active) VALUES ($1, 1, $2, $3, 'import', $4, 1)`,
-    ['schrijf', readSeed('schrijfprompt.txt'), 'Oorspronkelijke schrijf-prompt voor Claude.', now()]
-  );
-  await db.run(
-    `INSERT INTO prompts (kind, version, content, note, author, created_at, active) VALUES ($1, 1, $2, $3, 'import', $4, 1)`,
-    ['seo', readSeed('seoprompt.txt'), 'Oorspronkelijke SEO-prompt voor Claude.', now()]
-  );
+  for (const [kind, file, note] of [
+    ['research', 'researchprompt.txt', 'Tavily-researchprompt voor Claude.'],
+    ['schrijf', 'schrijfprompt.txt', 'Oorspronkelijke schrijf-prompt voor Claude.'],
+    ['seo', 'seoprompt.txt', 'Oorspronkelijke SEO-prompt voor Claude.'],
+  ]) {
+    const row = await db.get('SELECT COUNT(*) AS c FROM prompts WHERE kind = $1', [kind]);
+    if (Number(row.c) === 0) await db.run(
+      `INSERT INTO prompts (kind, version, content, note, author, created_at, active) VALUES ($1, 1, $2, $3, 'import', $4, 1)`,
+      [kind, readSeed(file), note, now()]
+    );
+  }
 }
 
 // ---------- topics ----------
@@ -230,19 +231,19 @@ export async function failTopic(id: number, error: string, step: string) {
 
 // ---------- prompts ----------
 
-export async function listPrompts(kind: 'schrijf' | 'seo'): Promise<PromptVersion[]> {
+export async function listPrompts(kind: 'research' | 'schrijf' | 'seo'): Promise<PromptVersion[]> {
   const db = await getDb();
   return db.all('SELECT * FROM prompts WHERE kind = $1 ORDER BY version DESC', [kind]);
 }
 
-export async function activePrompt(kind: 'schrijf' | 'seo'): Promise<PromptVersion> {
+export async function activePrompt(kind: 'research' | 'schrijf' | 'seo'): Promise<PromptVersion> {
   const db = await getDb();
   const prompt = await db.get('SELECT * FROM prompts WHERE kind = $1 AND active = 1', [kind]);
   if (!prompt) throw new Error(`Geen actieve ${kind}-prompt gevonden`);
   return prompt as PromptVersion;
 }
 
-export async function savePromptVersion(kind: 'schrijf' | 'seo', content: string, note: string): Promise<PromptVersion> {
+export async function savePromptVersion(kind: 'research' | 'schrijf' | 'seo', content: string, note: string): Promise<PromptVersion> {
   const db = await getDb();
   const max = await db.get('SELECT COALESCE(MAX(version), 0) AS m FROM prompts WHERE kind = $1', [kind]);
   await db.run('UPDATE prompts SET active = 0 WHERE kind = $1', [kind]);
