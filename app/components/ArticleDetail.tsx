@@ -3,37 +3,47 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Article, BoardData, MediaRef } from '@/lib/types';
-import { articlePhase, imageCount, REQUIRED_IMAGES } from '@/lib/types';
+import type { Article, BoardData, ListArticleStructure, MediaRef } from '@/lib/types';
+import { imageCount, REQUIRED_IMAGES } from '@/lib/types';
 import { toast } from './toast';
 
 function allMedia(a: Article): MediaRef[] {
   return [...(a.featured ? [a.featured] : []), ...a.slider];
 }
 
+type UploadTarget = 'featured' | 'slider' | number; // number = item-index van een lijstartikel
+
 export default function ArticleDetail({ id }: { id: number }) {
   const router = useRouter();
   const [article, setArticle] = useState<Article | null>(null);
+  const [list, setList] = useState<ListArticleStructure | null>(null);
   const [worklist, setWorklist] = useState<Article[]>([]);
+  const [worklistCounts, setWorklistCounts] = useState<Record<number, number>>({});
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [dragOver, setDragOver] = useState<'featured' | 'slider' | null>(null);
+  const [dragOver, setDragOver] = useState<UploadTarget | null>(null);
   const [fotograaf, setFotograaf] = useState('');
   const fileInput = useRef<HTMLInputElement>(null);
-  const uploadRole = useRef<'featured' | 'slider'>('slider');
+  const uploadRole = useRef<UploadTarget>('slider');
 
   const load = useCallback(async () => {
     try {
       const [aRes, bRes] = await Promise.all([fetch(`/api/articles/${id}`), fetch('/api/board')]);
       if (!aRes.ok) throw new Error((await aRes.json()).error || 'Artikel niet gevonden');
-      const a = (await aRes.json()).article as Article;
+      const payload = await aRes.json();
+      const a = payload.article as Article;
       setArticle(a);
+      setList((payload.list as ListArticleStructure) || null);
       setFotograaf(a.fotograaf);
       const board = (await bRes.json()) as BoardData;
+      const counts: Record<number, number> = {};
+      const countOf = (x: Article) => imageCount(x) + (board.lists?.[x.id]?.withMedia || 0);
       const drafts = board.articles.filter(x => x.status === 'draft');
+      for (const d of drafts) counts[d.id] = countOf(d);
+      setWorklistCounts(counts);
       setWorklist([
-        ...drafts.filter(x => articlePhase(x) === 'needImages'),
-        ...drafts.filter(x => articlePhase(x) === 'ready'),
+        ...drafts.filter(x => countOf(x) < REQUIRED_IMAGES),
+        ...drafts.filter(x => countOf(x) >= REQUIRED_IMAGES),
       ]);
       setError('');
     } catch (e: any) {
@@ -82,10 +92,23 @@ export default function ArticleDetail({ id }: { id: number }) {
     }
   }
 
-  async function uploadFiles(files: FileList | File[], role: 'featured' | 'slider') {
+  async function uploadFiles(files: FileList | File[], role: UploadTarget) {
     if (!article || !files.length) return;
     setBusy(true);
     try {
+      if (typeof role === 'number') {
+        // Itemfoto van een lijstartikel: één foto per item; de content wordt
+        // server-side opnieuw geassembleerd met de foto op de juiste plek.
+        const form = new FormData();
+        form.append('files', await shrinkImage(Array.from(files)[0]));
+        const res = await fetch(`/api/articles/${article.id}/item-media?item=${role}`, { method: 'POST', body: form });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+        setArticle(data.article);
+        setList(data.list);
+        toast(`Foto gezet bij "${data.list?.items?.[role]?.naam || 'item'}"`);
+        return;
+      }
       const form = new FormData();
       for (const f of Array.from(files)) form.append('files', await shrinkImage(f));
       const res = await fetch(`/api/articles/${article.id}/media?role=${role}`, { method: 'POST', body: form });
@@ -100,13 +123,16 @@ export default function ArticleDetail({ id }: { id: number }) {
     }
   }
 
-  async function uploadUrl(role: 'featured' | 'slider') {
+  async function uploadUrl(role: UploadTarget) {
     if (!article) return;
     const url = prompt('Plak de URL van de afbeelding:');
     if (!url?.trim()) return;
     setBusy(true);
     try {
-      const res = await fetch(`/api/articles/${article.id}/media?role=${role}`, {
+      const endpoint = typeof role === 'number'
+        ? `/api/articles/${article.id}/item-media?item=${role}`
+        : `/api/articles/${article.id}/media?role=${role}`;
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: url.trim() }),
@@ -114,6 +140,7 @@ export default function ArticleDetail({ id }: { id: number }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       setArticle(data.article);
+      if (data.list) setList(data.list);
       toast('Beeld toegevoegd vanaf URL');
     } catch (e: any) {
       toast(e.message, { kind: 'error' });
@@ -122,7 +149,27 @@ export default function ArticleDetail({ id }: { id: number }) {
     }
   }
 
-  function pickFiles(role: 'featured' | 'slider') {
+  async function removeItemMedia(index: number) {
+    if (!article) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/articles/${article.id}/item-media?item=${index}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ remove: true }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setArticle(data.article);
+      setList(data.list);
+    } catch (e: any) {
+      toast(e.message, { kind: 'error' });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function pickFiles(role: UploadTarget) {
     uploadRole.current = role;
     fileInput.current?.click();
   }
@@ -158,13 +205,13 @@ export default function ArticleDetail({ id }: { id: number }) {
     return <div style={{ padding: 40, color: 'var(--gray)', fontSize: 13 }}>Laden…</div>;
   }
 
-  const count = imageCount(article);
+  const count = imageCount(article, list);
   const complete = count >= REQUIRED_IMAGES;
   const idx = worklist.findIndex(a => a.id === article.id);
   const prev = idx > 0 ? worklist[idx - 1] : null;
   const next = idx >= 0 && idx < worklist.length - 1 ? worklist[idx + 1] : null;
-  const needList = worklist.filter(a => articlePhase(a) === 'needImages');
-  const readyList = worklist.filter(a => articlePhase(a) === 'ready');
+  const needList = worklist.filter(a => (worklistCounts[a.id] ?? 0) < REQUIRED_IMAGES);
+  const readyList = worklist.filter(a => (worklistCounts[a.id] ?? 0) >= REQUIRED_IMAGES);
   const sliderMissing = Math.max(0, 2 - article.slider.length);
 
   return (
@@ -206,11 +253,11 @@ export default function ArticleDetail({ id }: { id: number }) {
             <div style={{ padding: '14px 16px 8px', fontSize: 11.5, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--amber-dark)' }}>
               Beelden nodig · {needList.length}
             </div>
-            {needList.map(a => <WorklistRow key={a.id} a={a} current={a.id === article.id} />)}
+            {needList.map(a => <WorklistRow key={a.id} a={a} current={a.id === article.id} count={worklistCounts[a.id] ?? 0} />)}
             <div style={{ padding: '16px 16px 8px', fontSize: 11.5, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--green-dark)' }}>
               Klaar voor publicatie · {readyList.length}
             </div>
-            {readyList.map(a => <WorklistRow key={a.id} a={a} current={a.id === article.id} />)}
+            {readyList.map(a => <WorklistRow key={a.id} a={a} current={a.id === article.id} count={worklistCounts[a.id] ?? 0} />)}
           </div>
         </div>
 
@@ -437,6 +484,76 @@ export default function ArticleDetail({ id }: { id: number }) {
               <div style={{ fontSize: 11.5, color: 'var(--gray)' }}>Uploads gaan direct naar de WordPress-mediabibliotheek.</div>
             </div>
 
+            {/* itemfoto's (lijstartikelen) */}
+            {list && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase' }}>3 · Itemfoto&apos;s</span>
+                  <span style={{ fontSize: 11, color: 'var(--gray)' }}>per item één foto, komt in de tekst onder het item</span>
+                  <span style={{ marginLeft: 'auto', fontSize: 11.5, fontWeight: 700, color: list.items.every(i => i.media) ? 'var(--green-dark)' : 'var(--amber-dark)' }}>
+                    {list.items.filter(i => i.media).length}/{list.items.length} gevuld
+                  </span>
+                </div>
+                {list.meldingen?.length > 0 && (
+                  <div style={{ background: 'var(--amber-bg)', border: '1px solid var(--amber-border)', borderRadius: 8, padding: '9px 12px', fontSize: 12, color: 'var(--amber-dark)', lineHeight: 1.45 }}>
+                    {list.meldingen.map((m, i) => <div key={i}>⚠ {m}</div>)}
+                  </div>
+                )}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {list.items.map((item, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, border: '1px solid var(--border-light)', borderRadius: 8, background: 'var(--card)', padding: 8 }}>
+                      {item.media ? (
+                        <div style={{ position: 'relative', flexShrink: 0 }}>
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={item.media.url} alt={item.naam} style={{ width: 96, height: 64, objectFit: 'cover', borderRadius: 6, display: 'block' }} />
+                        </div>
+                      ) : (
+                        <div
+                          className={dragOver === i ? 'dropzone-active' : ''}
+                          style={{
+                            width: 96, height: 64, border: '1.5px dashed #b7b5ae', borderRadius: 6, flexShrink: 0,
+                            display: 'grid', placeItems: 'center', fontSize: 18, color: 'var(--muted)', cursor: 'pointer', background: 'var(--panel)',
+                          }}
+                          onClick={() => pickFiles(i)}
+                          onDragOver={e => { e.preventDefault(); setDragOver(i); }}
+                          onDragLeave={() => setDragOver(v => (v === i ? null : v))}
+                          onDrop={e => {
+                            e.preventDefault();
+                            setDragOver(null);
+                            if (e.dataTransfer.files?.length) uploadFiles(e.dataTransfer.files, i);
+                          }}
+                        >
+                          ＋
+                        </div>
+                      )}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 700, lineHeight: 1.3 }}>{i + 1} · {item.naam}</div>
+                        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {[item.adres, item.buurt].filter(Boolean).join(', ')}
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                        {item.media ? (
+                          <>
+                            <button className="btn-small" style={{ fontSize: 11.5, padding: '5px 9px' }} onClick={() => pickFiles(i)}>Vervangen</button>
+                            <button className="btn-small" style={{ fontSize: 11.5, padding: '5px 9px' }} title="Foto weghalen" onClick={() => removeItemMedia(i)}>✕</button>
+                          </>
+                        ) : (
+                          <button
+                            className="btn-small"
+                            style={{ fontSize: 11.5, padding: '5px 9px' }}
+                            onClick={() => uploadUrl(i)}
+                          >
+                            URL
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* image agent */}
             <div
               style={{
@@ -490,8 +607,8 @@ export default function ArticleDetail({ id }: { id: number }) {
   );
 }
 
-function WorklistRow({ a, current }: { a: Article; current: boolean }) {
-  const phase = articlePhase(a);
+function WorklistRow({ a, current, count }: { a: Article; current: boolean; count: number }) {
+  const ready = count >= REQUIRED_IMAGES;
   return (
     <Link href={`/artikel/${a.id}`} style={{ display: 'block' }}>
       <div
@@ -513,8 +630,8 @@ function WorklistRow({ a, current }: { a: Article; current: boolean }) {
           <div style={{ fontSize: 12.5, fontWeight: current ? 700 : 600, lineHeight: 1.3, color: current ? 'var(--ink)' : 'var(--text-soft)' }}>
             {a.title}
           </div>
-          <div style={{ fontSize: 11, fontWeight: 700, marginTop: 3, color: phase === 'ready' ? 'var(--green-dark)' : 'var(--amber-dark)' }}>
-            {phase === 'ready' ? '✓ compleet' : `${imageCount(a)}/${REQUIRED_IMAGES} beelden`}
+          <div style={{ fontSize: 11, fontWeight: 700, marginTop: 3, color: ready ? 'var(--green-dark)' : 'var(--amber-dark)' }}>
+            {ready ? '✓ compleet' : `${count}/${REQUIRED_IMAGES} beelden`}
           </div>
         </div>
       </div>

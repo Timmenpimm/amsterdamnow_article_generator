@@ -5,13 +5,37 @@ import TopBar from '@/components/TopBar';
 import { toast } from '@/components/toast';
 import type { PromptVersion } from '@/lib/types';
 
-type PromptKind = 'research' | 'schrijf' | 'seo';
+import type { PromptKind } from '@/lib/types';
 
 const VARS: Record<PromptKind, string[]> = {
   research: ['{{onderwerp}}', '{{tavily_bronnen}}', '{{categorieën}}', '{{districten}}'],
   schrijf: ['{{onderwerp}}', '{{research}}', '{{categorieën}}', '{{districten}}'],
   seo: ['{{post_title}}', '{{post_content}}', '{{category}}', '{{district}}'],
+  'lijst-selectie': ['{{thema}}', '{{tavily_bronnen}}'],
+  'lijst-research': ['{{thema}}', '{{item}}', '{{tavily_bronnen}}', '{{doelweekend}}'],
+  'lijst-schrijf': ['{{thema}}', '{{items_research}}', '{{categorieën}}', '{{districten}}'],
+  'lijst-seo': ['{{titel}}', '{{intro}}', '{{items}}'],
 };
+
+const TAB_GROUPS: { label: string; tabs: { key: PromptKind; label: string }[] }[] = [
+  {
+    label: 'Standaard',
+    tabs: [
+      { key: 'research', label: 'Research' },
+      { key: 'schrijf', label: 'Schrijven' },
+      { key: 'seo', label: 'SEO' },
+    ],
+  },
+  {
+    label: 'Lijstartikelen',
+    tabs: [
+      { key: 'lijst-selectie', label: 'Selectie' },
+      { key: 'lijst-research', label: 'Verificatie' },
+      { key: 'lijst-schrijf', label: 'Schrijven' },
+      { key: 'lijst-seo', label: 'SEO' },
+    ],
+  },
+];
 
 export default function Instellingen() {
   const [kind, setKind] = useState<PromptKind>('research');
@@ -64,39 +88,28 @@ export default function Instellingen() {
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         {/* editor */}
         <div style={{ flex: 1, minWidth: 0, padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14, background: 'var(--card)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <button
-              onClick={() => setKind('research')}
-              style={{
-                fontSize: 13, fontWeight: kind === 'research' ? 700 : 600, padding: '7px 14px', borderRadius: 999,
-                background: kind === 'research' ? 'var(--ink)' : 'transparent', color: kind === 'research' ? '#fff' : 'var(--gray)',
-                border: kind === 'research' ? 'none' : '1px solid var(--border)',
-              }}
-            >
-              Research-prompt
-            </button>
-            <button
-              onClick={() => setKind('schrijf')}
-              style={{
-                fontSize: 13, fontWeight: kind === 'schrijf' ? 700 : 600, padding: '7px 14px', borderRadius: 999,
-                background: kind === 'schrijf' ? 'var(--ink)' : 'transparent',
-                color: kind === 'schrijf' ? '#fff' : 'var(--gray)',
-                border: kind === 'schrijf' ? 'none' : '1px solid var(--border)',
-              }}
-            >
-              Schrijf-prompt
-            </button>
-            <button
-              onClick={() => setKind('seo')}
-              style={{
-                fontSize: 13, fontWeight: kind === 'seo' ? 700 : 600, padding: '7px 14px', borderRadius: 999,
-                background: kind === 'seo' ? 'var(--ink)' : 'transparent',
-                color: kind === 'seo' ? '#fff' : 'var(--gray)',
-                border: kind === 'seo' ? 'none' : '1px solid var(--border)',
-              }}
-            >
-              SEO-prompt
-            </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+            {TAB_GROUPS.map(group => (
+              <div key={group.label} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--muted)', marginRight: 2 }}>
+                  {group.label}
+                </span>
+                {group.tabs.map(tab => (
+                  <button
+                    key={tab.key}
+                    onClick={() => setKind(tab.key)}
+                    style={{
+                      fontSize: 13, fontWeight: kind === tab.key ? 700 : 600, padding: '7px 14px', borderRadius: 999,
+                      background: kind === tab.key ? 'var(--ink)' : 'transparent',
+                      color: kind === tab.key ? '#fff' : 'var(--gray)',
+                      border: kind === tab.key ? 'none' : '1px solid var(--border)',
+                    }}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+            ))}
             {active && (
               <span className="chip-green" style={{ marginLeft: 'auto', fontSize: 12 }}>
                 v{active.version} · actief

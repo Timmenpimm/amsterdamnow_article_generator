@@ -10,3 +10,5 @@ seeds/
 .env
 .env.*
 public/*.log
+.vercel
+.env*

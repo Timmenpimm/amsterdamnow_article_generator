@@ -1,6 +1,6 @@
 import path from 'path';
 import fs from 'fs';
-import type { Topic, PromptVersion } from './types';
+import type { ListArticleStructure, ListState, PromptKind, Topic, PromptVersion } from './types';
 
 const MISSING_SEED = '(Seed-bestand ontbreekt in deze deployment — plak hier de oorspronkelijke prompt en sla op als nieuwe versie.)';
 
@@ -56,6 +56,9 @@ async function initSqlite(): Promise<DB> {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       title TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'queued',
+      type TEXT NOT NULL DEFAULT 'standaard',
+      phase TEXT,
+      list_state TEXT,
       sort REAL NOT NULL,
       created_at TEXT NOT NULL,
       started_at TEXT,
@@ -78,7 +81,17 @@ async function initSqlite(): Promise<DB> {
       id INTEGER PRIMARY KEY,
       json TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS list_articles (
+      post_id INTEGER PRIMARY KEY,
+      topic_id INTEGER,
+      json TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
+  // Migratie voor databases van vóór de lijstpipeline.
+  for (const col of ["type TEXT NOT NULL DEFAULT 'standaard'", 'phase TEXT', 'list_state TEXT']) {
+    try { db.exec(`ALTER TABLE topics ADD COLUMN ${col}`); } catch { /* kolom bestaat al */ }
+  }
   return {
     async all(q, p = []) { const [s, sp] = toSqlite(q, p); return db.prepare(s).all(...sp); },
     async get(q, p = []) { const [s, sp] = toSqlite(q, p); return db.prepare(s).get(...sp); },
@@ -125,6 +138,18 @@ async function initPostgres(): Promise<DB> {
       json TEXT NOT NULL
     );
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS list_articles (
+      post_id BIGINT PRIMARY KEY,
+      topic_id INTEGER,
+      json TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
+  // Migratie voor databases van vóór de lijstpipeline.
+  await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'standaard'`);
+  await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS phase TEXT`);
+  await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS list_state TEXT`);
   return {
     async all(q, p = []) { return (await pool.query(q, p)).rows; },
     async get(q, p = []) { return (await pool.query(q, p)).rows[0]; },
@@ -150,6 +175,10 @@ async function seedPrompts(db: DB) {
     ['research', 'researchprompt.txt', 'Tavily-researchprompt voor Claude.'],
     ['schrijf', 'schrijfprompt.txt', 'Oorspronkelijke schrijf-prompt voor Claude.'],
     ['seo', 'seoprompt.txt', 'Oorspronkelijke SEO-prompt voor Claude.'],
+    ['lijst-selectie', 'lijst-selectieprompt.txt', 'Kandidaat-items voorstellen voor een lijstartikel.'],
+    ['lijst-research', 'lijst-researchprompt.txt', 'Per lijstitem verifiëren en researchen (o.b.v. de redactionele instructie).'],
+    ['lijst-schrijf', 'lijst-schrijfprompt.txt', 'Lijstartikel componeren uit geverifieerde items (o.b.v. de redactionele instructie).'],
+    ['lijst-seo', 'lijst-seoprompt.txt', 'RankMath-velden voor lijstartikelen (titel eindigt op | Amsterdam Now).'],
   ]) {
     const seed = readSeed(file);
     const row = await db.get('SELECT COUNT(*) AS c FROM prompts WHERE kind = $1', [kind]);
@@ -223,9 +252,9 @@ export async function retryTopic(id: number) {
   );
 }
 
-export async function claimNextTopic(): Promise<Topic | null> {
+async function claimNext(type: 'standaard' | 'lijst'): Promise<Topic | null> {
   const db = await getDb();
-  const topic = await db.get(`SELECT * FROM topics WHERE status = 'queued' ORDER BY sort ASC LIMIT 1`);
+  const topic = await db.get(`SELECT * FROM topics WHERE status = 'queued' AND type = $1 ORDER BY sort ASC LIMIT 1`, [type]);
   if (!topic) return null;
   await db.run(
     `UPDATE topics SET status = 'writing', started_at = $1, attempts = attempts + 1 WHERE id = $2`,
@@ -234,9 +263,94 @@ export async function claimNextTopic(): Promise<Topic | null> {
   return db.get('SELECT * FROM topics WHERE id = $1', [topic.id]);
 }
 
+export async function claimNextTopic(): Promise<Topic | null> {
+  return claimNext('standaard');
+}
+
+export async function claimNextListTopic(): Promise<Topic | null> {
+  return claimNext('lijst');
+}
+
+// De eerstvolgende queued topic (elk type), om de wachtrijvolgorde te
+// respecteren bij het kiezen tussen de standaard- en lijstpipeline.
+export async function peekNextQueued(): Promise<Topic | undefined> {
+  const db = await getDb();
+  return db.get(`SELECT * FROM topics WHERE status = 'queued' ORDER BY sort ASC LIMIT 1`);
+}
+
 export async function completeTopic(id: number, postId: number) {
   const db = await getDb();
   await db.run(`UPDATE topics SET status = 'done', post_id = $1 WHERE id = $2`, [postId, id]);
+}
+
+// ---------- lijstpipeline ----------
+
+export async function addListTopic(title: string, state: ListState): Promise<Topic> {
+  const db = await getDb();
+  const maxRow = await db.get('SELECT COALESCE(MAX(sort), 0) AS m FROM topics');
+  const phase = state.aangeleverd ? 'verify' : 'select';
+  return db.get(
+    `INSERT INTO topics (title, status, type, phase, list_state, sort, created_at)
+     VALUES ($1, 'queued', 'lijst', $2, $3, $4, $5) RETURNING *`,
+    [title.trim(), phase, JSON.stringify(state), Number(maxRow.m) + 1, now()]
+  );
+}
+
+export async function getTopic(id: number): Promise<Topic | undefined> {
+  const db = await getDb();
+  return db.get('SELECT * FROM topics WHERE id = $1', [id]);
+}
+
+export async function saveListProgress(
+  id: number,
+  upd: { status?: string; phase?: string | null; state?: ListState; errorClear?: boolean }
+) {
+  const db = await getDb();
+  const sets: string[] = [];
+  const params: unknown[] = [];
+  const add = (frag: string, val: unknown) => { params.push(val); sets.push(`${frag} = $${params.length}`); };
+  if (upd.status) add('status', upd.status);
+  if (upd.phase !== undefined) add('phase', upd.phase);
+  if (upd.state) add('list_state', JSON.stringify(upd.state));
+  if (upd.errorClear) { sets.push('error = NULL'); sets.push('error_step = NULL'); }
+  if (!sets.length) return;
+  params.push(id);
+  await db.run(`UPDATE topics SET ${sets.join(', ')} WHERE id = $${params.length}`, params);
+}
+
+// De eerstvolgende lijst-topic waar de machine mee verder kan: een lopende run
+// heeft voorrang op het claimen van nieuw werk.
+export async function activeListTopic(): Promise<Topic | undefined> {
+  const db = await getDb();
+  return db.get(
+    `SELECT * FROM topics WHERE type = 'lijst' AND status = 'writing' ORDER BY sort ASC LIMIT 1`
+  );
+}
+
+export async function saveListStructure(postId: number, topicId: number | null, structure: ListArticleStructure) {
+  const db = await getDb();
+  await db.run(
+    `INSERT INTO list_articles (post_id, topic_id, json, updated_at) VALUES ($1, $2, $3, $4)
+     ON CONFLICT (post_id) DO UPDATE SET json = EXCLUDED.json, updated_at = EXCLUDED.updated_at`,
+    [postId, topicId, JSON.stringify(structure), now()]
+  );
+}
+
+export async function getListStructure(postId: number): Promise<ListArticleStructure | null> {
+  const db = await getDb();
+  const row = await db.get('SELECT json FROM list_articles WHERE post_id = $1', [postId]);
+  if (!row) return null;
+  try { return JSON.parse(row.json) as ListArticleStructure; } catch { return null; }
+}
+
+export async function listStructures(): Promise<Record<number, ListArticleStructure>> {
+  const db = await getDb();
+  const rows = await db.all('SELECT post_id, json FROM list_articles');
+  const out: Record<number, ListArticleStructure> = {};
+  for (const r of rows) {
+    try { out[Number(r.post_id)] = JSON.parse(r.json); } catch { /* overslaan */ }
+  }
+  return out;
 }
 
 export async function failTopic(id: number, error: string, step: string) {
@@ -246,19 +360,19 @@ export async function failTopic(id: number, error: string, step: string) {
 
 // ---------- prompts ----------
 
-export async function listPrompts(kind: 'research' | 'schrijf' | 'seo'): Promise<PromptVersion[]> {
+export async function listPrompts(kind: PromptKind): Promise<PromptVersion[]> {
   const db = await getDb();
   return db.all('SELECT * FROM prompts WHERE kind = $1 ORDER BY version DESC', [kind]);
 }
 
-export async function activePrompt(kind: 'research' | 'schrijf' | 'seo'): Promise<PromptVersion> {
+export async function activePrompt(kind: PromptKind): Promise<PromptVersion> {
   const db = await getDb();
   const prompt = await db.get('SELECT * FROM prompts WHERE kind = $1 AND active = 1', [kind]);
   if (!prompt) throw new Error(`Geen actieve ${kind}-prompt gevonden`);
   return prompt as PromptVersion;
 }
 
-export async function savePromptVersion(kind: 'research' | 'schrijf' | 'seo', content: string, note: string): Promise<PromptVersion> {
+export async function savePromptVersion(kind: PromptKind, content: string, note: string): Promise<PromptVersion> {
   const db = await getDb();
   const max = await db.get('SELECT COALESCE(MAX(version), 0) AS m FROM prompts WHERE kind = $1', [kind]);
   await db.run('UPDATE prompts SET active = 0 WHERE kind = $1', [kind]);

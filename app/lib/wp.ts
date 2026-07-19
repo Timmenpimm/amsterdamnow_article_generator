@@ -154,6 +154,21 @@ async function demoSave(a: Article) {
 
 // ---------- public API ----------
 
+// Zoekt een bestaand gepubliceerd AmsterdamNOW-artikel over een zaak, zodat
+// lijstitems intern kunnen doorlinken (zoals in de bestaande lijstartikelen).
+export async function findArticleLink(name: string): Promise<string | null> {
+  if (!LIVE) return null;
+  try {
+    const hits = await wpFetch(`/wp/v2/posts?search=${encodeURIComponent(name)}&per_page=3&_fields=title,link`);
+    const needle = name.toLocaleLowerCase('nl-NL');
+    for (const hit of hits) {
+      const title = String(hit.title?.rendered || '').toLocaleLowerCase('nl-NL');
+      if (title.includes(needle)) return hit.link as string;
+    }
+  } catch { /* interne link is nice-to-have; nooit de run op laten falen */ }
+  return null;
+}
+
 export async function listArticles(): Promise<Article[]> {
   if (!LIVE) return demoArticles();
   await loadTaxonomies();
@@ -205,6 +220,20 @@ export async function updateImages(id: number, upd: ImageUpdate, known: MediaRef
   if (upd.fotograaf !== undefined) body.acf.fotograaf = upd.fotograaf;
   await wpFetch(`/wp/v2/posts/${id}`, { method: 'POST', body: JSON.stringify(body) });
   return getArticle(id);
+}
+
+// Vervangt de volledige content-HTML van een post; gebruikt door het
+// per-item-beeldwerk van lijstartikelen (content wordt opnieuw geassembleerd).
+export async function updateArticleContent(id: number, html: string): Promise<void> {
+  if (!LIVE) {
+    const a = (await demoArticles()).find(x => x.id === id);
+    if (!a) throw new Error('Artikel niet gevonden');
+    a.contentHtml = html;
+    a.modified = new Date().toISOString();
+    await demoSave(a);
+    return;
+  }
+  await wpFetch(`/wp/v2/posts/${id}`, { method: 'POST', body: JSON.stringify({ content: html }) });
 }
 
 export async function publishArticle(id: number): Promise<Article | null> {

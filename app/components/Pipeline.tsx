@@ -3,11 +3,38 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Article, BoardData, Topic } from '@/lib/types';
-import { articlePhase, imageCount, REQUIRED_IMAGES } from '@/lib/types';
+import { articlePhase, imageCount, parseListState, REQUIRED_IMAGES } from '@/lib/types';
 import TopBar from './TopBar';
 import BulkModal from './BulkModal';
 import ListArticleModal from './ListArticleModal';
+import ReviewModal from './ReviewModal';
 import { toast } from './toast';
+
+function ListBadge() {
+  return (
+    <span
+      style={{
+        fontSize: 10, fontWeight: 800, letterSpacing: '0.06em', color: 'var(--blue-dark)',
+        background: '#e8eef7', padding: '2px 7px', borderRadius: 4, flexShrink: 0,
+      }}
+    >
+      LIJST
+    </span>
+  );
+}
+
+function listProgress(t: Topic): string {
+  const s = parseListState(t);
+  if (!s) return '';
+  if (t.phase === 'select' || (t.phase === 'verify' && !s.items.length)) return 'Kandidaat-items zoeken…';
+  if (t.phase === 'verify') {
+    const done = s.items.filter(i => i.status !== 'pending').length;
+    return `Verificatie item ${Math.min(done + 1, s.items.length)}/${s.items.length}${s.rejected ? ` · ${s.rejected} afgevallen` : ''}`;
+  }
+  if (t.phase === 'compose') return 'Claude schrijft het lijstartikel…';
+  if (t.phase === 'finalize') return 'Valideren, interne links en SEO…';
+  return '';
+}
 
 function timeLabel(iso: string): string {
   const d = new Date(iso.includes('T') || iso.includes(' ') ? iso.replace(' ', 'T') : iso);
@@ -55,6 +82,7 @@ export default function Pipeline() {
   const [error, setError] = useState('');
   const [bulkOpen, setBulkOpen] = useState(false);
   const [listModalOpen, setListModalOpen] = useState(false);
+  const [reviewTopicId, setReviewTopicId] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editValue, setEditValue] = useState('');
   const [writingNow, setWritingNow] = useState(false);
@@ -81,10 +109,16 @@ export default function Pipeline() {
   const topics = data?.topics || [];
   const queued = topics.filter(t => t.status === 'queued');
   const writing = topics.filter(t => t.status === 'writing');
+  const review = topics.filter(t => t.status === 'review');
   const failed = topics.filter(t => t.status === 'failed');
+  const reviewTopic = review.find(t => t.id === reviewTopicId) || null;
   const articles = data?.articles || [];
-  const needImages = articles.filter(a => articlePhase(a) === 'needImages');
-  const ready = articles.filter(a => articlePhase(a) === 'ready');
+  // Itemfoto's van lijstartikelen tellen mee in de beeldenteller.
+  const countFor = (a: Article) => imageCount(a) + (data?.lists?.[a.id]?.withMedia || 0);
+  const phaseFor = (a: Article): 'needImages' | 'ready' | 'published' =>
+    a.status === 'publish' ? 'published' : countFor(a) >= REQUIRED_IMAGES ? 'ready' : 'needImages';
+  const needImages = articles.filter(a => phaseFor(a) === 'needImages');
+  const ready = articles.filter(a => phaseFor(a) === 'ready');
   const today = new Date().toDateString();
   const published = articles
     .filter(a => articlePhase(a) === 'published')
@@ -163,11 +197,23 @@ export default function Pipeline() {
     if (writingNow) return;
     setWritingNow(true);
     try {
-      const res = await fetch('/api/topics/process', { method: 'POST' });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error || 'Schrijven mislukt');
-      if (!body.topic) toast('De wachtrij is leeg');
-      else toast(`Draft gemaakt: ${body.article.title}`);
+      // Lijstruns bestaan uit meerdere fase-stappen: blijf aanroepen tot de
+      // run klaar is, op itemcontrole wacht, of de wachtrij leeg is.
+      for (let tick = 0; tick < 40; tick++) {
+        const res = await fetch('/api/topics/process', { method: 'POST' });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error || 'Schrijven mislukt');
+        if (body.list) {
+          load();
+          if (!body.list.done) continue;
+          if (body.list.phase === 'review') toast('Items geverifieerd — controleer de selectie op het bord');
+          else if (body.article) toast(`Draft gemaakt: ${body.article.title}`);
+          return;
+        }
+        if (!body.topic) toast('De wachtrij is leeg');
+        else toast(`Draft gemaakt: ${body.article.title}`);
+        return;
+      }
     } catch (e: any) {
       toast(e.message, { kind: 'error' });
     } finally {
@@ -246,7 +292,10 @@ export default function Pipeline() {
                         }}
                       />
                     ) : (
-                      <div style={{ fontSize: 13.5, fontWeight: 600, lineHeight: 1.35 }}>{t.title}</div>
+                      <div style={{ fontSize: 13.5, fontWeight: 600, lineHeight: 1.35 }}>
+                        {t.type === 'lijst' && <><ListBadge />{' '}</>}
+                        {t.title}
+                      </div>
                     )}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 7 }}>
                       <span style={{ fontSize: 11, color: 'var(--muted)' }}>{timeLabel(t.created_at)}</span>
@@ -297,24 +346,49 @@ export default function Pipeline() {
           </Column>
 
           {/* Wordt geschreven */}
-          <Column color="var(--blue)" title="Wordt geschreven" count={writing.length}>
+          <Column color="var(--blue)" title="Wordt geschreven" count={writing.length + review.length}>
             <button
               className="btn-primary"
-              disabled={writingNow || queued.length === 0}
+              disabled={writingNow || (queued.length === 0 && writing.length === 0)}
               onClick={startWriting}
               style={{ width: '100%', fontSize: 12.5, padding: '8px 10px' }}
             >
               {writingNow ? 'Claude schrijft…' : 'Schrijf volgend artikel met Claude'}
             </button>
+            {review.map(t => {
+              const s = parseListState(t);
+              return (
+                <div key={t.id} className="card" style={{ padding: 12, borderColor: 'var(--amber-border)', background: 'var(--amber-bg)' }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 600, lineHeight: 1.35 }}>
+                    <ListBadge /> {t.title}
+                  </div>
+                  <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--amber-dark)', marginTop: 7 }}>
+                    ✓ {s?.verified ?? 0} items geverifieerd{s?.rejected ? ` · ${s.rejected} afgevallen` : ''}
+                  </div>
+                  <button
+                    className="btn-primary"
+                    style={{ marginTop: 10, width: '100%', fontSize: 12.5, fontWeight: 700, padding: 8, borderRadius: 6 }}
+                    onClick={() => setReviewTopicId(t.id)}
+                  >
+                    Items controleren →
+                  </button>
+                </div>
+              );
+            })}
             {writing.map(t => (
               <div key={t.id} className="card" style={{ padding: 12 }}>
-                <div style={{ fontSize: 13.5, fontWeight: 600, lineHeight: 1.35 }}>{t.title}</div>
+                <div style={{ fontSize: 13.5, fontWeight: 600, lineHeight: 1.35 }}>
+                  {t.type === 'lijst' && <><ListBadge />{' '}</>}
+                  {t.title}
+                </div>
                 <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <div style={{ height: 4, background: '#eceae5', borderRadius: 2, overflow: 'hidden' }}>
                     <div className="progress-pulse" style={{ width: '62%', height: '100%', background: 'var(--blue)', borderRadius: 2 }} />
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, color: 'var(--gray)' }}>
-                    <span style={{ fontWeight: 600, color: 'var(--blue-dark)' }}>Research → schrijven → SEO…</span>
+                    <span style={{ fontWeight: 600, color: 'var(--blue-dark)' }}>
+                      {t.type === 'lijst' ? listProgress(t) : 'Research → schrijven → SEO…'}
+                    </span>
                     <span>{t.started_at ? `gestart ${timeLabel(t.started_at)}` : ''}</span>
                   </div>
                 </div>
@@ -333,7 +407,7 @@ export default function Pipeline() {
           {/* Beelden nodig */}
           <Column color="var(--amber)" title="Klaar — beelden nodig" count={needImages.length} highlight>
             {needImages.map(a => {
-              const count = imageCount(a);
+              const count = countFor(a);
               return (
                 <div key={a.id} className="card" style={{ overflow: 'hidden' }}>
                   {a.featured && (
@@ -375,7 +449,7 @@ export default function Pipeline() {
                 <div style={{ padding: '10px 12px 12px' }}>
                   <div style={{ fontSize: 13.5, fontWeight: 600, lineHeight: 1.35 }}>{a.title}</div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 9 }}>
-                    <span className="chip-green">✓ {imageCount(a)} beelden</span>
+                    <span className="chip-green">✓ {countFor(a)} beelden</span>
                     <span style={{ fontSize: 11, color: 'var(--muted)' }}>
                       {[a.category, a.district.replace('Amsterdam ', '')].filter(Boolean).join(' · ')}
                     </span>
@@ -460,7 +534,7 @@ export default function Pipeline() {
       <div className="mobile-only" style={{ flex: 1 }}>
         <MobileHome
           queued={queued}
-          writing={writing}
+          writing={[...review, ...writing]}
           failed={failed}
           needImages={needImages}
           ready={ready}
@@ -483,6 +557,13 @@ export default function Pipeline() {
         onClose={() => setListModalOpen(false)}
         onCreated={load}
       />
+      {reviewTopic && (
+        <ReviewModal
+          topic={reviewTopic}
+          onClose={() => setReviewTopicId(null)}
+          onApproved={() => { setReviewTopicId(null); startWriting(); }}
+        />
+      )}
     </div>
   );
 }
@@ -564,9 +645,11 @@ function MobileHome({
           <div key={t.id} className="card" style={{ borderRadius: 10, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 13.5, fontWeight: 600, lineHeight: 1.35 }}>{t.title}</div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--blue-dark)', marginTop: 3 }}>Wordt geschreven…</div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: t.status === 'review' ? 'var(--amber-dark)' : 'var(--blue-dark)', marginTop: 3 }}>
+                {t.status === 'review' ? 'Itemcontrole nodig — doe je op desktop' : 'Wordt geschreven…'}
+              </div>
             </div>
-            <span className="dot" style={{ background: 'var(--blue)' }} />
+            <span className="dot" style={{ background: t.status === 'review' ? 'var(--amber)' : 'var(--blue)' }} />
           </div>
         ))}
         {failed.map(t => (
