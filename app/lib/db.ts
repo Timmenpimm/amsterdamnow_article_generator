@@ -2,12 +2,20 @@ import path from 'path';
 import fs from 'fs';
 import type { Topic, PromptVersion } from './types';
 
+const MISSING_SEED = '(Seed-bestand ontbreekt in deze deployment — plak hier de oorspronkelijke prompt en sla op als nieuwe versie.)';
+
 function readSeed(file: string): string {
-  try {
-    return fs.readFileSync(path.join(process.cwd(), 'seeds', file), 'utf8');
-  } catch {
-    return '(Seed-bestand ontbreekt in deze deployment — plak hier de oorspronkelijke prompt en sla op als nieuwe versie.)';
+  // Lokaal start Next vanuit app/, terwijl de Vercel-build vanuit de repo-root
+  // kan draaien. Ondersteun beide layouts zodat dezelfde prompt in elke runtime
+  // wordt geseed.
+  const candidates = [
+    path.join(process.cwd(), 'seeds', file),
+    path.join(process.cwd(), 'app', 'seeds', file),
+  ];
+  for (const candidate of candidates) {
+    try { return fs.readFileSync(candidate, 'utf8'); } catch { /* probeer volgende locatie */ }
   }
+  return MISSING_SEED;
 }
 
 // Opslaglaag met twee drivers:
@@ -143,10 +151,17 @@ async function seedPrompts(db: DB) {
     ['schrijf', 'schrijfprompt.txt', 'Oorspronkelijke schrijf-prompt voor Claude.'],
     ['seo', 'seoprompt.txt', 'Oorspronkelijke SEO-prompt voor Claude.'],
   ]) {
+    const seed = readSeed(file);
     const row = await db.get('SELECT COUNT(*) AS c FROM prompts WHERE kind = $1', [kind]);
     if (Number(row.c) === 0) await db.run(
       `INSERT INTO prompts (kind, version, content, note, author, created_at, active) VALUES ($1, 1, $2, $3, 'import', $4, 1)`,
-      [kind, readSeed(file), note, now()]
+      [kind, seed, note, now()]
+    );
+    // Herstel uitsluitend de bekende placeholder die door een eerdere Vercel
+    // deployment is opgeslagen; handmatig aangepaste prompts blijven intact.
+    else if (seed !== MISSING_SEED) await db.run(
+      `UPDATE prompts SET content = $1, note = $2, author = 'import', created_at = $3 WHERE kind = $4 AND active = 1 AND content = $5`,
+      [seed, note, now(), kind, MISSING_SEED]
     );
   }
 }
