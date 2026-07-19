@@ -171,3 +171,100 @@ export interface BoardData {
   // bord itemfoto's kan meetellen zonder de volledige structuur te laden.
   lists?: Record<number, { items: number; withMedia: number }>;
 }
+
+export type ConstraintKind = 'standaard' | 'lijst';
+
+export const CONSTRAINT_KINDS: ConstraintKind[] = ['standaard', 'lijst'];
+
+export interface WordRange {
+  min: number;
+  max: number;
+}
+
+export interface StandaardConstraints {
+  titleWords: WordRange;
+  subregelWords: WordRange;
+  introWords: WordRange;
+  contentWords: WordRange;
+  quoteWords: WordRange;
+  minParagraphs: number;
+  titleMustContainTopic: boolean;
+  quoteMustBeVerbatimInContent: boolean;
+  noDashInText: boolean;
+  noAmsterdamRepeatInTitleSubregelIntro: boolean;
+}
+
+export interface ListConstraints {
+  titleMaxChars: number;
+  introSentences: WordRange;
+  minItems: number;
+  itemSentences: WordRange;
+  quoteNormPerItems: number;
+  minNamedItemsInClosing: number;
+  forbiddenWords: string[];
+  quoteSourceBlacklist: string[];
+  titleNoCount: boolean;
+  subregelNoVanTotFormula: boolean;
+  subregelNoAmsterdamRepeat: boolean;
+  noDashInText: boolean;
+  noBulletsInItem: boolean;
+  addressNotInDescription: boolean;
+  itemRequiresAddress: boolean;
+  itemRequiresBuurt: boolean;
+  noConsecutiveQuotes: boolean;
+}
+
+export interface ConstraintVersion {
+  id: number;
+  kind: ConstraintKind;
+  version: number;
+  content: string; // JSON van StandaardConstraints of ListConstraints
+  note: string;
+  author: string;
+  created_at: string;
+  active: 0 | 1;
+}
+
+export const DEFAULT_STANDAARD_CONSTRAINTS: StandaardConstraints = {
+  titleWords: { min: 8, max: 12 },
+  subregelWords: { min: 10, max: 15 },
+  introWords: { min: 40, max: 60 },
+  contentWords: { min: 400, max: 450 },
+  quoteWords: { min: 15, max: 25 },
+  minParagraphs: 5,
+  titleMustContainTopic: true,
+  quoteMustBeVerbatimInContent: true,
+  noDashInText: true,
+  noAmsterdamRepeatInTitleSubregelIntro: true,
+};
+
+export const DEFAULT_LIST_CONSTRAINTS: ListConstraints = {
+  titleMaxChars: 75,
+  introSentences: { min: 2, max: 3 },
+  minItems: 3,
+  itemSentences: { min: 3, max: 5 },
+  quoteNormPerItems: 3,
+  minNamedItemsInClosing: 2,
+  forbiddenWords: [
+    'hotspot', 'pareltje', 'bruisend', 'iconisch',
+    'elektronische muziek',
+    'opent zijn deuren', 'verwelkomt gasten', 'biedt een unieke ervaring',
+    'mis het niet', 'een aanrader voor iedereen',
+  ],
+  quoteSourceBlacklist: [
+    'ylbb', 'your little black book', 'yourlittleblackbook',
+    'bartsboekje', 'barts boekje',
+    'iamsterdam',
+    'time out', 'timeout',
+    'cityguys', 'dagjeweg', 'awesome amsterdam', 'amsterdamlokaal', 'kidsproof', 'roadbook',
+  ],
+  titleNoCount: true,
+  subregelNoVanTotFormula: true,
+  subregelNoAmsterdamRepeat: true,
+  noDashInText: true,
+  noBulletsInItem: true,
+  addressNotInDescription: true,
+  itemRequiresAddress: true,
+  itemRequiresBuurt: true,
+  noConsecutiveQuotes: true,
+};
