@@ -47,7 +47,13 @@ export async function askClaudeJson(system: string, prompt: string, withResearch
   const raw = textFrom(response).replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
   try {
     return JSON.parse(raw);
-  } catch {
-    throw new Error('Claude gaf geen geldige JSON terug. Probeer het onderwerp opnieuw.');
+  } catch { /* het model kan tekst om de JSON heen zetten; isoleer het object */ }
+  const start = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  if (start >= 0 && end > start) {
+    try {
+      return JSON.parse(raw.slice(start, end + 1));
+    } catch { /* valt door naar de foutmelding */ }
   }
+  throw new Error(`Claude gaf geen geldige JSON terug (respons begint met: ${raw.slice(0, 120)}…)`);
 }
