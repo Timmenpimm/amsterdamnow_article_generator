@@ -11,8 +11,8 @@ Claude Design-project "AmsterdamNOW artikel-tool" (`Artikel-tool.dc.html`).
 - **Beeldwerk** — per draft-artikel: preview van de AI-tekst en alle AI-gevulde velden
   (alleen-lezen), featured image + slider vullen via drag & drop, bestandsupload of
   afbeeldings-URL, fotograaf-credit (ACF), en publiceren — geblokkeerd tot 3 beelden.
-- **Prompt & instellingen** — de schrijf- en SEO-prompt van de pipeline bewerken met
-  versiegeschiedenis en terugzetten. Geseed met de échte prompts uit de n8n-workflows.
+- **Prompt & instellingen** — de Claude-schrijf- en SEO-prompt bewerken met
+  versiegeschiedenis en terugzetten.
 
 ## Starten
 
@@ -23,7 +23,9 @@ npm run dev   # http://localhost:3400
 
 Zonder `.env` draait de tool in **demo-modus** (badge rechtsboven): demo-artikelen en
 -wachtrij, uploads worden als data-URL bewaard. Kopieer `.env.example` naar `.env`
-en vul `WP_USER` + `WP_APP_PASSWORD` (WordPress Application Password) in voor live-modus.
+en vul `WP_USER` + `WP_APP_PASSWORD` (WordPress Application Password) en
+`ANTHROPIC_API_KEY` in voor live-modus. Start vervolgens vanuit de wachtrij één Claude-run;
+Claude doet bronnenonderzoek, schrijft het artikel, vult SEO in en maakt een WordPress-draft.
 
 ## Opslag: SQLite lokaal, Supabase op Vercel
 
@@ -42,7 +44,8 @@ Vereiste env-variabelen op Vercel voor volledige werking:
 |---|---|
 | `DATABASE_URL` | Supabase pooler-connectiestring (`postgresql://postgres.xxx:…@…pooler.supabase.com:6543/postgres`) |
 | `WP_USER` / `WP_APP_PASSWORD` | WordPress-gebruiker + Application Password (live-modus) |
-| `N8N_TOKEN` | zelfgekozen secret; n8n stuurt hem mee als `x-api-key` op `/api/n8n/*` |
+| `ANTHROPIC_API_KEY` | API-sleutel uit de Anthropic Console voor Claude |
+| `ANTHROPIC_MODEL` | optioneel, standaard `claude-sonnet-4-20250514` |
 
 ## Koppelingen
 
@@ -54,25 +57,21 @@ Server-side via de REST API met een Application Password:
 - media uploaden (`/wp/v2/media`) en koppelen: `featured_media` + `acf.slider` + `acf.fotograaf`
 - publiceren (`status: publish`)
 
-### n8n (wachtrij vervangt de Google Sheet)
+### Claude-workflow
 
-De schrijf-workflow (`claude-wordpress-ai-content-generator`) wisselt drie Google
-Sheets-nodes in voor drie HTTP-calls naar deze tool (header `x-api-key: $N8N_TOKEN`):
+Via **Schrijf volgend artikel met Claude** verwerkt de app
+het bovenste onderwerp in de wachtrij: Claude zoekt bronnen op het web, schrijft het artikel
+met de actieve schrijf-prompt, genereert RankMath-SEO met de actieve SEO-prompt en maakt een
+WordPress-draft. Mislukte stappen komen met een foutmelding in de kolom **Mislukt**.
 
-| Vervangt node | Endpoint | Werking |
-|---|---|---|
-| Get row(s) in sheet | `POST /api/n8n/claim` | pakt het bovenste onderwerp, zet status op `writing`; `{ topic: null }` = wachtrij leeg |
-| Delete rows | `POST /api/n8n/complete` `{ topicId, postId }` | markeert klaar, artikel verschijnt als draft in "Beelden nodig" |
-| (error-branch) | `POST /api/n8n/failed` `{ topicId, error, step }` | zet het onderwerp in "Mislukt" met foutmelding |
-
-De actieve prompts zijn op te halen voor n8n: `GET /api/prompts?kind=schrijf` /
-`?kind=seo` (veld `content` van de versie met `active: 1`).
+Claude web search wordt door Anthropic per zoekopdracht gefactureerd. De app begrenst dit op
+maximaal drie zoekopdrachten per artikel.
 
 ## Structuur
 
 - `app/` — Next.js App Router: pagina's + API-routes
 - `components/` — Pipeline (kanban + mobiel), ArticleDetail (beeldwerk), TopBar, BulkModal
 - `lib/` — SQLite (wachtrij, promptversies, demo-store), WordPress-client (live/demo)
-- `seeds/` — de originele n8n-prompts (seed voor versie 1)
+- `seeds/` — de oorspronkelijke Claude-prompts (seed voor versie 1)
 - `../design/` — het geïmporteerde Claude Design-bestand (referentie)
 - `../BRIEFING-claude-design.md` — de oorspronkelijke designbriefing

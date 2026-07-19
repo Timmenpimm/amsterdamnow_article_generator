@@ -110,7 +110,7 @@ async function mapPost(p: any, media: Record<number, MediaRef>): Promise<Article
 
 async function demoArticles(): Promise<Article[]> {
   // Demo-wachtrij alleen in lokale SQLite seeden — nooit dummy-onderwerpen in de
-  // gedeelde Supabase-database zetten (n8n zou ze anders echt gaan schrijven).
+  // gedeelde Supabase-database zetten, zodat demo-onderwerpen nooit als echte opdrachten worden verwerkt.
   await ensureDemoSeed(
     DEMO_ARTICLES.map(a => ({ id: a.id, json: JSON.stringify(a) })),
     STORAGE === 'sqlite' ? DEMO_TOPICS : []
@@ -189,6 +189,67 @@ export async function publishArticle(id: number): Promise<Article | null> {
   }
   await wpFetch(`/wp/v2/posts/${id}`, { method: 'POST', body: JSON.stringify({ status: 'publish' }) });
   return getArticle(id);
+}
+
+export interface GeneratedDraft {
+  title: string;
+  subregel: string;
+  intro: string;
+  contentHtml: string;
+  quote: string;
+  focusKeyword: string;
+  slug: string;
+  seoTitle: string;
+  metaDescription: string;
+}
+
+export async function createDraft(draft: GeneratedDraft): Promise<Article> {
+  if (!LIVE) {
+    const articles = await demoArticles();
+    const id = Math.max(Date.now() % 2147483647, ...articles.map(a => a.id + 1));
+    const article: Article = {
+      id,
+      title: draft.title,
+      subregel: draft.subregel,
+      intro: draft.intro,
+      contentHtml: draft.contentHtml,
+      status: 'draft',
+      link: `https://www.amsterdamnow.com/?p=${id}`,
+      modified: new Date().toISOString(),
+      date: new Date().toISOString(),
+      category: '', district: '', rubriek: '', featured: null, slider: [], fotograaf: '',
+      naam_locatie: '', adres: '', stad: 'Amsterdam', website: '', cordA: '', cordB: '', tags: [],
+      focusKeyword: draft.focusKeyword, slug: draft.slug, seoTitle: draft.seoTitle,
+      metaDescription: draft.metaDescription,
+      flags: { new_in_town: false, featured_item: false, beste_van_amsterdam: false, homepage_carousel: false },
+    };
+    await demoSave(article);
+    return article;
+  }
+
+  const post = await wpFetch('/wp/v2/posts', {
+    method: 'POST',
+    body: JSON.stringify({
+      status: 'draft',
+      title: draft.title,
+      content: draft.contentHtml,
+      excerpt: draft.intro,
+      slug: draft.slug,
+      meta: {
+        rank_math_focus_keyword: draft.focusKeyword,
+        rank_math_title: draft.seoTitle,
+        rank_math_description: draft.metaDescription,
+      },
+      acf: {
+        subregel: draft.subregel,
+        introductie_tekst: draft.intro,
+        quote: draft.quote,
+      },
+    }),
+  });
+  const article = await getArticle(post.id);
+  if (!article) throw new Error('WordPress heeft de nieuwe draft niet teruggegeven');
+  return article;
 }
 
 const DEMO_UPLOAD_LIMIT = 3 * 1024 * 1024;

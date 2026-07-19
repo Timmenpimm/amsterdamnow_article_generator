@@ -6,7 +6,7 @@ function readSeed(file: string): string {
   try {
     return fs.readFileSync(path.join(process.cwd(), 'seeds', file), 'utf8');
   } catch {
-    return '(Seed-bestand ontbreekt in deze deployment — plak hier de prompt uit n8n en sla op als nieuwe versie.)';
+    return '(Seed-bestand ontbreekt in deze deployment — plak hier de oorspronkelijke prompt en sla op als nieuwe versie.)';
   }
 }
 
@@ -141,12 +141,12 @@ async function seedPrompts(db: DB) {
   const row = await db.get('SELECT COUNT(*) AS c FROM prompts');
   if (Number(row.c) > 0) return;
   await db.run(
-    `INSERT INTO prompts (kind, version, content, note, author, created_at, active) VALUES ($1, 1, $2, $3, 'n8n-import', $4, 1)`,
-    ['schrijf', readSeed('schrijfprompt.txt'), 'Overgenomen uit n8n-workflow "claude-wordpress-ai-content-generator" (Wordpress article writer).', now()]
+    `INSERT INTO prompts (kind, version, content, note, author, created_at, active) VALUES ($1, 1, $2, $3, 'import', $4, 1)`,
+    ['schrijf', readSeed('schrijfprompt.txt'), 'Oorspronkelijke schrijf-prompt voor Claude.', now()]
   );
   await db.run(
-    `INSERT INTO prompts (kind, version, content, note, author, created_at, active) VALUES ($1, 1, $2, $3, 'n8n-import', $4, 1)`,
-    ['seo', readSeed('seoprompt.txt'), 'Overgenomen uit n8n-workflow "SEO Optimization Agent" (SEO agent system message).', now()]
+    `INSERT INTO prompts (kind, version, content, note, author, created_at, active) VALUES ($1, 1, $2, $3, 'import', $4, 1)`,
+    ['seo', readSeed('seoprompt.txt'), 'Oorspronkelijke SEO-prompt voor Claude.', now()]
   );
 }
 
@@ -233,6 +233,13 @@ export async function failTopic(id: number, error: string, step: string) {
 export async function listPrompts(kind: 'schrijf' | 'seo'): Promise<PromptVersion[]> {
   const db = await getDb();
   return db.all('SELECT * FROM prompts WHERE kind = $1 ORDER BY version DESC', [kind]);
+}
+
+export async function activePrompt(kind: 'schrijf' | 'seo'): Promise<PromptVersion> {
+  const db = await getDb();
+  const prompt = await db.get('SELECT * FROM prompts WHERE kind = $1 AND active = 1', [kind]);
+  if (!prompt) throw new Error(`Geen actieve ${kind}-prompt gevonden`);
+  return prompt as PromptVersion;
 }
 
 export async function savePromptVersion(kind: 'schrijf' | 'seo', content: string, note: string): Promise<PromptVersion> {

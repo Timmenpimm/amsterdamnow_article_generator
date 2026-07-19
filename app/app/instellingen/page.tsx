@@ -41,7 +41,7 @@ export default function Instellingen() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ kind, content, note }),
       });
-      toast(`Opgeslagen als v${(active?.version || 0) + 1} — geldt vanaf de volgende n8n-run`);
+      toast(`Opgeslagen als v${(active?.version || 0) + 1} — geldt vanaf het volgende Claude-artikel`);
       load(kind);
     } finally {
       setBusy(false);
@@ -120,7 +120,7 @@ export default function Instellingen() {
           />
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 12, color: 'var(--gray)', fontWeight: 600 }}>Variabelen — vult n8n bij elke run in:</span>
+            <span style={{ fontSize: 12, color: 'var(--gray)', fontWeight: 600 }}>Variabelen — Claude vult deze bij elke run in:</span>
             {VARS[kind].map(v => (
               <span
                 key={v}

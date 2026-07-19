@@ -55,6 +55,7 @@ export default function Pipeline() {
   const [bulkOpen, setBulkOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editValue, setEditValue] = useState('');
+  const [writingNow, setWritingNow] = useState(false);
   const dragId = useRef<number | null>(null);
   const [dragOverId, setDragOverId] = useState<number | null>(null);
 
@@ -154,6 +155,23 @@ export default function Pipeline() {
     if (!res.ok) toast(body.error, { kind: 'error' });
     else toast('Gepubliceerd — live op de site');
     load();
+  }
+
+  async function startWriting() {
+    if (writingNow) return;
+    setWritingNow(true);
+    try {
+      const res = await fetch('/api/topics/process', { method: 'POST' });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || 'Schrijven mislukt');
+      if (!body.topic) toast('De wachtrij is leeg');
+      else toast(`Draft gemaakt: ${body.article.title}`);
+    } catch (e: any) {
+      toast(e.message, { kind: 'error' });
+    } finally {
+      setWritingNow(false);
+      load();
+    }
   }
 
   if (error) {
@@ -278,6 +296,14 @@ export default function Pipeline() {
 
           {/* Wordt geschreven */}
           <Column color="var(--blue)" title="Wordt geschreven" count={writing.length}>
+            <button
+              className="btn-primary"
+              disabled={writingNow || queued.length === 0}
+              onClick={startWriting}
+              style={{ width: '100%', fontSize: 12.5, padding: '8px 10px' }}
+            >
+              {writingNow ? 'Claude schrijft…' : 'Schrijf volgend artikel met Claude'}
+            </button>
             {writing.map(t => (
               <div key={t.id} className="card" style={{ padding: 12 }}>
                 <div style={{ fontSize: 13.5, fontWeight: 600, lineHeight: 1.35 }}>{t.title}</div>
@@ -298,7 +324,7 @@ export default function Pipeline() {
               </div>
             )}
             <div style={{ fontSize: 11.5, color: 'var(--muted)', textAlign: 'center', padding: 6 }}>
-              n8n pakt elke 10 min het bovenste onderwerp · research → schrijven → SEO, zonder handwerk
+              Claude onderzoekt, schrijft en vult SEO in. Daarna staat de draft klaar voor beeldwerk.
             </div>
           </Column>
 
@@ -438,6 +464,8 @@ export default function Pipeline() {
           ready={ready}
           onChanged={load}
           onBulk={() => setBulkOpen(true)}
+          onWrite={startWriting}
+          writingNow={writingNow}
         />
       </div>
 
@@ -453,11 +481,12 @@ export default function Pipeline() {
 }
 
 function MobileHome({
-  queued, writing, failed, needImages, ready, onChanged, onBulk,
+  queued, writing, failed, needImages, ready, onChanged, onBulk, onWrite, writingNow,
 }: {
   queued: Topic[]; writing: Topic[]; failed: Topic[];
   needImages: Article[]; ready: Article[];
   onChanged: () => void; onBulk: () => void;
+  onWrite: () => Promise<void>; writingNow: boolean;
 }) {
   const [value, setValue] = useState('');
   const [busy, setBusy] = useState(false);
@@ -509,13 +538,21 @@ function MobileHome({
           </button>
         </div>
         <div style={{ marginTop: 10, fontSize: 12, color: 'var(--muted)' }}>
-          Alleen de titel is genoeg — categorie, district en tags vult de AI zelf in.
+          Claude onderzoekt het onderwerp, schrijft de draft en vult SEO in.
         </div>
       </div>
       <div style={{ flex: 1, padding: '14px 20px', display: 'flex', flexDirection: 'column', gap: 10, background: 'var(--sidebar)' }}>
         <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--gray)' }}>
           Wachtrij · {queued.length + writing.length + failed.length}
         </div>
+        <button
+          className="btn-primary"
+          disabled={writingNow || queued.length === 0}
+          onClick={onWrite}
+          style={{ width: '100%', fontSize: 13, padding: 11, borderRadius: 8 }}
+        >
+          {writingNow ? 'Claude schrijft…' : 'Schrijf volgend artikel met Claude'}
+        </button>
         {writing.map(t => (
           <div key={t.id} className="card" style={{ borderRadius: 10, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
             <div style={{ flex: 1 }}>

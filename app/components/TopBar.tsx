@@ -123,7 +123,7 @@ export default function TopBar({
           </span>
         ) : (
           <span className="desktop-only">
-            <span style={{ fontSize: 12.5, color: 'var(--gray)' }}>n8n draait · elke 10 min een run</span>
+            <span style={{ fontSize: 12.5, color: 'var(--gray)' }}>Claude gekoppeld · schrijven vanuit de wachtrij</span>
           </span>
         )}
         <span className="dot" style={{ background: mode === 'demo' ? 'var(--amber)' : 'var(--green)' }} />
