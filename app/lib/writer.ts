@@ -1,4 +1,4 @@
-import { activePrompt, claimNextTopic, completeTopic, failTopic } from './db';
+import { activeConstraints, activePrompt, claimNextTopic, completeTopic, failTopic } from './db';
 import { askClaudeJson } from './claude';
 import { createDraft, taxonomyChoices } from './wp';
 import { researchWithTavily } from './tavily';
@@ -22,8 +22,8 @@ export async function writeNextTopic() {
   const topic = await claimNextTopic();
   if (!topic) return { topic: null, article: null };
   try {
-    const [researchPrompt, writePrompt, seoPrompt, taxonomies] = await Promise.all([
-      activePrompt('research'), activePrompt('schrijf'), activePrompt('seo'), taxonomyChoices(),
+    const [researchPrompt, writePrompt, seoPrompt, taxonomies, constraints] = await Promise.all([
+      activePrompt('research'), activePrompt('schrijf'), activePrompt('seo'), taxonomyChoices(), activeConstraints('standaard'),
     ]);
     const sources = await researchWithTavily(topic.title);
     const research = await askClaudeJson(
@@ -39,7 +39,7 @@ export async function writeNextTopic() {
     const content = string(article.content, 'content');
     const subregel = string(article.subregel, 'subregel');
     const quote = string(article.quote, 'quote');
-    validateArticle({ title, subregel, introductie_tekst: intro, content, quote }, topic.title);
+    validateArticle({ title, subregel, introductie_tekst: intro, content, quote }, topic.title, constraints);
     const seo = await askClaudeJson(
       seoPrompt.content,
       `POST_TITLE: ${title}\nPOST_EXCERPT: ${intro}\nPOST_CONTENT: ${content}\nCATEGORY: ${strings(research.categories, 'categories').join(', ')}\nDISTRICT: ${string(research.district, 'district')}`,
