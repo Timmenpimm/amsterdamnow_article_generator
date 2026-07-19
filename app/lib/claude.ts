@@ -1,5 +1,7 @@
 const API_URL = 'https://api.anthropic.com/v1/messages';
-const MODEL = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514';
+// claude-sonnet-4-20250514 is met pensioen (404 sinds juni 2026); Opus 4.8 is
+// het huidige aanbevolen model. Override mogelijk via ANTHROPIC_MODEL.
+const MODEL = process.env.ANTHROPIC_MODEL || 'claude-opus-4-8';
 
 type ClaudeBlock = { type: string; text?: string };
 type ClaudeResponse = { content?: ClaudeBlock[]; stop_reason?: string; error?: { message?: string } };
@@ -31,7 +33,7 @@ function textFrom(response: ClaudeResponse): string {
 }
 
 export async function askClaudeJson(system: string, prompt: string, withResearch = false): Promise<Record<string, unknown>> {
-  const tools = withResearch ? [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }] : undefined;
+  const tools = withResearch ? [{ type: 'web_search_20260209', name: 'web_search', max_uses: 3 }] : undefined;
   const messages: Array<{ role: 'user' | 'assistant'; content: unknown }> = [{ role: 'user', content: prompt }];
   let response = await request({ model: MODEL, max_tokens: 6000, system, messages, ...(tools ? { tools } : {}) });
 
