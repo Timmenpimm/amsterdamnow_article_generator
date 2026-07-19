@@ -10,10 +10,12 @@ const LOGO = 'https://cdn.amsterdamnow.com/media/ams-logo-now.png';
 export default function TopBar({
   onAdded,
   onBulk,
+  onList,
   mode,
 }: {
   onAdded?: () => void;
   onBulk?: () => void;
+  onList?: () => void;
   mode?: 'live' | 'demo';
 }) {
   const pathname = usePathname();
@@ -106,6 +108,9 @@ export default function TopBar({
             </div>
             <button className="btn" style={{ whiteSpace: 'nowrap' }} onClick={onBulk}>
               Bulk toevoegen
+            </button>
+            <button className="btn" style={{ whiteSpace: 'nowrap' }} onClick={onList}>
+              Lijstartikel
             </button>
           </div>
         </div>

@@ -6,6 +6,7 @@ import type { Article, BoardData, Topic } from '@/lib/types';
 import { articlePhase, imageCount, REQUIRED_IMAGES } from '@/lib/types';
 import TopBar from './TopBar';
 import BulkModal from './BulkModal';
+import ListArticleModal from './ListArticleModal';
 import { toast } from './toast';
 
 function timeLabel(iso: string): string {
@@ -53,6 +54,7 @@ export default function Pipeline() {
   const [data, setData] = useState<BoardData | null>(null);
   const [error, setError] = useState('');
   const [bulkOpen, setBulkOpen] = useState(false);
+  const [listModalOpen, setListModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editValue, setEditValue] = useState('');
   const [writingNow, setWritingNow] = useState(false);
@@ -177,7 +179,7 @@ export default function Pipeline() {
   if (error) {
     return (
       <div>
-        <TopBar mode={data?.mode} onAdded={load} onBulk={() => setBulkOpen(true)} />
+        <TopBar mode={data?.mode} onAdded={load} onBulk={() => setBulkOpen(true)} onList={() => setListModalOpen(true)} />
         <div style={{ padding: 40, maxWidth: 560 }}>
           <div className="card" style={{ borderColor: 'var(--red-border)', padding: 16 }}>
             <div style={{ fontWeight: 800, color: 'var(--red-dark)' }}>Kan het bord niet laden</div>
@@ -191,7 +193,7 @@ export default function Pipeline() {
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-      <TopBar mode={data?.mode} onAdded={load} onBulk={() => setBulkOpen(true)} />
+      <TopBar mode={data?.mode} onAdded={load} onBulk={() => setBulkOpen(true)} onList={() => setListModalOpen(true)} />
 
       {data && data.persistent === false && (
         <div
@@ -476,6 +478,11 @@ export default function Pipeline() {
           onAdded={load}
         />
       )}
+      <ListArticleModal
+        open={listModalOpen}
+        onClose={() => setListModalOpen(false)}
+        onCreated={load}
+      />
     </div>
   );
 }
