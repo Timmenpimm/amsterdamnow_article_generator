@@ -1,5 +1,5 @@
 import {
-  activeListTopic, activePrompt, claimNextListTopic, completeTopic, failTopic,
+  activeConstraints, activeListTopic, activePrompt, claimNextListTopic, completeTopic, failTopic,
   getTopic, saveListProgress, saveListStructure,
 } from './db';
 import { askClaudeJson } from './claude';
@@ -90,6 +90,7 @@ async function stepSelect(topic: Topic): Promise<ListStepResult> {
 
 async function stepVerify(topic: Topic): Promise<ListStepResult> {
   const s = state(topic);
+  const constraints = await activeConstraints('lijst');
   const pending = s.items.filter(i => i.status === 'pending').slice(0, VERIFY_PER_TICK);
   if (!pending.length) {
     await saveListProgress(topic.id, { status: 'review', phase: 'review', state: s });
@@ -120,7 +121,7 @@ async function stepVerify(topic: Topic): Promise<ListStepResult> {
       item.bron = str(result.bron) || undefined;
       item.feiten = str(result.feiten);
       const q = result.quote as any;
-      item.quote = q && str(q.tekst) && str(q.bron) && quoteSourceAllowed(str(q.bron), str(q.herkomst))
+      item.quote = q && str(q.tekst) && str(q.bron) && quoteSourceAllowed(str(q.bron), constraints.quoteSourceBlacklist, str(q.herkomst))
         ? { tekst: str(q.tekst), bron: str(q.bron), herkomst: str(q.herkomst) || undefined }
         : null;
     } else {
@@ -168,7 +169,9 @@ async function stepCompose(topic: Topic): Promise<ListStepResult> {
   const s = state(topic);
   const verified = s.items.filter(i => i.status === 'verified');
   if (verified.length < 3) throw new Error('Minder dan 3 goedgekeurde items over; artikel niet te schrijven.');
-  const [prompt, taxonomies] = await Promise.all([activePrompt('lijst-schrijf'), taxonomyChoices()]);
+  const [prompt, taxonomies, constraints] = await Promise.all([
+    activePrompt('lijst-schrijf'), taxonomyChoices(), activeConstraints('lijst'),
+  ]);
   const input = {
     thema: topic.title,
     weekendgids: s.weekendgids,
@@ -202,7 +205,7 @@ async function stepCompose(topic: Topic): Promise<ListStepResult> {
   // Koppel de compositie terug aan de geverifieerde research en dwing de
   // redactionele regels af in code (quotes letterlijk, spreiding, verboden woorden).
   const validated = toValidated(composed, verified);
-  const meldingen = validateListArticle(validated);
+  const meldingen = validateListArticle(validated, constraints);
   s.artikel = composed;
   s.meldingen = meldingen;
   await saveListProgress(topic.id, { phase: 'finalize', state: s });

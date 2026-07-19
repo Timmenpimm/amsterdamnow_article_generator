@@ -1,6 +1,10 @@
 import path from 'path';
 import fs from 'fs';
-import type { ListArticleStructure, ListState, PromptKind, Topic, PromptVersion } from './types';
+import type {
+  ListArticleStructure, ListState, PromptKind, Topic, PromptVersion,
+  ConstraintKind, ConstraintVersion, StandaardConstraints, ListConstraints,
+} from './types';
+import { DEFAULT_STANDAARD_CONSTRAINTS, DEFAULT_LIST_CONSTRAINTS } from './types';
 
 const MISSING_SEED = '(Seed-bestand ontbreekt in deze deployment — plak hier de oorspronkelijke prompt en sla op als nieuwe versie.)';
 
@@ -87,6 +91,16 @@ async function initSqlite(): Promise<DB> {
       json TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS constraints (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      kind TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      content TEXT NOT NULL,
+      note TEXT NOT NULL DEFAULT '',
+      author TEXT NOT NULL DEFAULT 'Martijn',
+      created_at TEXT NOT NULL,
+      active INTEGER NOT NULL DEFAULT 0
+    );
   `);
   // Migratie voor databases van vóór de lijstpipeline.
   for (const col of ["type TEXT NOT NULL DEFAULT 'standaard'", 'phase TEXT', 'list_state TEXT']) {
@@ -146,6 +160,18 @@ async function initPostgres(): Promise<DB> {
       updated_at TEXT NOT NULL
     );
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS constraints (
+      id SERIAL PRIMARY KEY,
+      kind TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      content TEXT NOT NULL,
+      note TEXT NOT NULL DEFAULT '',
+      author TEXT NOT NULL DEFAULT 'Martijn',
+      created_at TEXT NOT NULL,
+      active INTEGER NOT NULL DEFAULT 0
+    );
+  `);
   // Migratie voor databases van vóór de lijstpipeline.
   await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'standaard'`);
   await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS phase TEXT`);
@@ -164,6 +190,7 @@ async function getDb(): Promise<DB> {
     dbPromise = (async () => {
       const db = PG_URL ? await initPostgres() : await initSqlite();
       await seedPrompts(db);
+      await seedConstraints(db);
       return db;
     })();
   }
@@ -191,6 +218,20 @@ async function seedPrompts(db: DB) {
     else if (seed !== MISSING_SEED) await db.run(
       `UPDATE prompts SET content = $1, note = $2, author = 'import', created_at = $3 WHERE kind = $4 AND active = 1 AND content = $5`,
       [seed, note, now(), kind, MISSING_SEED]
+    );
+  }
+}
+
+async function seedConstraints(db: DB) {
+  const defaults: [ConstraintKind, StandaardConstraints | ListConstraints, string][] = [
+    ['standaard', DEFAULT_STANDAARD_CONSTRAINTS, 'Standaardwaarden overgenomen uit de code.'],
+    ['lijst', DEFAULT_LIST_CONSTRAINTS, 'Standaardwaarden overgenomen uit de code.'],
+  ];
+  for (const [kind, content, note] of defaults) {
+    const row = await db.get('SELECT COUNT(*) AS c FROM constraints WHERE kind = $1', [kind]);
+    if (Number(row.c) === 0) await db.run(
+      `INSERT INTO constraints (kind, version, content, note, author, created_at, active) VALUES ($1, 1, $2, $3, 'import', $4, 1)`,
+      [kind, JSON.stringify(content), note, now()]
     );
   }
 }
@@ -389,6 +430,43 @@ export async function activatePromptVersion(id: number): Promise<PromptVersion |
   await db.run('UPDATE prompts SET active = 0 WHERE kind = $1', [row.kind]);
   await db.run('UPDATE prompts SET active = 1 WHERE id = $1', [id]);
   return db.get('SELECT * FROM prompts WHERE id = $1', [id]);
+}
+
+// ---------- constraints ----------
+
+export async function listConstraints(kind: ConstraintKind): Promise<ConstraintVersion[]> {
+  const db = await getDb();
+  return db.all('SELECT * FROM constraints WHERE kind = $1 ORDER BY version DESC', [kind]);
+}
+
+export async function activeConstraints(kind: 'standaard'): Promise<StandaardConstraints>;
+export async function activeConstraints(kind: 'lijst'): Promise<ListConstraints>;
+export async function activeConstraints(kind: ConstraintKind): Promise<StandaardConstraints | ListConstraints> {
+  const db = await getDb();
+  const row = await db.get('SELECT * FROM constraints WHERE kind = $1 AND active = 1', [kind]);
+  if (!row) throw new Error(`Geen actieve constraints gevonden voor ${kind}`);
+  return JSON.parse(row.content);
+}
+
+export async function saveConstraintVersion(
+  kind: ConstraintKind, content: StandaardConstraints | ListConstraints, note: string
+): Promise<ConstraintVersion> {
+  const db = await getDb();
+  const max = await db.get('SELECT COALESCE(MAX(version), 0) AS m FROM constraints WHERE kind = $1', [kind]);
+  await db.run('UPDATE constraints SET active = 0 WHERE kind = $1', [kind]);
+  return db.get(
+    `INSERT INTO constraints (kind, version, content, note, created_at, active) VALUES ($1, $2, $3, $4, $5, 1) RETURNING *`,
+    [kind, Number(max.m) + 1, JSON.stringify(content), note, now()]
+  );
+}
+
+export async function activateConstraintVersion(id: number): Promise<ConstraintVersion | undefined> {
+  const db = await getDb();
+  const row = await db.get('SELECT * FROM constraints WHERE id = $1', [id]);
+  if (!row) return undefined;
+  await db.run('UPDATE constraints SET active = 0 WHERE kind = $1', [row.kind]);
+  await db.run('UPDATE constraints SET active = 1 WHERE id = $1', [id]);
+  return db.get('SELECT * FROM constraints WHERE id = $1', [id]);
 }
 
 // ---------- demo store ----------
