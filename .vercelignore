@@ -1,0 +1,10 @@
+node_modules
+app/node_modules
+.next
+app/.next
+data
+seeds
+.env
+.env.*
+.vscode
+.DS_Store

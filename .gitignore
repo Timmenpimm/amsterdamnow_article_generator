@@ -1,0 +1,12 @@
+# Ignore node modules and build artifacts
+node_modules/
+app/node_modules/
+.next/
+app/.next/
+.DS_Store
+.vscode/
+data/
+seeds/
+.env
+.env.*
+public/*.log

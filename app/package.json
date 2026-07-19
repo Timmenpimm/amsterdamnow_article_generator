@@ -1,0 +1,24 @@
+{
+  "name": "amsterdamnow-artikel-tool",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3400",
+    "build": "next build",
+    "start": "next start -p 3400"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "next": "^15.3.3",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "pg": "^8.16.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22",
+    "@types/react": "^19",
+    "typescript": "^5",
+    "@types/pg": "^8.15.0"
+  }
+}
