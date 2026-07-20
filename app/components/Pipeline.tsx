@@ -31,7 +31,11 @@ function listProgress(t: Topic): string {
     const done = s.items.filter(i => i.status !== 'pending').length;
     return `Verificatie item ${Math.min(done + 1, s.items.length)}/${s.items.length}${s.rejected ? ` · ${s.rejected} afgevallen` : ''}`;
   }
-  if (t.phase === 'compose') return 'Claude schrijft het lijstartikel…';
+  if (t.phase === 'compose') {
+    const verifiedCount = s.items.filter(i => i.status === 'verified').length;
+    const written = (s.composeChunks || []).reduce((n, c) => n + c.items.length, 0);
+    return written > 0 ? `Artikel wordt geschreven · ${written}/${verifiedCount} items` : 'Claude schrijft het lijstartikel…';
+  }
   if (t.phase === 'finalize') return 'Valideren, interne links en SEO…';
   return '';
 }

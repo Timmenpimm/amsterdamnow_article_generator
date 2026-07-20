@@ -38,6 +38,7 @@ export interface ListState {
   rejected: number;
   meldingen: string[];       // bv. "quote-norm niet gehaald"
   artikel?: ComposedList;    // resultaat van de compose-fase
+  composeChunks?: ComposedList[]; // tussentijdse compose-blokken (elke tik schrijft er één, i.v.m. de 60s function-timeout)
 }
 
 export interface Topic {

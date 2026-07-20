@@ -180,50 +180,87 @@ function trimFeiten(feiten: string | undefined): string {
   return (lastSentenceEnd > MAX_FEITEN_CHARS * 0.5 ? cut.slice(0, lastSentenceEnd + 1) : cut).trim();
 }
 
+// Zelfs met getrimde research bleef één call voor alle items te traag bij
+// veel items (bevestigd: 11 items timede nog steeds uit op 60s). Compose
+// verwerkt daarom net als verify een beperkt aantal items per tik. Elke tik
+// vraagt het volledige lijst-schrijf-format op (dezelfde prompt, dus geen
+// aparte instructie nodig), maar met alleen de items van dat blok; we
+// gebruiken titel/subregel/introcontent/inleiding/afsluiting/categorieën van
+// het EERSTE blok en voegen de "items" van alle blokken samen. Dat kost een
+// klein beetje redactionele samenhang (de afsluiting kent alleen blok 1),
+// maar garandeert dat elke call binnen de tijdslimiet blijft, ongeacht het
+// totale aantal items.
+const COMPOSE_PER_TICK = 4;
+
 async function stepCompose(topic: Topic): Promise<ListStepResult> {
   const s = state(topic);
   const verified = s.items.filter(i => i.status === 'verified');
   if (verified.length < 3) throw new Error('Minder dan 3 goedgekeurde items over; artikel niet te schrijven.');
-  const [prompt, taxonomies, constraints] = await Promise.all([
-    activePrompt('lijst-schrijf'), taxonomyChoices(), activeConstraints('lijst'),
-  ]);
-  const input = {
-    thema: topic.title,
-    weekendgids: s.weekendgids,
-    beschikbare_categorieen: taxonomies.categories,
-    beschikbare_districten: taxonomies.districts,
-    items: verified.map(i => ({
-      naam: i.naam, feiten: trimFeiten(i.feiten), adres: i.adres, buurt: i.buurt,
-      extra_info: i.extra_info || null,
-      quote: i.quote ? { tekst: i.quote.tekst, bron: i.quote.bron } : null,
-    })),
-  };
-  const result = await askClaudeJson(
-    prompt.content,
-    `Schrijf het lijstartikel. Kies "categories" (1-2) en "district" uit de beschikbare lijsten en voeg 3-6 "tags" en een "rubriek" (Locatie of Evenement) toe aan je JSON-output, naast de velden uit je instructie.\n\n${JSON.stringify(input)}`,
-    false, FAST_WRITE_MODEL
-  );
-  const items = Array.isArray(result.items) ? result.items : [];
-  const composed: ComposedList = {
-    title: str(result.title),
-    subregel: str(result.subregel),
-    introcontent: str(result.introcontent),
-    inleiding: str(result.inleiding),
-    afsluiting: str(result.afsluiting),
-    items: items.map((i: any) => ({ naam: str(i.naam), beschrijving: str(i.beschrijving), plaats_quote: Boolean(i.plaats_quote) })),
-    categories: Array.isArray(result.categories) ? result.categories.map(str).filter(Boolean) : [],
-    district: str(result.district),
-    tags: Array.isArray(result.tags) ? result.tags.map(str).filter(Boolean) : [],
-    rubriek: str(result.rubriek) || 'Locatie',
-  };
+
+  const chunks = s.composeChunks || [];
+  const doneCount = chunks.reduce((n, c) => n + c.items.length, 0);
+  const nextBatch = verified.slice(doneCount, doneCount + COMPOSE_PER_TICK);
+
+  if (nextBatch.length > 0) {
+    const [prompt, taxonomies] = await Promise.all([activePrompt('lijst-schrijf'), taxonomyChoices()]);
+    const input = {
+      thema: topic.title,
+      weekendgids: s.weekendgids,
+      beschikbare_categorieen: taxonomies.categories,
+      beschikbare_districten: taxonomies.districts,
+      items: nextBatch.map(i => ({
+        naam: i.naam, feiten: trimFeiten(i.feiten), adres: i.adres, buurt: i.buurt,
+        extra_info: i.extra_info || null,
+        quote: i.quote ? { tekst: i.quote.tekst, bron: i.quote.bron } : null,
+      })),
+    };
+    const result = await askClaudeJson(
+      prompt.content,
+      `Schrijf het lijstartikel. Kies "categories" (1-2) en "district" uit de beschikbare lijsten en voeg 3-6 "tags" en een "rubriek" (Locatie of Evenement) toe aan je JSON-output, naast de velden uit je instructie.\n\n${JSON.stringify(input)}`,
+      false, FAST_WRITE_MODEL
+    );
+    const items = Array.isArray(result.items) ? result.items : [];
+    chunks.push({
+      title: str(result.title),
+      subregel: str(result.subregel),
+      introcontent: str(result.introcontent),
+      inleiding: str(result.inleiding),
+      afsluiting: str(result.afsluiting),
+      items: items.map((i: any) => ({ naam: str(i.naam), beschrijving: str(i.beschrijving), plaats_quote: Boolean(i.plaats_quote) })),
+      categories: Array.isArray(result.categories) ? result.categories.map(str).filter(Boolean) : [],
+      district: str(result.district),
+      tags: Array.isArray(result.tags) ? result.tags.map(str).filter(Boolean) : [],
+      rubriek: str(result.rubriek) || 'Locatie',
+    });
+    s.composeChunks = chunks;
+    const newDoneCount = doneCount + nextBatch.length;
+    if (newDoneCount < verified.length) {
+      await saveListProgress(topic.id, { state: s });
+      return { topic, phase: 'compose', done: false, progress: `Artikel wordt geschreven · ${newDoneCount}/${verified.length} items` };
+    }
+  }
+
+  const composed: ComposedList = { ...chunks[0], items: chunks.flatMap(c => c.items) };
   if (!composed.title || !composed.items.length) throw new Error('De compositiefase gaf geen volledig artikel terug.');
 
   // Koppel de compositie terug aan de geverifieerde research en dwing de
   // redactionele regels af in code (quotes letterlijk, spreiding, verboden woorden).
+  const constraints = await activeConstraints('lijst');
   const validated = toValidated(composed, verified);
-  const meldingen = validateListArticle(validated, constraints);
+  let meldingen: string[];
+  try {
+    meldingen = validateListArticle(validated, constraints);
+  } catch (err) {
+    // Bij afkeuring opnieuw laten schrijven i.p.v. dezelfde afgekeurde tekst
+    // te blijven valideren: wis de opgebouwde blokken zodat de volgende
+    // poging vers begint.
+    s.composeChunks = undefined;
+    await saveListProgress(topic.id, { state: s });
+    throw err;
+  }
   s.artikel = composed;
   s.meldingen = meldingen;
+  s.composeChunks = undefined;
   await saveListProgress(topic.id, { phase: 'finalize', state: s });
   return { topic, phase: 'finalize', done: false, progress: 'Artikel geschreven en gevalideerd · afronden' };
 }
