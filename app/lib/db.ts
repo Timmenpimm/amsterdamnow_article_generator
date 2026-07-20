@@ -651,7 +651,12 @@ export async function activeConstraints(kind: ConstraintKind): Promise<Standaard
   const db = await getDb();
   const row = await db.get('SELECT * FROM constraints WHERE kind = $1 AND active = 1', [kind]);
   if (!row) throw new Error(`Geen actieve constraints gevonden voor ${kind}`);
-  return JSON.parse(row.content);
+  // Oudere opgeslagen versies missen velden die pas later aan het type zijn
+  // toegevoegd (bv. quoteNormMandatory); merge met de codedefaults zodat
+  // nieuwe regels ook meteen gelden zonder dat iemand Instellingen hoeft te
+  // openen en op te slaan.
+  const defaults = kind === 'standaard' ? DEFAULT_STANDAARD_CONSTRAINTS : DEFAULT_LIST_CONSTRAINTS;
+  return { ...defaults, ...JSON.parse(row.content) };
 }
 
 export async function saveConstraintVersion(
