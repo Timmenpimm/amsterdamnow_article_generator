@@ -1,5 +1,5 @@
 import { activeConstraints, activePrompt, claimNextTopic, completeTopic, failTopic } from './db';
-import { askClaudeJson } from './claude';
+import { askClaudeJson, FAST_WRITE_MODEL } from './claude';
 import { createDraft, taxonomyChoices } from './wp';
 import { researchWithTavily } from './tavily';
 import { validateArticle } from './validation';
@@ -33,6 +33,7 @@ export async function writeNextTopic() {
     const article = await askClaudeJson(
       writePrompt.content,
       `Onderwerp: ${topic.title}\n\nGebruik uitsluitend deze gecontroleerde research van Tavily. Schrijf het artikel als geldige JSON volgens de actieve prompt.\n\n${JSON.stringify(research)}`,
+      false, FAST_WRITE_MODEL,
     );
     const title = string(article.title, 'title');
     const intro = string(article.introductie_tekst, 'introductie_tekst');

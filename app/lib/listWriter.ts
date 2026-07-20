@@ -2,7 +2,7 @@ import {
   activeConstraints, activeListTopic, activePrompt, claimNextListTopic, completeTopic, failTopic,
   getTopic, saveListProgress, saveListStructure,
 } from './db';
-import { askClaudeJson } from './claude';
+import { askClaudeJson, FAST_WRITE_MODEL } from './claude';
 import { researchWithTavily } from './tavily';
 import { createDraft, findArticleLink, taxonomyChoices } from './wp';
 import { assembleListHtml } from './listHtml';
@@ -185,7 +185,8 @@ async function stepCompose(topic: Topic): Promise<ListStepResult> {
   };
   const result = await askClaudeJson(
     prompt.content,
-    `Schrijf het lijstartikel. Kies "categories" (1-2) en "district" uit de beschikbare lijsten en voeg 3-6 "tags" en een "rubriek" (Locatie of Evenement) toe aan je JSON-output, naast de velden uit je instructie.\n\n${JSON.stringify(input)}`
+    `Schrijf het lijstartikel. Kies "categories" (1-2) en "district" uit de beschikbare lijsten en voeg 3-6 "tags" en een "rubriek" (Locatie of Evenement) toe aan je JSON-output, naast de velden uit je instructie.\n\n${JSON.stringify(input)}`,
+    false, FAST_WRITE_MODEL
   );
   const items = Array.isArray(result.items) ? result.items : [];
   const composed: ComposedList = {
