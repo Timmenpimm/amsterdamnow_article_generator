@@ -91,6 +91,8 @@ export default function Pipeline() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editValue, setEditValue] = useState('');
   const [writingNow, setWritingNow] = useState(false);
+  const writingRef = useRef(false);
+  const [autoOn, setAutoOn] = useState(false);
   const dragId = useRef<number | null>(null);
   const [dragOverId, setDragOverId] = useState<number | null>(null);
 
@@ -259,8 +261,9 @@ export default function Pipeline() {
     load();
   }
 
-  async function startWriting() {
-    if (writingNow) return;
+  async function startWriting(opts?: { silent?: boolean }) {
+    if (writingRef.current) return;
+    writingRef.current = true;
     setWritingNow(true);
     try {
       // Beide pipelines bestaan uit meerdere fase-stappen: blijf aanroepen tot
@@ -280,7 +283,8 @@ export default function Pipeline() {
             await new Promise(r => setTimeout(r, 3000));
             continue;
           }
-          toast('De wachtrij is leeg');
+          // Bij de auto-write-loop (opts.silent) een lege wachtrij stil overslaan.
+          if (!opts?.silent) toast('De wachtrij is leeg');
           return;
         }
         const step = body.list || body.standaard;
@@ -297,10 +301,22 @@ export default function Pipeline() {
     } catch (e: any) {
       toast(e.message, { kind: 'error' });
     } finally {
+      writingRef.current = false;
       setWritingNow(false);
       load();
     }
   }
+
+  // Automatisch schrijven: zolang autoOn aan staat, elke 5 minuten een ronde
+  // starten (ook met lege wachtrij — dan gebeurt er stil niets die ronde).
+  // Uitzetten stopt alleen de vólgende ronde; een lopende ronde maakt af.
+  useEffect(() => {
+    if (!autoOn) return;
+    startWriting();
+    const id = setInterval(() => startWriting({ silent: true }), 5 * 60 * 1000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoOn]);
 
   if (error) {
     return (
@@ -429,11 +445,13 @@ export default function Pipeline() {
           <Column color="var(--blue)" title="Wordt geschreven" count={writing.length + review.length}>
             <button
               className="btn-primary"
-              disabled={writingNow || (queued.length === 0 && writing.length === 0)}
-              onClick={startWriting}
-              style={{ width: '100%', fontSize: 12.5, padding: '8px 10px' }}
+              onClick={() => setAutoOn(v => !v)}
+              style={{
+                width: '100%', fontSize: 12.5, padding: '8px 10px',
+                background: autoOn ? 'var(--blue)' : undefined,
+              }}
             >
-              {writingNow ? 'Claude schrijft…' : 'Schrijf volgend artikel met Claude'}
+              {writingNow ? 'Claude schrijft… ⏸' : autoOn ? '⏸ Automatisch schrijven (aan)' : '▶ Automatisch schrijven'}
             </button>
             {review.map(t => {
               const s = parseListState(t);
@@ -632,7 +650,8 @@ export default function Pipeline() {
           ready={ready}
           onChanged={load}
           onBulk={() => setBulkOpen(true)}
-          onWrite={startWriting}
+          onToggleAuto={() => setAutoOn(v => !v)}
+          autoOn={autoOn}
           writingNow={writingNow}
         />
       </div>
@@ -661,12 +680,12 @@ export default function Pipeline() {
 }
 
 function MobileHome({
-  queued, writing, failed, needImages, ready, onChanged, onBulk, onWrite, writingNow,
+  queued, writing, failed, needImages, ready, onChanged, onBulk, onToggleAuto, autoOn, writingNow,
 }: {
   queued: Topic[]; writing: Topic[]; failed: Topic[];
   needImages: Article[]; ready: Article[];
   onChanged: () => void; onBulk: () => void;
-  onWrite: () => Promise<void>; writingNow: boolean;
+  onToggleAuto: () => void; autoOn: boolean; writingNow: boolean;
 }) {
   const [value, setValue] = useState('');
   const [busy, setBusy] = useState(false);
@@ -727,11 +746,13 @@ function MobileHome({
         </div>
         <button
           className="btn-primary"
-          disabled={writingNow || queued.length === 0}
-          onClick={onWrite}
-          style={{ width: '100%', fontSize: 13, padding: 11, borderRadius: 8 }}
+          onClick={onToggleAuto}
+          style={{
+            width: '100%', fontSize: 13, padding: 11, borderRadius: 8,
+            background: autoOn ? 'var(--blue)' : undefined,
+          }}
         >
-          {writingNow ? 'Claude schrijft…' : 'Schrijf volgend artikel met Claude'}
+          {writingNow ? 'Claude schrijft… ⏸' : autoOn ? '⏸ Automatisch schrijven (aan)' : '▶ Automatisch schrijven'}
         </button>
         {writing.map(t => (
           <div key={t.id} className="card" style={{ borderRadius: 10, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
