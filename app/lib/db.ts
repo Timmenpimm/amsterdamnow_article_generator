@@ -3,6 +3,7 @@ import fs from 'fs';
 import type {
   ListArticleStructure, ListState, PromptKind, Topic, PromptVersion,
   ConstraintKind, ConstraintVersion, StandaardConstraints, ListConstraints,
+  Source, SourceSummary, SourceFinding, FindingState,
 } from './types';
 import { DEFAULT_STANDAARD_CONSTRAINTS, DEFAULT_LIST_CONSTRAINTS } from './types';
 import { PROMPT_SEEDS } from './prompt-seeds';
@@ -98,6 +99,27 @@ async function initSqlite(): Promise<DB> {
       created_at TEXT NOT NULL,
       active INTEGER NOT NULL DEFAULT 0
     );
+    CREATE TABLE IF NOT EXISTS sources (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL DEFAULT '',
+      url TEXT NOT NULL,
+      label TEXT NOT NULL DEFAULT '',
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      last_scan_at TEXT,
+      last_scan_status TEXT,
+      last_scan_error TEXT,
+      last_new_count INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS source_findings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      source_id INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      dedup_key TEXT NOT NULL,
+      found_at TEXT NOT NULL,
+      topic_id INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_findings_source ON source_findings (source_id);
   `);
   // Migratie voor databases van vóór de lijstpipeline.
   for (const col of ["type TEXT NOT NULL DEFAULT 'standaard'", 'phase TEXT', 'list_state TEXT', 'locked_at TEXT', 'lock_owner TEXT']) {
@@ -171,6 +193,31 @@ async function initPostgres(): Promise<DB> {
       active INTEGER NOT NULL DEFAULT 0
     );
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS sources (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL DEFAULT '',
+      url TEXT NOT NULL,
+      label TEXT NOT NULL DEFAULT '',
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      last_scan_at TEXT,
+      last_scan_status TEXT,
+      last_scan_error TEXT,
+      last_new_count INTEGER
+    );
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS source_findings (
+      id SERIAL PRIMARY KEY,
+      source_id INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      dedup_key TEXT NOT NULL,
+      found_at TEXT NOT NULL,
+      topic_id INTEGER
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_findings_source ON source_findings (source_id)`);
   // Migratie voor databases van vóór de lijstpipeline.
   await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'standaard'`);
   await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS phase TEXT`);
@@ -539,6 +586,141 @@ export async function activateConstraintVersion(id: number): Promise<ConstraintV
   await db.run('UPDATE constraints SET active = 0 WHERE kind = $1', [row.kind]);
   await db.run('UPDATE constraints SET active = 1 WHERE id = $1', [id]);
   return db.get('SELECT * FROM constraints WHERE id = $1', [id]);
+}
+
+// ---------- bronnen (agenda-scanner) ----------
+
+// Dedup-sleutel per bron: kleine letters, randspaties weg, interne spaties samen.
+function findingKey(title: string): string {
+  return title.toLowerCase().trim().replace(/\s+/g, ' ');
+}
+
+// Canonieke opslag-URL: protocol afdwingen, trailing slashes weg.
+function normalizeSourceUrl(raw: string): string {
+  let u = (raw || '').trim();
+  if (!u) return u;
+  if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
+  return u.replace(/\/+$/, '');
+}
+
+function findingState(topicId: number | null, topicStatus: string | null | undefined): FindingState {
+  if (topicId == null) return 'deleted';
+  if (topicStatus == null) return 'deleted'; // topic bestond, maar is door de redactie verwijderd
+  if (topicStatus === 'done') return 'written';
+  return 'queued';
+}
+
+export async function listSources(): Promise<SourceSummary[]> {
+  const db = await getDb();
+  const sources = await db.all('SELECT * FROM sources ORDER BY created_at ASC, id ASC') as Source[];
+  const rows = await db.all(
+    `SELECT f.id, f.source_id, f.title, f.found_at, f.topic_id, t.status AS topic_status
+     FROM source_findings f LEFT JOIN topics t ON t.id = f.topic_id
+     ORDER BY f.found_at DESC, f.id DESC`
+  );
+  const recent = new Map<number, SourceFinding[]>();
+  const counts = new Map<number, number>();
+  for (const r of rows) {
+    const sid = Number(r.source_id);
+    counts.set(sid, (counts.get(sid) || 0) + 1);
+    const list = recent.get(sid) || [];
+    if (list.length < 6) {
+      list.push({ id: Number(r.id), title: r.title, found_at: r.found_at, state: findingState(r.topic_id, r.topic_status) });
+    }
+    recent.set(sid, list);
+  }
+  return sources.map(s => ({
+    ...s,
+    active: (Number(s.active) ? 1 : 0) as 0 | 1,
+    foundCount: counts.get(Number(s.id)) || 0,
+    recent: recent.get(Number(s.id)) || [],
+  }));
+}
+
+export async function getSource(id: number): Promise<Source | undefined> {
+  const db = await getDb();
+  return await db.get('SELECT * FROM sources WHERE id = $1', [id]) as Source | undefined;
+}
+
+export async function activeSources(): Promise<Source[]> {
+  const db = await getDb();
+  return db.all('SELECT * FROM sources WHERE active = 1 ORDER BY created_at ASC, id ASC');
+}
+
+export async function addSource(url: string, name?: string, label?: string): Promise<{ source: Source; duplicate: boolean }> {
+  const db = await getDb();
+  const canonical = normalizeSourceUrl(url);
+  if (!canonical) throw new Error('Geef een geldige URL op.');
+  const existing = await db.get('SELECT * FROM sources WHERE lower(url) = lower($1)', [canonical]);
+  if (existing) return { source: existing as Source, duplicate: true };
+  let host = canonical;
+  try { host = new URL(canonical).hostname.replace(/^www\./, ''); } catch { /* host blijft de hele URL */ }
+  const finalName = (name && name.trim()) || host;
+  const row = await db.get(
+    `INSERT INTO sources (name, url, label, active, created_at) VALUES ($1, $2, $3, 1, $4) RETURNING *`,
+    [finalName, canonical, (label || '').trim(), now()]
+  );
+  return { source: row as Source, duplicate: false };
+}
+
+export async function setSourceActive(id: number, active: boolean) {
+  const db = await getDb();
+  await db.run('UPDATE sources SET active = $1 WHERE id = $2', [active ? 1 : 0, id]);
+}
+
+export async function renameSource(id: number, name: string) {
+  const db = await getDb();
+  await db.run('UPDATE sources SET name = $1 WHERE id = $2', [name.trim(), id]);
+}
+
+export async function deleteSource(id: number) {
+  const db = await getDb();
+  await db.run('DELETE FROM source_findings WHERE source_id = $1', [id]);
+  await db.run('DELETE FROM sources WHERE id = $1', [id]);
+}
+
+export async function updateSourceScan(
+  id: number,
+  upd: { status: 'ok' | 'error'; error?: string | null; newCount?: number }
+) {
+  const db = await getDb();
+  await db.run(
+    `UPDATE sources SET last_scan_at = $1, last_scan_status = $2, last_scan_error = $3, last_new_count = $4 WHERE id = $5`,
+    [now(), upd.status, upd.error ?? null, upd.newCount ?? null, id]
+  );
+}
+
+export async function getFindingKeys(sourceId: number): Promise<Set<string>> {
+  const db = await getDb();
+  const rows = await db.all('SELECT dedup_key FROM source_findings WHERE source_id = $1', [sourceId]);
+  return new Set(rows.map(r => r.dedup_key as string));
+}
+
+export async function recordFindings(sourceId: number, entries: { title: string; topicId: number | null }[]) {
+  const db = await getDb();
+  for (const e of entries) {
+    await db.run(
+      `INSERT INTO source_findings (source_id, title, dedup_key, found_at, topic_id) VALUES ($1, $2, $3, $4, $5)`,
+      [sourceId, e.title, findingKey(e.title), now(), e.topicId]
+    );
+  }
+}
+
+// Zoek topic-id's terug op titel (lower+trim, zoals addTopics dedupt), zodat een
+// vondst aan het juiste topic gekoppeld kan worden — ook als addTopics 'm als
+// "al bekend" oversloeg (dan wijst de vondst naar het bestaande topic).
+export async function topicIdsByTitle(titles: string[]): Promise<Map<string, number>> {
+  const db = await getDb();
+  const map = new Map<string, number>();
+  const keys = titles.map(t => t.toLowerCase().trim()).filter(Boolean);
+  if (!keys.length) return map;
+  const placeholders = keys.map((_, i) => `$${i + 1}`).join(', ');
+  const rows = await db.all(
+    `SELECT id, lower(trim(title)) AS t FROM topics WHERE lower(trim(title)) IN (${placeholders})`,
+    keys
+  );
+  for (const r of rows) if (!map.has(r.t)) map.set(r.t as string, Number(r.id));
+  return map;
 }
 
 // ---------- demo store ----------
