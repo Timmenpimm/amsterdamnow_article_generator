@@ -280,6 +280,7 @@ export interface Source {
   last_scan_status: 'ok' | 'error' | null;
   last_scan_error: string | null;
   last_new_count: number | null; // aantal nieuwe onderwerpen bij de laatste scan
+  content_hash: string | null;   // sha256 van de paginatekst bij de laatst geslaagde scan
 }
 
 // Weergavestatus van een vondst, afgeleid uit de topics-tabel bij het lezen:
