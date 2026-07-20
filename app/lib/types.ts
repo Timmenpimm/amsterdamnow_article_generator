@@ -81,6 +81,7 @@ export interface StandaardState {
   article?: { title: string; subregel: string; introductie_tekst: string; content: string; quote: string };
   draftPayload?: Record<string, unknown>; // afgekeurde Claude-JSON, input voor de herkansing
   rejectReason?: string;                  // afkeurreden van de vorige poging
+  schrijfAttempts?: number;               // aantal afgekeurde herkansingen tot nu toe
 }
 
 export function parseStandaardState(topic: Topic): StandaardState | null {

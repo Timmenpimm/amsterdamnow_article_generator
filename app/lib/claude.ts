@@ -109,13 +109,13 @@ function outputConfig(schema?: Record<string, unknown>): Record<string, unknown>
 // thinking-veld ontbreekt (Opus 4.8 juist niet), en die denktokens tellen mee
 // in max_tokens én in de output-facturering. Op productie gezien (2026-07-20):
 // mét (impliciet) thinking sprong de research-output van ~1100 naar ~1500-2600
-// tokens en liep de schrijffase bij muziekonderwerpen tegen de 3000-token-cap;
-// zónder thinking miste het schrijven juist nét de woordtargets (intro 38/40,
-// quote 14/15, content 346/350). Daarom per taaksoort: extractie-/formulewerk
-// (research, verificatie, SEO, scanner, beelden) denkt niet; het échte
-// schrijfwerk (artikel en lijst-compose) denkt wél, met een ruimere
-// max_tokens zodat het denken de output niet afkapt. Expliciet 'disabled'
-// wordt door Sonnet 5 én Opus 4.8 geaccepteerd.
+// tokens en liep de schrijffase bij muziekonderwerpen tegen de 3000-token-cap.
+// Expliciet adaptive thinking + structured outputs bleek nog slechter: élke
+// schrijfcall werd afgekapt, zelfs op 4500 tokens (4/4 getest op productie,
+// 2026-07-20). Daarom staat thinking overal uit; near-miss-afkeuringen worden
+// opgevangen met extra herkansingsrondes (zie writer.ts). De withThinking-
+// parameter blijft beschikbaar voor toekomstige, gerichte experimenten.
+// Expliciet 'disabled' wordt door Sonnet 5 én Opus 4.8 geaccepteerd.
 function thinkingConfig(withThinking: boolean): Record<string, unknown> {
   return { thinking: { type: withThinking ? 'adaptive' : 'disabled' } };
 }
