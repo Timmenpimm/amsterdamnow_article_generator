@@ -165,6 +165,21 @@ export async function approveItems(topicId: number, includeNames: string[]): Pro
   return (await getTopic(topicId))!;
 }
 
+// Compose stuurt de volledige lijst research in één Claude-call; bij veel
+// items (elk met een lang "feiten"-researchblok) duurde die call langer dan
+// de 60s function-timeout. De schrijfstap heeft niet de volledige
+// researchtekst nodig om een beschrijving van 3-5 zinnen te schrijven — een
+// bondige samenvatting per item volstaat en houdt de call snel, ongeacht het
+// aantal items.
+const MAX_FEITEN_CHARS = 500;
+
+function trimFeiten(feiten: string | undefined): string {
+  if (!feiten || feiten.length <= MAX_FEITEN_CHARS) return feiten || '';
+  const cut = feiten.slice(0, MAX_FEITEN_CHARS);
+  const lastSentenceEnd = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('.\n'));
+  return (lastSentenceEnd > MAX_FEITEN_CHARS * 0.5 ? cut.slice(0, lastSentenceEnd + 1) : cut).trim();
+}
+
 async function stepCompose(topic: Topic): Promise<ListStepResult> {
   const s = state(topic);
   const verified = s.items.filter(i => i.status === 'verified');
@@ -178,7 +193,7 @@ async function stepCompose(topic: Topic): Promise<ListStepResult> {
     beschikbare_categorieen: taxonomies.categories,
     beschikbare_districten: taxonomies.districts,
     items: verified.map(i => ({
-      naam: i.naam, feiten: i.feiten, adres: i.adres, buurt: i.buurt,
+      naam: i.naam, feiten: trimFeiten(i.feiten), adres: i.adres, buurt: i.buurt,
       extra_info: i.extra_info || null,
       quote: i.quote ? { tekst: i.quote.tekst, bron: i.quote.bron } : null,
     })),
