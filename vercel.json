@@ -13,7 +13,13 @@
     { "src": "^/api/articles/([^/]+)/publish/?$", "dest": "/app/api/articles/[id]/publish?id=$1" },
     { "src": "^/api/articles/([^/]+)/?$", "dest": "/app/api/articles/[id]?id=$1" },
     { "src": "^/api/prompts/([^/]+)/activate/?$", "dest": "/app/api/prompts/[id]/activate?id=$1" },
+    { "src": "^/api/sources/scan/?$", "dest": "/app/api/sources/scan" },
+    { "src": "^/api/sources/([^/]+)/scan/?$", "dest": "/app/api/sources/[id]/scan?id=$1" },
+    { "src": "^/api/sources/([^/]+)/?$", "dest": "/app/api/sources/[id]?id=$1" },
     { "src": "^/artikel/([^/]+)/?$", "dest": "/app/artikel/[id]?id=$1" },
     { "src": "/(.*)", "dest": "/app/$1", "check": true }
+  ],
+  "crons": [
+    { "path": "/api/sources/scan", "schedule": "0 5 * * *" }
   ]
 }

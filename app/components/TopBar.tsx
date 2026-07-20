@@ -74,6 +74,7 @@ export default function TopBar({
       <nav style={{ display: 'flex', gap: 4 }}>
         <Link href="/" className={`navlink${pathname === '/' ? ' active' : ''}`}>Pipeline</Link>
         <Link href="/archief" className={`navlink${pathname === '/archief' ? ' active' : ''}`}>Archief</Link>
+        <Link href="/bronnen" className={`navlink${pathname === '/bronnen' ? ' active' : ''}`}>Bronnen</Link>
         <Link href="/instellingen" className={`navlink${pathname === '/instellingen' ? ' active' : ''}`}>
           Prompt &amp; instellingen
         </Link>

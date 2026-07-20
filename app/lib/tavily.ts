@@ -28,3 +28,52 @@ export async function researchWithTavily(topic: string): Promise<ResearchSource[
   if (!sources.length) throw new Error('Tavily vond geen bruikbare bronnen voor dit onderwerp.');
   return sources;
 }
+
+// Leest de tekst van één specifieke pagina uit voor de bronscanner. Eerst via
+// Tavily /extract (rendert JS, zoals veel agendapagina's nodig hebben); zonder
+// key of bij een lege/mislukte extract valt het terug op een platte fetch.
+export async function extractPageText(url: string): Promise<string> {
+  const apiKey = process.env.TAVILY_API_KEY;
+  if (apiKey) {
+    try {
+      const res = await fetch('https://api.tavily.com/extract', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({ urls: [url], extract_depth: 'basic' }),
+        cache: 'no-store',
+      });
+      const data = await res.json().catch(() => ({})) as { results?: { raw_content?: string }[] };
+      const text = (data.results?.[0]?.raw_content || '').trim();
+      if (res.ok && text) return text.slice(0, 16_000);
+    } catch { /* val door naar platte fetch */ }
+  }
+  return plainFetchText(url);
+}
+
+async function plainFetchText(url: string): Promise<string> {
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AmsterdamNOW-bronscanner)' },
+      cache: 'no-store',
+    });
+  } catch {
+    throw new Error('Bron niet bereikbaar — de pagina gaf geen antwoord.');
+  }
+  if (!res.ok) throw new Error(`Bron niet bereikbaar — de pagina gaf HTTP ${res.status}.`);
+  const text = stripHtml(await res.text());
+  if (!text) throw new Error('De pagina gaf geen leesbare inhoud.');
+  return text.slice(0, 16_000);
+}
+
+function stripHtml(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&[a-z#0-9]+;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}

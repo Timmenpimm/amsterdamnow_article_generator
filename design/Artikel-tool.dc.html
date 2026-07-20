@@ -19,6 +19,342 @@ a:hover { color: #d0342c; }
 ::placeholder { color: #a4a29b; }
 </style>
 </helmet>
+<section style="padding: 56px 64px 0; display: flex; flex-direction: column; gap: 48px;">
+
+  <!-- ============ 3a BRONNEN — gevuld ============ -->
+  <div id="3a" data-screen-label="3a Bronnen gevuld" style="display: flex; flex-direction: column; gap: 12px;">
+    <div style="display: flex; align-items: baseline; gap: 12px;">
+      <span style="background: #d0342c; color: #fff; font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 4px;">3a</span>
+      <span style="font-size: 15px; font-weight: 700;">Bronnen — agenda-scanner</span>
+      <span style="font-size: 13px; color: #71706b;">redactie geeft agendapagina's op · de scanner zet nieuwe items direct als onderwerp in de wachtrij · elke bron onthoudt wat al gevonden is</span>
+    </div>
+    <div style="width: 1500px; background: #fafaf8; border: 1px solid #d8d6d0; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 12px rgba(20,20,18,0.06);">
+      <!-- topbar -->
+      <div style="display: flex; align-items: center; gap: 20px; padding: 12px 20px; border-bottom: 1px solid #e3e1dc; background: #fff;">
+        <img src="https://cdn.amsterdamnow.com/media/ams-logo-now.png" alt="Amsterdam NOW" style="height: 16px; width: auto; background: #171715; padding: 7px 10px; border-radius: 6px; box-sizing: content-box;">
+        <div style="display: flex; gap: 4px;">
+          <a href="#1a" style="font-size: 13.5px; font-weight: 500; padding: 6px 12px; color: #71706b; border-radius: 6px;">Pipeline</a>
+          <span style="font-size: 13.5px; font-weight: 500; padding: 6px 12px; color: #71706b; border-radius: 6px;">Archief</span>
+          <span style="font-size: 13.5px; font-weight: 700; padding: 6px 12px; background: #f1f0ec; border-radius: 6px;">Bronnen</span>
+          <a href="#2a" style="font-size: 13.5px; font-weight: 500; padding: 6px 12px; color: #71706b; border-radius: 6px;">Prompt &amp; instellingen</a>
+        </div>
+        <div style="margin-left: auto; display: flex; align-items: center; gap: 14px;">
+          <span style="font-size: 12.5px; color: #71706b;">n8n draait · volgende run over 4 min</span>
+          <span style="width: 8px; height: 8px; border-radius: 50%; background: #3d8a52;"></span>
+          <span style="width: 30px; height: 30px; border-radius: 50%; background: #171715; color: #fff; display: grid; place-items: center; font-size: 12.5px; font-weight: 700;">M</span>
+        </div>
+      </div>
+
+      <div style="display: flex; min-height: 0;">
+        <!-- hoofdkolom: zone A + zone B -->
+        <div style="flex: 1; min-width: 0; padding: 20px 24px 24px; display: flex; flex-direction: column; gap: 18px; background: #fff;">
+
+          <!-- ZONE A — bron toevoegen -->
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <div style="flex: 1; display: flex; align-items: center; gap: 10px; border: 1.5px solid #171715; border-radius: 8px; padding: 8px 14px; background: #fff;">
+              <span style="font-size: 15px; font-weight: 700;">＋</span>
+              <span style="font-size: 13.5px; color: #a4a29b;">Plak een agenda- of programmapagina — https://…</span>
+            </div>
+            <span style="font-size: 12.5px; color: #a4a29b; white-space: nowrap;">naam optioneel</span>
+            <button style="font-family: inherit; font-size: 13px; font-weight: 800; padding: 9px 18px; background: #171715; color: #fff; border: none; border-radius: 8px; cursor: pointer; white-space: nowrap;">Bron toevoegen</button>
+          </div>
+
+          <!-- ZONE B — bronnenlijst -->
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="font-size: 11.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: #71706b;">Bronnen</span>
+            <span style="font-size: 12px; font-weight: 600; color: #71706b;">6</span>
+            <span style="margin-left: auto; font-size: 12px; color: #a4a29b;">5 actief · 1 gepauzeerd</span>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 10px;">
+
+            <!-- BRON 1 — Paradiso · geslaagd · UITGEKLAPT -->
+            <div style="background: #fff; border: 1.5px solid #171715; border-radius: 10px; overflow: hidden; box-shadow: 0 1px 3px rgba(20,20,18,0.05);">
+              <div style="padding: 14px 16px; display: flex; flex-direction: column; gap: 10px;">
+                <div style="display: flex; align-items: flex-start; gap: 12px;">
+                  <div style="min-width: 0; flex: 1;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <span style="font-size: 14px; font-weight: 700;">Paradiso</span>
+                      <span style="font-size: 11px; color: #71706b; background: #f1f0ec; padding: 2px 7px; border-radius: 5px;">poppodium</span>
+                    </div>
+                    <div style="font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: #71706b; margin-top: 3px;">paradiso.nl/agenda</div>
+                  </div>
+                  <span style="width: 34px; height: 20px; border-radius: 999px; background: #171715; position: relative; flex-shrink: 0; cursor: pointer; margin-top: 2px;"><span style="position: absolute; right: 2px; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff;"></span></span>
+                  <button style="font-family: inherit; font-size: 12px; font-weight: 600; padding: 6px 11px; background: #fff; border: 1px solid #d8d6d0; border-radius: 7px; cursor: pointer; white-space: nowrap;">Nu scannen</button>
+                  <button style="font-family: inherit; font-size: 12.5px; font-weight: 600; padding: 6px 9px; background: #fff; border: 1px solid #d8d6d0; border-radius: 7px; cursor: pointer; color: #71706b;">✕</button>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                  <span style="width: 8px; height: 8px; border-radius: 50%; background: #3d8a52; flex-shrink: 0;"></span>
+                  <span style="font-size: 12.5px; font-weight: 600; color: #2c6e3f;">Laatste scan geslaagd</span>
+                  <span style="font-size: 12.5px; color: #71706b;">vandaag 07:00 · <strong style="font-weight: 700; color: #171715;">2 nieuwe onderwerpen</strong></span>
+                  <span style="color: #d8d6d0;">·</span>
+                  <span style="font-size: 12.5px; color: #71706b;">34 gevonden sinds 3 jun</span>
+                </div>
+              </div>
+              <!-- uitgeklapt: vondsten-historie -->
+              <div style="border-top: 1px solid #eceae5; background: #fafaf8; padding: 12px 16px 14px;">
+                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                  <span style="font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: #71706b;">Recent gevonden</span>
+                  <span style="font-size: 11.5px; color: #a4a29b;">dedup-historie — waarom een event niet opnieuw omhoogkomt</span>
+                  <span style="margin-left: auto; font-size: 12px; font-weight: 600; color: #71706b; cursor: pointer;">Inklappen ▲</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid #eceae5;">
+                  <span style="font-size: 11.5px; color: #a4a29b; width: 78px; flex-shrink: 0;">vandaag 07:00</span>
+                  <span style="font-size: 12.5px; font-weight: 500; flex: 1; min-width: 0;">Lucky Chops — brass party in de grote zaal</span>
+                  <span style="font-size: 11px; font-weight: 700; color: #71706b; background: #f1f0ec; padding: 3px 9px; border-radius: 999px;">in wachtrij</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid #eceae5;">
+                  <span style="font-size: 11.5px; color: #a4a29b; width: 78px; flex-shrink: 0;">vandaag 07:00</span>
+                  <span style="font-size: 12.5px; font-weight: 500; flex: 1; min-width: 0;">Noorderslag-preview: nieuwe namen bekend</span>
+                  <span style="font-size: 11px; font-weight: 700; color: #71706b; background: #f1f0ec; padding: 3px 9px; border-radius: 999px;">in wachtrij</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid #eceae5;">
+                  <span style="font-size: 11.5px; color: #a4a29b; width: 78px; flex-shrink: 0;">gisteren</span>
+                  <span style="font-size: 12.5px; font-weight: 500; flex: 1; min-width: 0;">Paradiso Open — gratis podium voor nieuw talent</span>
+                  <span style="font-size: 11px; font-weight: 700; color: #2c6e3f; background: #e5f0e5; padding: 3px 9px; border-radius: 999px;">al geschreven</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 10px; padding: 7px 0;">
+                  <span style="font-size: 11.5px; color: #a4a29b; width: 78px; flex-shrink: 0;">17 jul</span>
+                  <span style="font-size: 12.5px; font-weight: 500; flex: 1; min-width: 0; color: #a4a29b; text-decoration: line-through;">Clubavond Paradiso Noord (te niche)</span>
+                  <span style="font-size: 11px; font-weight: 700; color: #a4a29b; border: 1px solid #e3e1dc; padding: 3px 9px; border-radius: 999px;">verwijderd door redactie</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- BRON 2 — Melkweg · geslaagd -->
+            <div style="background: #fff; border: 1px solid #e3e1dc; border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px;">
+              <div style="display: flex; align-items: flex-start; gap: 12px;">
+                <div style="min-width: 0; flex: 1;">
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 14px; font-weight: 700;">Melkweg</span>
+                    <span style="font-size: 11px; color: #71706b; background: #f1f0ec; padding: 2px 7px; border-radius: 5px;">poppodium</span>
+                  </div>
+                  <div style="font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: #71706b; margin-top: 3px;">melkweg.nl/nl/agenda</div>
+                </div>
+                <span style="width: 34px; height: 20px; border-radius: 999px; background: #171715; position: relative; flex-shrink: 0; cursor: pointer; margin-top: 2px;"><span style="position: absolute; right: 2px; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff;"></span></span>
+                <button style="font-family: inherit; font-size: 12px; font-weight: 600; padding: 6px 11px; background: #fff; border: 1px solid #d8d6d0; border-radius: 7px; cursor: pointer; white-space: nowrap;">Nu scannen</button>
+                <button style="font-family: inherit; font-size: 12.5px; font-weight: 600; padding: 6px 9px; background: #fff; border: 1px solid #d8d6d0; border-radius: 7px; cursor: pointer; color: #71706b;">✕</button>
+              </div>
+              <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                <span style="width: 8px; height: 8px; border-radius: 50%; background: #3d8a52; flex-shrink: 0;"></span>
+                <span style="font-size: 12.5px; font-weight: 600; color: #2c6e3f;">Laatste scan geslaagd</span>
+                <span style="font-size: 12.5px; color: #71706b;">vandaag 07:00 · <strong style="font-weight: 700; color: #171715;">1 nieuw onderwerp</strong></span>
+                <span style="color: #d8d6d0;">·</span>
+                <span style="font-size: 12.5px; color: #71706b;">21 gevonden sinds 3 jun</span>
+                <span style="margin-left: auto; font-size: 12px; font-weight: 600; color: #71706b; cursor: pointer;">Vondsten tonen ▾</span>
+              </div>
+            </div>
+
+            <!-- BRON 3 — Concertgebouw · BEZIG -->
+            <div style="background: #fff; border: 1px solid #cdd9ea; border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px;">
+              <div style="display: flex; align-items: flex-start; gap: 12px;">
+                <div style="min-width: 0; flex: 1;">
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 14px; font-weight: 700;">Het Concertgebouw</span>
+                    <span style="font-size: 11px; color: #71706b; background: #f1f0ec; padding: 2px 7px; border-radius: 5px;">concertzaal</span>
+                  </div>
+                  <div style="font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: #71706b; margin-top: 3px;">concertgebouw.nl/agenda</div>
+                </div>
+                <span style="width: 34px; height: 20px; border-radius: 999px; background: #171715; position: relative; flex-shrink: 0; cursor: pointer; margin-top: 2px;"><span style="position: absolute; right: 2px; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff;"></span></span>
+                <button style="font-family: inherit; font-size: 12px; font-weight: 600; padding: 6px 11px; background: #f1f0ec; border: 1px solid #d8d6d0; border-radius: 7px; color: #a4a29b; cursor: default; white-space: nowrap;">Bezig…</button>
+                <button style="font-family: inherit; font-size: 12.5px; font-weight: 600; padding: 6px 9px; background: #fff; border: 1px solid #d8d6d0; border-radius: 7px; cursor: pointer; color: #71706b;">✕</button>
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 6px;">
+                <div style="height: 4px; background: #eceae5; border-radius: 2px; overflow: hidden;"><div style="width: 48%; height: 100%; background: #4079c4; border-radius: 2px;"></div></div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <span style="font-size: 12.5px; font-weight: 600; color: #2b5d9f;">Bezig met scannen…</span>
+                  <span style="font-size: 12.5px; color: #71706b;">pagina gelezen · items vergelijken met historie</span>
+                  <span style="margin-left: auto; font-size: 12px; color: #71706b;">18 gevonden sinds 3 jun</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- BRON 4 — Pakhuis de Zwijger · geslaagd, niets nieuws -->
+            <div style="background: #fff; border: 1px solid #e3e1dc; border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px;">
+              <div style="display: flex; align-items: flex-start; gap: 12px;">
+                <div style="min-width: 0; flex: 1;">
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 14px; font-weight: 700;">Pakhuis de Zwijger</span>
+                    <span style="font-size: 11px; color: #71706b; background: #f1f0ec; padding: 2px 7px; border-radius: 5px;">cultuurhuis</span>
+                  </div>
+                  <div style="font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: #71706b; margin-top: 3px;">dezwijger.nl/programma</div>
+                </div>
+                <span style="width: 34px; height: 20px; border-radius: 999px; background: #171715; position: relative; flex-shrink: 0; cursor: pointer; margin-top: 2px;"><span style="position: absolute; right: 2px; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff;"></span></span>
+                <button style="font-family: inherit; font-size: 12px; font-weight: 600; padding: 6px 11px; background: #fff; border: 1px solid #d8d6d0; border-radius: 7px; cursor: pointer; white-space: nowrap;">Nu scannen</button>
+                <button style="font-family: inherit; font-size: 12.5px; font-weight: 600; padding: 6px 9px; background: #fff; border: 1px solid #d8d6d0; border-radius: 7px; cursor: pointer; color: #71706b;">✕</button>
+              </div>
+              <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                <span style="width: 8px; height: 8px; border-radius: 50%; background: #3d8a52; flex-shrink: 0;"></span>
+                <span style="font-size: 12.5px; font-weight: 600; color: #2c6e3f;">Laatste scan geslaagd</span>
+                <span style="font-size: 12.5px; color: #71706b;">vandaag 07:00 · <strong style="font-weight: 700; color: #171715;">niets nieuws</strong> — alles al bekend</span>
+                <span style="color: #d8d6d0;">·</span>
+                <span style="font-size: 12.5px; color: #71706b;">12 gevonden sinds 11 jun</span>
+              </div>
+            </div>
+
+            <!-- BRON 5 — horeca-blog · MISLUKT -->
+            <div style="background: #fff; border: 1px solid #ecc7c2; border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px;">
+              <div style="display: flex; align-items: flex-start; gap: 12px;">
+                <div style="min-width: 0; flex: 1;">
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 14px; font-weight: 700;">Amsterdam Foodie</span>
+                    <span style="font-size: 11px; color: #71706b; background: #f1f0ec; padding: 2px 7px; border-radius: 5px;">horeca-blog</span>
+                  </div>
+                  <div style="font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: #71706b; margin-top: 3px;">amsterdamfoodie.nl/blog</div>
+                </div>
+                <span style="width: 34px; height: 20px; border-radius: 999px; background: #171715; position: relative; flex-shrink: 0; cursor: pointer; margin-top: 2px;"><span style="position: absolute; right: 2px; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff;"></span></span>
+                <button style="font-family: inherit; font-size: 12px; font-weight: 700; padding: 6px 11px; background: #171715; color: #fff; border: none; border-radius: 7px; cursor: pointer; white-space: nowrap;">Opnieuw proberen</button>
+                <button style="font-family: inherit; font-size: 12.5px; font-weight: 600; padding: 6px 9px; background: #fff; border: 1px solid #d8d6d0; border-radius: 7px; cursor: pointer; color: #71706b;">✕</button>
+              </div>
+              <div style="display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: #a3271f; background: #f9e7e4; border-radius: 7px; padding: 8px 11px; line-height: 1.4;">
+                <span style="width: 8px; height: 8px; border-radius: 50%; background: #d0342c; flex-shrink: 0;"></span>
+                <span><strong style="font-weight: 700;">Bron niet bereikbaar</strong> — vandaag 07:00 · de pagina gaf geen antwoord. Vorige geslaagde scan: 16 jul.</span>
+                <span style="margin-left: auto; color: #71706b; white-space: nowrap;">9 gevonden sinds 20 jun</span>
+              </div>
+            </div>
+
+            <!-- BRON 6 — Parool Uitagenda · GEPAUZEERD -->
+            <div style="background: #fafaf8; border: 1px solid #e3e1dc; border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px;">
+              <div style="display: flex; align-items: flex-start; gap: 12px;">
+                <div style="min-width: 0; flex: 1;">
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 14px; font-weight: 700; color: #71706b;">Het Parool — Uitagenda</span>
+                    <span style="font-size: 11px; color: #a4a29b; background: #f1f0ec; padding: 2px 7px; border-radius: 5px;">nieuwssite</span>
+                  </div>
+                  <div style="font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: #a4a29b; margin-top: 3px;">parool.nl/uit</div>
+                </div>
+                <span style="width: 34px; height: 20px; border-radius: 999px; background: #d8d6d0; position: relative; flex-shrink: 0; cursor: pointer; margin-top: 2px;"><span style="position: absolute; left: 2px; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff;"></span></span>
+                <button style="font-family: inherit; font-size: 12px; font-weight: 600; padding: 6px 11px; background: #f6f5f2; border: 1px solid #e3e1dc; border-radius: 7px; color: #a4a29b; cursor: default; white-space: nowrap;">Nu scannen</button>
+                <button style="font-family: inherit; font-size: 12.5px; font-weight: 600; padding: 6px 9px; background: #fff; border: 1px solid #d8d6d0; border-radius: 7px; cursor: pointer; color: #71706b;">✕</button>
+              </div>
+              <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                <span style="width: 8px; height: 8px; border-radius: 50%; background: #a4a29b; flex-shrink: 0;"></span>
+                <span style="font-size: 12.5px; font-weight: 600; color: #71706b;">Gepauzeerd</span>
+                <span style="font-size: 12.5px; color: #a4a29b;">scant niet mee sinds 14 jul · zet de schakelaar aan om te hervatten</span>
+                <span style="color: #e3e1dc;">·</span>
+                <span style="font-size: 12.5px; color: #a4a29b;">47 gevonden sinds 3 jun</span>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- ZONE C — scan-overzicht -->
+        <div style="width: 340px; flex-shrink: 0; border-left: 1px solid #e3e1dc; background: #f6f5f2; padding: 20px; display: flex; flex-direction: column; gap: 16px;">
+          <div style="font-size: 11.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: #71706b;">Automatische scan</div>
+          <div style="background: #fff; border: 1px solid #e3e1dc; border-radius: 8px; padding: 14px; display: flex; flex-direction: column; gap: 9px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="width: 8px; height: 8px; border-radius: 50%; background: #3d8a52;"></span>
+              <span style="font-size: 13px; font-weight: 700;">Elke ochtend om 07:00</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; font-size: 12.5px;"><span style="color: #71706b;">Volgende run</span><span style="font-weight: 600;">morgen 07:00</span></div>
+            <div style="display: flex; justify-content: space-between; font-size: 12.5px;"><span style="color: #71706b;">Laatste run</span><span style="font-weight: 600;">vandaag 07:00</span></div>
+            <div style="font-size: 11.5px; color: #a4a29b; line-height: 1.45; border-top: 1px solid #eceae5; padding-top: 8px;">Eén keer per dag — het Vercel-plan staat vaker draaien niet toe.</div>
+          </div>
+
+          <button style="font-family: inherit; font-size: 13px; font-weight: 800; padding: 11px 18px; background: #171715; color: #fff; border: none; border-radius: 8px; cursor: pointer;">Alle bronnen nu scannen</button>
+
+          <div style="font-size: 11.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: #71706b; margin-top: 2px;">Laatste run</div>
+          <div style="background: #fff; border: 1px solid #e3e1dc; border-radius: 8px; padding: 14px; display: flex; flex-direction: column; gap: 8px;">
+            <div style="font-size: 13.5px; font-weight: 700; line-height: 1.4;">8 nieuwe onderwerpen toegevoegd</div>
+            <div style="font-size: 12.5px; color: #71706b; line-height: 1.5;">uit 5 bronnen · 2 al bekend, overgeslagen · 1 bron onbereikbaar.</div>
+            <a href="#1a" style="font-size: 12.5px; font-weight: 700; text-decoration: underline; margin-top: 2px;">Bekijk op het bord →</a>
+          </div>
+
+          <div style="background: #f7edd8; border: 1px solid #e8d9b4; border-radius: 8px; padding: 12px 14px; font-size: 12.5px; line-height: 1.5; color: #925f06;"><span style="font-weight: 800;">Geen controlestap:</span> vondsten staan direct als onderwerp tussen de rest op het bord — daar te bewerken of te verwijderen als elk ander topic.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 3b + 3c — lege state & bron-states ============ -->
+  <div style="display: flex; gap: 48px; align-items: flex-start; flex-wrap: wrap;">
+
+    <!-- 3b lege state -->
+    <div id="3b" data-screen-label="3b Bronnen leeg" style="display: flex; flex-direction: column; gap: 12px;">
+      <div style="display: flex; align-items: baseline; gap: 12px;">
+        <span style="background: #d0342c; color: #fff; font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 4px;">3b</span>
+        <span style="font-size: 15px; font-weight: 700;">Bronnen — lege state</span>
+      </div>
+      <div style="width: 560px; background: #fafaf8; border: 1px solid #d8d6d0; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 12px rgba(20,20,18,0.06);">
+        <div style="display: flex; align-items: center; gap: 16px; padding: 12px 20px; border-bottom: 1px solid #e3e1dc; background: #fff;">
+          <img src="https://cdn.amsterdamnow.com/media/ams-logo-now.png" alt="Amsterdam NOW" style="height: 16px; width: auto; background: #171715; padding: 7px 10px; border-radius: 6px; box-sizing: content-box;">
+          <span style="font-size: 13.5px; font-weight: 700; padding: 6px 12px; background: #f1f0ec; border-radius: 6px;">Bronnen</span>
+        </div>
+        <div style="padding: 20px 24px 28px; display: flex; flex-direction: column; gap: 16px;">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <div style="flex: 1; display: flex; align-items: center; gap: 10px; border: 1.5px solid #171715; border-radius: 8px; padding: 10px 14px; background: #fff;">
+              <span style="font-size: 15px; font-weight: 700;">＋</span>
+              <span style="font-size: 13.5px; color: #a4a29b;">Plak een agenda- of programmapagina — https://…</span>
+            </div>
+            <button style="font-family: inherit; font-size: 13px; font-weight: 800; padding: 10px 18px; background: #171715; color: #fff; border: none; border-radius: 8px; cursor: pointer; white-space: nowrap;">Bron toevoegen</button>
+          </div>
+          <div style="border: 1.5px dashed #c9c7c0; border-radius: 10px; padding: 32px 24px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 12px;">
+            <span style="width: 44px; height: 44px; border-radius: 50%; background: #fff; border: 1px solid #e3e1dc; display: grid; place-items: center; font-size: 20px; color: #a4a29b;">＋</span>
+            <div style="font-size: 14px; font-weight: 700;">Nog geen bronnen</div>
+            <div style="font-size: 12.5px; color: #71706b; line-height: 1.55; max-width: 380px;">Geef agendapagina's op van poppodia, theaters, musea of horecasites. De scanner leest ze dagelijks uit en zet relevante events, nieuwe cafés en openingen direct als onderwerp in de wachtrij.</div>
+          </div>
+        </div>
+      </div>
+      <div style="font-size: 11.5px; color: #71706b; text-align: center; padding: 0 6px;">leeg = uitleg + het toevoegveld prominent, in de stijl van de lege wachtrij</div>
+    </div>
+
+    <!-- 3c bron-states -->
+    <div id="3c" data-screen-label="3c Bron-states bezig en fout" style="display: flex; flex-direction: column; gap: 12px;">
+      <div style="display: flex; align-items: baseline; gap: 12px;">
+        <span style="background: #d0342c; color: #fff; font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 4px;">3c</span>
+        <span style="font-size: 15px; font-weight: 700;">Bron-states — bezig &amp; fout</span>
+      </div>
+      <div style="width: 560px; display: flex; flex-direction: column; gap: 14px;">
+
+        <!-- bezig -->
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+          <div style="font-size: 11.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: #2b5d9f;">Scan bezig</div>
+          <div style="background: #fff; border: 1px solid #cdd9ea; border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 2px 12px rgba(20,20,18,0.06);">
+            <div style="display: flex; align-items: flex-start; gap: 12px;">
+              <div style="min-width: 0; flex: 1;">
+                <div style="font-size: 14px; font-weight: 700;">Het Concertgebouw</div>
+                <div style="font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: #71706b; margin-top: 3px;">concertgebouw.nl/agenda</div>
+              </div>
+              <span style="width: 34px; height: 20px; border-radius: 999px; background: #171715; position: relative; flex-shrink: 0; margin-top: 2px;"><span style="position: absolute; right: 2px; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff;"></span></span>
+              <button style="font-family: inherit; font-size: 12px; font-weight: 600; padding: 6px 11px; background: #f1f0ec; border: 1px solid #d8d6d0; border-radius: 7px; color: #a4a29b; cursor: default; white-space: nowrap;">Bezig…</button>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 6px;">
+              <div style="height: 4px; background: #eceae5; border-radius: 2px; overflow: hidden;"><div style="width: 48%; height: 100%; background: #4079c4; border-radius: 2px;"></div></div>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span style="font-size: 12.5px; font-weight: 600; color: #2b5d9f;">Bezig met scannen…</span>
+                <span style="font-size: 12.5px; color: #71706b;">items vergelijken met historie</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- fout -->
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+          <div style="font-size: 11.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: #a3271f;">Bron niet bereikbaar</div>
+          <div style="background: #fff; border: 1px solid #ecc7c2; border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 2px 12px rgba(20,20,18,0.06);">
+            <div style="display: flex; align-items: flex-start; gap: 12px;">
+              <div style="min-width: 0; flex: 1;">
+                <div style="font-size: 14px; font-weight: 700;">Amsterdam Foodie</div>
+                <div style="font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: #71706b; margin-top: 3px;">amsterdamfoodie.nl/blog</div>
+              </div>
+              <span style="width: 34px; height: 20px; border-radius: 999px; background: #171715; position: relative; flex-shrink: 0; margin-top: 2px;"><span style="position: absolute; right: 2px; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff;"></span></span>
+              <button style="font-family: inherit; font-size: 12px; font-weight: 700; padding: 6px 11px; background: #171715; color: #fff; border: none; border-radius: 7px; cursor: pointer; white-space: nowrap;">Opnieuw proberen</button>
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: #a3271f; background: #f9e7e4; border-radius: 7px; padding: 8px 11px; line-height: 1.4;">
+              <span style="width: 8px; height: 8px; border-radius: 50%; background: #d0342c; flex-shrink: 0;"></span>
+              <span><strong style="font-weight: 700;">Pagina gaf geen antwoord</strong> — vandaag 07:00. Vorige geslaagde scan: 16 jul.</span>
+            </div>
+            <div style="font-size: 12px; color: #71706b; line-height: 1.45;">De bron blijft bewaard en wordt bij de volgende run opnieuw geprobeerd. Blijft het misgaan? Pauzeer of controleer de URL.</div>
+          </div>
+        </div>
+
+        <div style="font-size: 11.5px; color: #71706b; text-align: center; padding: 0 6px;">fout is een normale toestand — één knop om te herstellen, zelfde afhandeling als mislukte topics op het bord</div>
+      </div>
+    </div>
+  </div>
+</section>
+
 <section style="padding: 56px 64px 0; display: flex; flex-direction: column; gap: 16px;">
   <div id="2a" data-screen-label="2a Prompt en instellingen" style="display: flex; flex-direction: column; gap: 12px;">
     <div style="display: flex; align-items: baseline; gap: 12px;">
@@ -28,10 +364,11 @@ a:hover { color: #d0342c; }
     </div>
     <div style="width: 1360px; background: #fafaf8; border: 1px solid #d8d6d0; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 12px rgba(20,20,18,0.06);">
       <div style="display: flex; align-items: center; gap: 20px; padding: 12px 20px; border-bottom: 1px solid #e3e1dc; background: #fff;">
-        <img src="https://cdn.amsterdamnow.com/media/ams-logo-now.png" alt="Amsterdam NOW" style="height: 22px; width: auto;">
+        <img src="https://cdn.amsterdamnow.com/media/ams-logo-now.png" alt="Amsterdam NOW" style="height: 16px; width: auto; background: #171715; padding: 7px 10px; border-radius: 6px; box-sizing: content-box;">
         <div style="display: flex; gap: 4px;">
           <a href="#1a" style="font-size: 13.5px; font-weight: 500; padding: 6px 12px; color: #71706b; border-radius: 6px;">Pipeline</a>
           <span style="font-size: 13.5px; font-weight: 500; padding: 6px 12px; color: #71706b; border-radius: 6px;">Archief</span>
+          <a href="#3a" style="font-size: 13.5px; font-weight: 500; padding: 6px 12px; color: #71706b; border-radius: 6px;">Bronnen</a>
           <span style="font-size: 13.5px; font-weight: 700; padding: 6px 12px; background: #f1f0ec; border-radius: 6px;">Prompt &amp; instellingen</span>
         </div>
         <div style="margin-left: auto; display: flex; align-items: center; gap: 14px;">
@@ -100,12 +437,207 @@ Voeg 3–6 vrije tags toe.</div>
       </div>
     </div>
   </div>
+
+  <div id="2b" data-screen-label="2b Instellingen Criteria Lijstartikel" style="display: flex; flex-direction: column; gap: 12px;">
+    <div style="display: flex; align-items: baseline; gap: 12px;">
+      <span style="background: #d0342c; color: #fff; font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 4px;">2b</span>
+      <span style="font-size: 15px; font-weight: 700;">Instellingen · Criteria — tab "Lijstartikel"</span>
+      <span style="font-size: 13px; color: #71706b;">gestructureerde redactionele regels i.p.v. vrije prompt-tekst · zelfde layout, rechterpaneel en knoppen als 2a</span>
+    </div>
+    <div style="width: 1360px; background: #fafaf8; border: 1px solid #d8d6d0; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 12px rgba(20,20,18,0.06);">
+      <div style="display: flex; align-items: center; gap: 20px; padding: 12px 20px; border-bottom: 1px solid #e3e1dc; background: #fff;">
+        <img src="https://cdn.amsterdamnow.com/media/ams-logo-now.png" alt="Amsterdam NOW" style="height: 16px; width: auto; background: #171715; padding: 7px 10px; border-radius: 6px; box-sizing: content-box;">
+        <div style="display: flex; gap: 4px;">
+          <a href="#1a" style="font-size: 13.5px; font-weight: 500; padding: 6px 12px; color: #71706b; border-radius: 6px;">Pipeline</a>
+          <span style="font-size: 13.5px; font-weight: 500; padding: 6px 12px; color: #71706b; border-radius: 6px;">Archief</span>
+          <a href="#3a" style="font-size: 13.5px; font-weight: 500; padding: 6px 12px; color: #71706b; border-radius: 6px;">Bronnen</a>
+          <span style="font-size: 13.5px; font-weight: 700; padding: 6px 12px; background: #f1f0ec; border-radius: 6px;">Prompt &amp; instellingen</span>
+        </div>
+        <div style="margin-left: auto; display: flex; align-items: center; gap: 14px;">
+          <span style="font-size: 12.5px; color: #71706b;">n8n draait · volgende run over 4 min</span>
+          <span style="width: 8px; height: 8px; border-radius: 50%; background: #3d8a52;"></span>
+          <span style="width: 30px; height: 30px; border-radius: 50%; background: #171715; color: #fff; display: grid; place-items: center; font-size: 12.5px; font-weight: 700;">M</span>
+        </div>
+      </div>
+      <div style="display: flex; min-height: 0;">
+        <div style="flex: 1; min-width: 0; padding: 20px 24px 0; display: flex; flex-direction: column; gap: 16px; background: #fff;">
+          <!-- tabgroepen -->
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="font-size: 13px; font-weight: 600; padding: 7px 14px; color: #71706b; border: 1px solid #d8d6d0; border-radius: 999px;">Standaard</span>
+            <span style="font-size: 13px; font-weight: 600; padding: 7px 14px; color: #71706b; border: 1px solid #d8d6d0; border-radius: 999px;">Lijstartikelen</span>
+            <span style="width: 1px; height: 20px; background: #e3e1dc; margin: 0 2px;"></span>
+            <span style="font-size: 13px; font-weight: 700; padding: 7px 14px; background: #171715; color: #fff; border-radius: 999px;">Criteria</span>
+            <span style="margin-left: auto; font-size: 12px; font-weight: 700; color: #2c6e3f; background: #e5f0e5; padding: 3px 9px; border-radius: 999px;">v3 · actief</span>
+          </div>
+          <!-- subtabs binnen Criteria -->
+          <div style="display: flex; gap: 22px; border-bottom: 1px solid #e3e1dc;">
+            <span style="font-size: 13.5px; font-weight: 500; color: #71706b; padding-bottom: 10px;">Standaard artikel</span>
+            <span style="font-size: 13.5px; font-weight: 700; padding-bottom: 10px; box-shadow: inset 0 -2px 0 #171715;">Lijstartikel</span>
+          </div>
+
+          <!-- SECTIE: Lengtes/aantallen -->
+          <div style="display: flex; flex-direction: column; gap: 2px;">
+            <div style="font-size: 11.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: #71706b; padding-bottom: 4px;">Lengtes / aantallen</div>
+            <!-- los getal -->
+            <div style="display: flex; align-items: center; gap: 12px; padding: 9px 0; border-bottom: 1px solid #eceae5;">
+              <span style="font-size: 13.5px; font-weight: 500; flex: 1;">Titel — max. lengte</span>
+              <span style="width: 58px; text-align: center; font-size: 13.5px; font-weight: 600; border: 1px solid #d8d6d0; border-radius: 7px; padding: 6px 0; background: #fff;">75</span>
+              <span style="font-size: 12.5px; color: #71706b; width: 84px;">tekens</span>
+            </div>
+            <!-- number-paar -->
+            <div style="display: flex; align-items: center; gap: 12px; padding: 9px 0; border-bottom: 1px solid #eceae5;">
+              <span style="font-size: 13.5px; font-weight: 500; flex: 1;">Introcontent</span>
+              <span style="width: 58px; text-align: center; font-size: 13.5px; font-weight: 600; border: 1px solid #d8d6d0; border-radius: 7px; padding: 6px 0; background: #fff;">2</span>
+              <span style="font-size: 12.5px; color: #71706b;">t/m</span>
+              <span style="width: 58px; text-align: center; font-size: 13.5px; font-weight: 600; border: 1px solid #d8d6d0; border-radius: 7px; padding: 6px 0; background: #fff;">3</span>
+              <span style="font-size: 12.5px; color: #71706b; width: 44px;">zinnen</span>
+            </div>
+            <!-- los getal -->
+            <div style="display: flex; align-items: center; gap: 12px; padding: 9px 0; border-bottom: 1px solid #eceae5;">
+              <span style="font-size: 13.5px; font-weight: 500; flex: 1;">Minimum aantal items</span>
+              <span style="width: 58px; text-align: center; font-size: 13.5px; font-weight: 600; border: 1px solid #d8d6d0; border-radius: 7px; padding: 6px 0; background: #fff;">5</span>
+              <span style="font-size: 12.5px; color: #71706b; width: 84px;">items</span>
+            </div>
+            <!-- number-paar -->
+            <div style="display: flex; align-items: center; gap: 12px; padding: 9px 0; border-bottom: 1px solid #eceae5;">
+              <span style="font-size: 13.5px; font-weight: 500; flex: 1;">Itembeschrijving</span>
+              <span style="width: 58px; text-align: center; font-size: 13.5px; font-weight: 600; border: 1px solid #d8d6d0; border-radius: 7px; padding: 6px 0; background: #fff;">3</span>
+              <span style="font-size: 12.5px; color: #71706b;">t/m</span>
+              <span style="width: 58px; text-align: center; font-size: 13.5px; font-weight: 600; border: 1px solid #d8d6d0; border-radius: 7px; padding: 6px 0; background: #fff;">5</span>
+              <span style="font-size: 12.5px; color: #71706b; width: 44px;">zinnen</span>
+            </div>
+            <!-- los getal -->
+            <div style="display: flex; align-items: center; gap: 12px; padding: 9px 0; border-bottom: 1px solid #eceae5;">
+              <span style="font-size: 13.5px; font-weight: 500; flex: 1;">Quote-norm — 1 quote per</span>
+              <span style="width: 58px; text-align: center; font-size: 13.5px; font-weight: 600; border: 1px solid #d8d6d0; border-radius: 7px; padding: 6px 0; background: #fff;">3</span>
+              <span style="font-size: 12.5px; color: #71706b; width: 84px;">items</span>
+            </div>
+            <!-- los getal -->
+            <div style="display: flex; align-items: center; gap: 12px; padding: 9px 0;">
+              <span style="font-size: 13.5px; font-weight: 500; flex: 1;">Min. genoemde items in afsluiting</span>
+              <span style="width: 58px; text-align: center; font-size: 13.5px; font-weight: 600; border: 1px solid #d8d6d0; border-radius: 7px; padding: 6px 0; background: #fff;">3</span>
+              <span style="font-size: 12.5px; color: #71706b; width: 84px;">items</span>
+            </div>
+          </div>
+
+          <!-- SECTIE: Verboden woorden (tag-editor) -->
+          <div style="display: flex; flex-direction: column; gap: 8px; border-top: 1px solid #e3e1dc; padding-top: 16px;">
+            <div style="font-size: 11.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: #71706b;">Verboden woorden</div>
+            <div style="font-size: 12.5px; color: #71706b; line-height: 1.45;">Claude vermijdt deze woorden en uitdrukkingen volledig in lijstartikelen.</div>
+            <div style="display: flex; flex-wrap: wrap; gap: 6px; align-items: center;">
+              <span style="display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; background: #f1f0ec; border-radius: 5px; padding: 4px 8px;">verborgen parel<span style="color: #a4a29b; cursor: pointer; font-size: 12px;">✕</span></span>
+              <span style="display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; background: #f1f0ec; border-radius: 5px; padding: 4px 8px;">hotspot<span style="color: #a4a29b; cursor: pointer; font-size: 12px;">✕</span></span>
+              <span style="display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; background: #f1f0ec; border-radius: 5px; padding: 4px 8px;">place to be<span style="color: #a4a29b; cursor: pointer; font-size: 12px;">✕</span></span>
+              <span style="display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; background: #f1f0ec; border-radius: 5px; padding: 4px 8px;">culinair walhalla<span style="color: #a4a29b; cursor: pointer; font-size: 12px;">✕</span></span>
+              <span style="display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; background: #f1f0ec; border-radius: 5px; padding: 4px 8px;">niet te missen<span style="color: #a4a29b; cursor: pointer; font-size: 12px;">✕</span></span>
+              <span style="display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; background: #f1f0ec; border-radius: 5px; padding: 4px 8px;">iconisch<span style="color: #a4a29b; cursor: pointer; font-size: 12px;">✕</span></span>
+              <span style="display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; background: #f1f0ec; border-radius: 5px; padding: 4px 8px;">bruisend<span style="color: #a4a29b; cursor: pointer; font-size: 12px;">✕</span></span>
+              <span style="display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; background: #f1f0ec; border-radius: 5px; padding: 4px 8px;">een must<span style="color: #a4a29b; cursor: pointer; font-size: 12px;">✕</span></span>
+              <span style="display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; background: #f1f0ec; border-radius: 5px; padding: 4px 8px;">waan je in<span style="color: #a4a29b; cursor: pointer; font-size: 12px;">✕</span></span>
+              <span style="display: inline-flex; align-items: center; font-size: 12.5px; color: #a4a29b; border: 1px dashed #c9c7c0; border-radius: 5px; padding: 4px 10px;">+ woord toevoegen &amp; Enter</span>
+            </div>
+          </div>
+
+          <!-- SECTIE: Quote-bronnen blacklist (tag-editor) -->
+          <div style="display: flex; flex-direction: column; gap: 8px; border-top: 1px solid #e3e1dc; padding-top: 16px;">
+            <div style="font-size: 11.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: #71706b;">Quote-bronnen blacklist</div>
+            <div style="font-size: 12.5px; color: #71706b; line-height: 1.45;">Quotes afkomstig van deze domeinen worden niet overgenomen.</div>
+            <div style="display: flex; flex-wrap: wrap; gap: 6px; align-items: center;">
+              <span style="display: inline-flex; align-items: center; gap: 6px; font-family: ui-monospace, Menlo, monospace; font-size: 12px; background: #f1f0ec; border-radius: 5px; padding: 4px 8px;">tripadvisor.com<span style="color: #a4a29b; cursor: pointer;">✕</span></span>
+              <span style="display: inline-flex; align-items: center; gap: 6px; font-family: ui-monospace, Menlo, monospace; font-size: 12px; background: #f1f0ec; border-radius: 5px; padding: 4px 8px;">iens.nl<span style="color: #a4a29b; cursor: pointer;">✕</span></span>
+              <span style="display: inline-flex; align-items: center; gap: 6px; font-family: ui-monospace, Menlo, monospace; font-size: 12px; background: #f1f0ec; border-radius: 5px; padding: 4px 8px;">yelp.com<span style="color: #a4a29b; cursor: pointer;">✕</span></span>
+              <span style="display: inline-flex; align-items: center; gap: 6px; font-family: ui-monospace, Menlo, monospace; font-size: 12px; background: #f1f0ec; border-radius: 5px; padding: 4px 8px;">reddit.com<span style="color: #a4a29b; cursor: pointer;">✕</span></span>
+              <span style="display: inline-flex; align-items: center; gap: 6px; font-family: ui-monospace, Menlo, monospace; font-size: 12px; background: #f1f0ec; border-radius: 5px; padding: 4px 8px;">facebook.com<span style="color: #a4a29b; cursor: pointer;">✕</span></span>
+              <span style="display: inline-flex; align-items: center; gap: 6px; font-family: ui-monospace, Menlo, monospace; font-size: 12px; background: #f1f0ec; border-radius: 5px; padding: 4px 8px;">booking.com<span style="color: #a4a29b; cursor: pointer;">✕</span></span>
+              <span style="display: inline-flex; align-items: center; gap: 6px; font-family: ui-monospace, Menlo, monospace; font-size: 12px; background: #f1f0ec; border-radius: 5px; padding: 4px 8px;">thefork.nl<span style="color: #a4a29b; cursor: pointer;">✕</span></span>
+              <span style="display: inline-flex; align-items: center; gap: 6px; font-family: ui-monospace, Menlo, monospace; font-size: 12px; background: #f1f0ec; border-radius: 5px; padding: 4px 8px;">quandoo.nl<span style="color: #a4a29b; cursor: pointer;">✕</span></span>
+              <span style="display: inline-flex; align-items: center; gap: 6px; font-family: ui-monospace, Menlo, monospace; font-size: 12px; background: #f1f0ec; border-radius: 5px; padding: 4px 8px;">google.com/maps<span style="color: #a4a29b; cursor: pointer;">✕</span></span>
+              <span style="display: inline-flex; align-items: center; gap: 6px; font-family: ui-monospace, Menlo, monospace; font-size: 12px; background: #f1f0ec; border-radius: 5px; padding: 4px 8px;">x.com<span style="color: #a4a29b; cursor: pointer;">✕</span></span>
+              <span style="display: inline-flex; align-items: center; gap: 6px; font-family: ui-monospace, Menlo, monospace; font-size: 12px; background: #f1f0ec; border-radius: 5px; padding: 4px 8px;">tiktok.com<span style="color: #a4a29b; cursor: pointer;">✕</span></span>
+              <span style="display: inline-flex; align-items: center; font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: #a4a29b; border: 1px dashed #c9c7c0; border-radius: 5px; padding: 4px 10px;">+ domein &amp; Enter</span>
+            </div>
+          </div>
+
+          <!-- SECTIE: Redactionele regels (toggles) -->
+          <div style="display: flex; flex-direction: column; gap: 0; border-top: 1px solid #e3e1dc; padding-top: 16px;">
+            <div style="font-size: 11.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: #71706b; padding-bottom: 6px;">Redactionele regels</div>
+
+            <div style="display: flex; align-items: flex-start; gap: 14px; padding: 11px 0; border-bottom: 1px solid #eceae5;">
+              <span style="width: 34px; height: 20px; border-radius: 999px; background: #171715; position: relative; flex-shrink: 0; margin-top: 1px;"><span style="position: absolute; right: 2px; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff;"></span></span>
+              <div><div style="font-size: 13.5px; font-weight: 600;">Quote moet letterlijk in de artikeltekst voorkomen</div><div style="font-size: 12.5px; color: #71706b; line-height: 1.45; margin-top: 2px;">Voorkomt dat Claude een quote verzint die niet matcht met de lopende tekst.</div></div>
+            </div>
+            <div style="display: flex; align-items: flex-start; gap: 14px; padding: 11px 0; border-bottom: 1px solid #eceae5;">
+              <span style="width: 34px; height: 20px; border-radius: 999px; background: #171715; position: relative; flex-shrink: 0; margin-top: 1px;"><span style="position: absolute; right: 2px; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff;"></span></span>
+              <div><div style="font-size: 13.5px; font-weight: 600;">Elk item krijgt een eigen tussenkop (h3)</div><div style="font-size: 12.5px; color: #71706b; line-height: 1.45; margin-top: 2px;">Zorgt voor scanbare structuur en betere SEO-koppenopbouw.</div></div>
+            </div>
+            <div style="display: flex; align-items: flex-start; gap: 14px; padding: 11px 0; border-bottom: 1px solid #eceae5;">
+              <span style="width: 34px; height: 20px; border-radius: 999px; background: #171715; position: relative; flex-shrink: 0; margin-top: 1px;"><span style="position: absolute; right: 2px; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff;"></span></span>
+              <div><div style="font-size: 13.5px; font-weight: 600;">Adres en buurt per item verplicht</div><div style="font-size: 12.5px; color: #71706b; line-height: 1.45; margin-top: 2px;">Item wordt overgeslagen als locatiegegevens ontbreken in de research.</div></div>
+            </div>
+            <div style="display: flex; align-items: flex-start; gap: 14px; padding: 11px 0; border-bottom: 1px solid #eceae5;">
+              <span style="width: 34px; height: 20px; border-radius: 999px; background: #171715; position: relative; flex-shrink: 0; margin-top: 1px;"><span style="position: absolute; right: 2px; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff;"></span></span>
+              <div><div style="font-size: 13.5px; font-weight: 600;">Geen dubbele items (zelfde locatie)</div><div style="font-size: 12.5px; color: #71706b; line-height: 1.45; margin-top: 2px;">Ontdubbelt op naam en adres voordat het artikel wordt opgesteld.</div></div>
+            </div>
+            <div style="display: flex; align-items: flex-start; gap: 14px; padding: 11px 0; border-bottom: 1px solid #eceae5;">
+              <span style="width: 34px; height: 20px; border-radius: 999px; background: #171715; position: relative; flex-shrink: 0; margin-top: 1px;"><span style="position: absolute; right: 2px; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff;"></span></span>
+              <div><div style="font-size: 13.5px; font-weight: 600;">Prijsindicatie (€–€€€€) per item indien bekend</div><div style="font-size: 12.5px; color: #71706b; line-height: 1.45; margin-top: 2px;">Alleen tonen wanneer de research een betrouwbare prijsklasse geeft.</div></div>
+            </div>
+            <div style="display: flex; align-items: flex-start; gap: 14px; padding: 11px 0; border-bottom: 1px solid #eceae5;">
+              <span style="width: 34px; height: 20px; border-radius: 999px; background: #171715; position: relative; flex-shrink: 0; margin-top: 1px;"><span style="position: absolute; right: 2px; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff;"></span></span>
+              <div><div style="font-size: 13.5px; font-weight: 600;">Afsluiting die de items samenvat</div><div style="font-size: 12.5px; color: #71706b; line-height: 1.45; margin-top: 2px;">Vraagt Claude om een korte slotalinea die terugverwijst naar de lijst.</div></div>
+            </div>
+            <div style="display: flex; align-items: flex-start; gap: 14px; padding: 11px 0; border-bottom: 1px solid #eceae5;">
+              <span style="width: 34px; height: 20px; border-radius: 999px; background: #d8d6d0; position: relative; flex-shrink: 0; margin-top: 1px;"><span style="position: absolute; left: 2px; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff;"></span></span>
+              <div><div style="font-size: 13.5px; font-weight: 600;">Nummering in de kop toestaan ("5 beste…")</div><div style="font-size: 12.5px; color: #71706b; line-height: 1.45; margin-top: 2px;">Uit: koppen blijven zonder getal, het aantal items mag vrij variëren.</div></div>
+            </div>
+            <div style="display: flex; align-items: flex-start; gap: 14px; padding: 11px 0; border-bottom: 1px solid #eceae5;">
+              <span style="width: 34px; height: 20px; border-radius: 999px; background: #171715; position: relative; flex-shrink: 0; margin-top: 1px;"><span style="position: absolute; right: 2px; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff;"></span></span>
+              <div><div style="font-size: 13.5px; font-weight: 600;">Interne links naar bestaande AmsterdamNOW-artikelen</div><div style="font-size: 12.5px; color: #71706b; line-height: 1.45; margin-top: 2px;">Voegt waar mogelijk 1–2 links toe naar gerelateerde artikelen.</div></div>
+            </div>
+            <div style="display: flex; align-items: flex-start; gap: 14px; padding: 11px 0;">
+              <span style="width: 34px; height: 20px; border-radius: 999px; background: #d8d6d0; position: relative; flex-shrink: 0; margin-top: 1px;"><span style="position: absolute; left: 2px; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff;"></span></span>
+              <div>
+                <div style="font-size: 13.5px; font-weight: 600;">Sponsored items toestaan zonder markering</div>
+                <div style="font-size: 12.5px; color: #71706b; line-height: 1.45; margin-top: 2px;">Uit gelaten: betaalde plaatsingen worden altijd als "advertorial" gemarkeerd.</div>
+                <div style="background: #f7edd8; border: 1px solid #e8d9b4; border-radius: 8px; padding: 9px 12px; font-size: 12.5px; line-height: 1.45; color: #925f06; margin-top: 8px;"><span style="font-weight: 800;">Let op:</span> deze regel aanzetten kan tegen de Reclamecode ingaan. Alleen bewust wijzigen.</div>
+              </div>
+            </div>
+          </div>
+
+          <div style="display: flex; align-items: center; gap: 12px; border-top: 1px solid #e3e1dc; padding: 14px 0 18px; margin-top: 2px;">
+            <span style="font-size: 12.5px; color: #71706b;">Laatst gewijzigd 18 jul · Martijn</span>
+            <button style="font-family: inherit; margin-left: auto; font-size: 13px; font-weight: 600; padding: 9px 16px; background: #fff; border: 1px solid #d8d6d0; border-radius: 8px; cursor: pointer;">Wijzigingen verwerpen</button>
+            <button style="font-family: inherit; font-size: 13px; font-weight: 800; padding: 9px 18px; background: #171715; color: #fff; border: none; border-radius: 8px; cursor: pointer;">Opslaan als v4</button>
+          </div>
+        </div>
+        <div style="width: 340px; flex-shrink: 0; border-left: 1px solid #e3e1dc; background: #f6f5f2; padding: 20px; display: flex; flex-direction: column; gap: 14px;">
+          <div style="font-size: 11.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: #71706b;">Versiegeschiedenis</div>
+          <div style="background: #fff; border: 1.5px solid #171715; border-radius: 8px; padding: 12px 14px;">
+            <div style="display: flex; align-items: center; gap: 8px;"><span style="font-size: 13px; font-weight: 800;">v3</span><span style="font-size: 11.5px; font-weight: 700; color: #2c6e3f;">actief</span><span style="margin-left: auto; font-size: 11.5px; color: #a4a29b;">18 jul · Martijn</span></div>
+            <div style="font-size: 12.5px; color: #44433f; margin-top: 5px; line-height: 1.45;">"iconisch" en "bruisend" verboden; min. items 4 → 5.</div>
+          </div>
+          <div style="background: #fff; border: 1px solid #e3e1dc; border-radius: 8px; padding: 12px 14px;">
+            <div style="display: flex; align-items: center; gap: 8px;"><span style="font-size: 13px; font-weight: 800;">v2</span><span style="margin-left: auto; font-size: 11.5px; color: #a4a29b;">9 jul · Martijn</span></div>
+            <div style="font-size: 12.5px; color: #44433f; margin-top: 5px; line-height: 1.45;">Blacklist uitgebreid met social-domeinen.</div>
+            <div style="display: flex; gap: 12px; margin-top: 8px; font-size: 12px; font-weight: 600;"><span style="text-decoration: underline; cursor: pointer;">Bekijk</span><span style="text-decoration: underline; cursor: pointer;">Terugzetten</span></div>
+          </div>
+          <div style="background: #fff; border: 1px solid #e3e1dc; border-radius: 8px; padding: 12px 14px;">
+            <div style="display: flex; align-items: center; gap: 8px;"><span style="font-size: 13px; font-weight: 800;">v1</span><span style="margin-left: auto; font-size: 11.5px; color: #a4a29b;">1 jul · Martijn</span></div>
+            <div style="font-size: 12.5px; color: #44433f; margin-top: 5px; line-height: 1.45;">Criteria-tab geïntroduceerd, defaults uit de spec.</div>
+            <div style="display: flex; gap: 12px; margin-top: 8px; font-size: 12px; font-weight: 600;"><span style="text-decoration: underline; cursor: pointer;">Bekijk</span><span style="text-decoration: underline; cursor: pointer;">Terugzetten</span></div>
+          </div>
+          <div style="background: #f7edd8; border: 1px solid #e8d9b4; border-radius: 8px; padding: 12px 14px; font-size: 12.5px; line-height: 1.5; color: #925f06;"><span style="font-weight: 800;">Let op:</span> criteria gelden voor élk volgend lijstartikel. Check na een wijziging het eerstvolgende draft-artikel extra goed.</div>
+          <div style="font-size: 12px; color: #71706b; line-height: 1.5;">De tab "Standaard artikel" volgt hetzelfde patroon: lengtes en 4 redactionele regels, zonder de twee tag-editors.</div>
+        </div>
+      </div>
+    </div>
+  </div>
 </section>
 <section style="padding: 56px 64px 96px; display: flex; flex-direction: column; gap: 56px;">
   <div style="max-width: 780px; display: flex; flex-direction: column; gap: 10px;">
-    <img src="https://cdn.amsterdamnow.com/media/ams-logo-now.png" alt="Amsterdam NOW" style="height: 30px; width: auto; align-self: flex-start;">
+    <img src="https://cdn.amsterdamnow.com/media/ams-logo-now.png" alt="Amsterdam NOW" style="height: 30px; width: auto; align-self: flex-start; background: #171715; padding: 8px 12px; border-radius: 7px; box-sizing: content-box;">
     <div style="font-size: 26px; font-weight: 800; letter-spacing: -0.02em;">Artikel-tool — drie kernschermen</div>
-    <div style="font-size: 14px; color: #71706b; line-height: 1.55;">Desktop-first redactietool. <a href="#1a" style="font-weight: 600;">1a</a> statusboard &nbsp;·&nbsp; <a href="#1b" style="font-weight: 600;">1b</a> bulk-invoer &nbsp;·&nbsp; <a href="#1c" style="font-weight: 600;">1c</a> artikel-detail met beeldwerk &nbsp;·&nbsp; <a href="#1d" style="font-weight: 600;">1d</a> lege &amp; fout-states &nbsp;·&nbsp; <a href="#1e" style="font-weight: 600;">1e</a> mobiele invoer &nbsp;·&nbsp; <a href="#2a" style="font-weight: 600;">2a</a> prompt &amp; instellingen (hierboven).</div>
+    <div style="font-size: 14px; color: #71706b; line-height: 1.55;">Desktop-first redactietool. <a href="#1a" style="font-weight: 600;">1a</a> statusboard &nbsp;·&nbsp; <a href="#1b" style="font-weight: 600;">1b</a> bulk-invoer &nbsp;·&nbsp; <a href="#1c" style="font-weight: 600;">1c</a> artikel-detail met beeldwerk &nbsp;·&nbsp; <a href="#1d" style="font-weight: 600;">1d</a> lege &amp; fout-states &nbsp;·&nbsp; <a href="#1e" style="font-weight: 600;">1e</a> mobiele invoer &nbsp;·&nbsp; <a href="#2a" style="font-weight: 600;">2a</a> prompt-editor &nbsp;·&nbsp; <a href="#2b" style="font-weight: 600;">2b</a> criteria (lijstartikel) &nbsp;·&nbsp; <a href="#3a" style="font-weight: 600;">3a</a> bronnen &mdash; agenda-scanner &nbsp;·&nbsp; <a href="#3b" style="font-weight: 600;">3b</a> lege state &nbsp;·&nbsp; <a href="#3c" style="font-weight: 600;">3c</a> bron-states (bezig &amp; fout).</div>
   </div>
 
   <!-- ============ 1a STATUSBOARD ============ -->
@@ -118,10 +650,11 @@ Voeg 3–6 vrije tags toe.</div>
     <div style="width: 1680px; background: #fafaf8; border: 1px solid #d8d6d0; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 12px rgba(20,20,18,0.06);">
       <!-- topbar -->
       <div style="display: flex; align-items: center; gap: 20px; padding: 12px 20px; border-bottom: 1px solid #e3e1dc; background: #fff;">
-        <img src="https://cdn.amsterdamnow.com/media/ams-logo-now.png" alt="Amsterdam NOW" style="height: 22px; width: auto;">
+        <img src="https://cdn.amsterdamnow.com/media/ams-logo-now.png" alt="Amsterdam NOW" style="height: 16px; width: auto; background: #171715; padding: 7px 10px; border-radius: 6px; box-sizing: content-box;">
         <div style="display: flex; gap: 4px;">
           <span style="font-size: 13.5px; font-weight: 700; padding: 6px 12px; background: #f1f0ec; border-radius: 6px;">Pipeline</span>
           <span style="font-size: 13.5px; font-weight: 500; padding: 6px 12px; color: #71706b; border-radius: 6px;">Archief</span>
+          <a href="#3a" style="font-size: 13.5px; font-weight: 500; padding: 6px 12px; color: #71706b; border-radius: 6px;">Bronnen</a>
           <a href="#2a" style="font-size: 13.5px; font-weight: 500; padding: 6px 12px; color: #71706b; border-radius: 6px;">Prompt &amp; instellingen</a>
         </div>
         <div style="flex: 1; display: flex; align-items: center; gap: 8px; max-width: 640px; margin-left: 12px;">
@@ -620,7 +1153,7 @@ Dekmantel Festival in het Amsterdamse Bos</div>
       </div>
       <div style="width: 390px; height: 760px; background: #fafaf8; border: 1px solid #d8d6d0; border-radius: 28px; overflow: hidden; box-shadow: 0 2px 12px rgba(20,20,18,0.06); display: flex; flex-direction: column;">
         <div style="display: flex; align-items: center; gap: 10px; padding: 18px 20px 12px;">
-          <img src="https://cdn.amsterdamnow.com/media/ams-logo-now.png" alt="Amsterdam NOW" style="height: 18px; width: auto;">
+          <img src="https://cdn.amsterdamnow.com/media/ams-logo-now.png" alt="Amsterdam NOW" style="height: 14px; width: auto; background: #171715; padding: 6px 9px; border-radius: 6px; box-sizing: content-box;">
           <span style="margin-left: auto; width: 28px; height: 28px; border-radius: 50%; background: #171715; color: #fff; display: grid; place-items: center; font-size: 11.5px; font-weight: 700;">M</span>
         </div>
         <div style="padding: 4px 20px 16px; border-bottom: 1px solid #e3e1dc;">
