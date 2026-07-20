@@ -7,7 +7,7 @@ import { researchWithTavily } from './tavily';
 import { createDraft, findArticleLink, taxonomyChoices } from './wp';
 import { assembleListHtml } from './listHtml';
 import { quoteSourceAllowed, validateListArticle, type GeneratedListArticle } from './validation';
-import type { ComposedList, ListArticleStructure, ListItemState, ListState, Topic } from './types';
+import type { ComposedList, ListArticleStructure, ListConstraints, ListItemState, ListState, Topic } from './types';
 
 const VERIFY_PER_TICK = 2; // items per aanroep, zodat elke stap binnen de serverless-limiet blijft
 // Tekens per Tavily-bron die naar de verificatie-call gaan. Tavily levert tot
@@ -233,10 +233,41 @@ Geef uitsluitend geldige JSON terug, zonder markdown:
 // verbrandt.
 const MAX_COMPOSE_ATTEMPTS = 3;
 
+// Geeft de actieve Criteria-instellingen als beknopte instructieregels, zodat
+// Claude de regels vooraf kent in plaats van pas achteraf een afkeuring te
+// krijgen (en dan het hele artikel opnieuw te moeten schrijven — zie de
+// feedback-loop verderop). Rechtstreeks uit ListConstraints opgebouwd i.p.v.
+// de UI-labels uit criteria-fields.ts hergebruikt: die zijn geschreven voor
+// een redacteur die een instellingenscherm leest, dit is een instructie voor
+// het model.
+function describeArticleConstraints(c: ListConstraints): string {
+  const lines = [
+    `- Titel: maximaal ${c.titleMaxChars} tekens.`,
+    `- Introcontent: ${c.introSentences.min}-${c.introSentences.max} zinnen.`,
+    `- Streef naar minimaal 1 quote per ${c.quoteNormPerItems} items, verspreid door het artikel.`,
+    `- Noem in de afsluiting minimaal ${c.minNamedItemsInClosing} items bij naam.`,
+  ];
+  if (c.titleNoCount) lines.push('- Titel mag geen aantal bevatten (bv. "De 10 beste…"): de lijst kan later aangevuld worden.');
+  if (c.subregelNoVanTotFormula) lines.push('- Subregel mag niet de vaste formule "van X tot Y" gebruiken.');
+  if (c.subregelNoAmsterdamRepeat) lines.push('- Subregel mag "Amsterdam" niet herhalen als dat al in de titel staat.');
+  return lines.join('\n');
+}
+
+function describeItemConstraints(c: ListConstraints): string {
+  const lines = [`- Itembeschrijving: ${c.itemSentences.min}-${c.itemSentences.max} zinnen.`];
+  if (c.noDashInText) lines.push('- Gebruik geen em-dash (—) of en-dash (–); gebruik komma\'s, dubbele punten of een nieuwe zin.');
+  if (c.noBulletsInItem) lines.push('- Lopende tekst, geen opsommingen of bullets.');
+  if (c.addressNotInDescription) lines.push('- Zet het adres NIET in de beschrijving; dat wordt apart getoond.');
+  if (c.noConsecutiveQuotes) lines.push('- Zet nooit twee quotes bij opeenvolgende items.');
+  if (c.forbiddenWords.length) lines.push(`- Gebruik nooit deze woorden/uitdrukkingen: ${c.forbiddenWords.join(', ')}.`);
+  return lines.join('\n');
+}
+
 async function stepCompose(topic: Topic): Promise<ListStepResult> {
   const s = state(topic);
   const verified = s.items.filter(i => i.status === 'verified');
   if (verified.length < 3) throw new Error('Minder dan 3 goedgekeurde items over; artikel niet te schrijven.');
+  const constraints = await activeConstraints('lijst');
 
   const chunks = s.composeChunks || [];
   const doneCount = chunks.reduce((n, c) => n + c.items.length, 0);
@@ -250,6 +281,7 @@ async function stepCompose(topic: Topic): Promise<ListStepResult> {
   const feedbackHint = s.composeFeedback
     ? `\n\nLET OP — de vorige versie van dit artikel werd afgekeurd om deze reden: "${s.composeFeedback}". Voorkom deze fout in wat je nu schrijft.`
     : '';
+  const itemRulesHint = `\n\nHoud je aan deze regels:\n${describeItemConstraints(constraints)}`;
 
   if (nextBatch.length > 0) {
     const input = {
@@ -266,7 +298,7 @@ async function stepCompose(topic: Topic): Promise<ListStepResult> {
       const [prompt, taxonomies] = await Promise.all([activePrompt('lijst-schrijf'), taxonomyChoices()]);
       result = await askClaudeJson(
         prompt.content,
-        `Schrijf het lijstartikel. Kies "categories" (1-2) en "district" uit de beschikbare lijsten en voeg 3-6 "tags" en een "rubriek" (Locatie of Evenement) toe aan je JSON-output, naast de velden uit je instructie.${feedbackHint}\n\n${JSON.stringify({
+        `Schrijf het lijstartikel. Kies "categories" (1-2) en "district" uit de beschikbare lijsten en voeg 3-6 "tags" en een "rubriek" (Locatie of Evenement) toe aan je JSON-output, naast de velden uit je instructie.\n\nHoud je aan deze regels:\n${describeArticleConstraints(constraints)}\n${describeItemConstraints(constraints)}${feedbackHint}\n\n${JSON.stringify({
           ...input,
           beschikbare_categorieen: taxonomies.categories,
           beschikbare_districten: taxonomies.districts,
@@ -287,7 +319,7 @@ async function stepCompose(topic: Topic): Promise<ListStepResult> {
         : '';
       result = await askClaudeJson(
         ITEM_COMPOSE_PROMPT,
-        `Thema van het lijstartikel: ${topic.title}\n\nSchrijf precies ${nextBatch.length} volgende items, in exact deze volgorde: ${nextBatch.map(item => item.naam).join(', ')}.${naadHint}${feedbackHint}\n\n${JSON.stringify(input)}`,
+        `Thema van het lijstartikel: ${topic.title}\n\nSchrijf precies ${nextBatch.length} volgende items, in exact deze volgorde: ${nextBatch.map(item => item.naam).join(', ')}.${naadHint}${itemRulesHint}${feedbackHint}\n\n${JSON.stringify(input)}`,
         false, FAST_WRITE_MODEL
       );
     }
@@ -318,7 +350,8 @@ async function stepCompose(topic: Topic): Promise<ListStepResult> {
 
   // Koppel de compositie terug aan de geverifieerde research en dwing de
   // redactionele regels af in code (quotes letterlijk, spreiding, verboden woorden).
-  const constraints = await activeConstraints('lijst');
+  // `constraints` is dezelfde actieve set als hierboven al aan Claude is
+  // meegegeven — één keer opgehaald per compose-run.
   const validated = toValidated(composed, verified, constraints.noConsecutiveQuotes);
   let meldingen: string[];
   try {
