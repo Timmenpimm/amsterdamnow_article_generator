@@ -107,7 +107,11 @@ export function validateListArticle(article: GeneratedListArticle, config: ListC
 
   const quoteNorm = Math.floor(article.items.length / config.quoteNormPerItems);
   if (quoteNorm > 0 && quoteCount < quoteNorm) {
-    meldingen.push(`Quote-norm niet gehaald: ${quoteCount} quote${quoteCount === 1 ? '' : 's'} bij ${article.items.length} items (norm: minimaal ${quoteNorm}). Voeg eventueel handmatig een geverifieerde quote toe in WordPress.`);
+    const tekort = `Quote-norm niet gehaald: ${quoteCount} quote${quoteCount === 1 ? '' : 's'} bij ${article.items.length} items (norm: minimaal ${quoteNorm}).`;
+    if (config.quoteNormMandatory) {
+      throw new Error(`${tekort} Haal een geverifieerde quote uit de research voor een item dat er nog geen heeft.`);
+    }
+    meldingen.push(`${tekort} Voeg eventueel handmatig een geverifieerde quote toe in WordPress.`);
   }
 
   const namedInClosing = article.items.filter(i => article.afsluiting.toLocaleLowerCase('nl-NL').includes(i.naam.toLocaleLowerCase('nl-NL').split(' ')[0])).length;

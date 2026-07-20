@@ -39,6 +39,7 @@ export const LIST_FIELDS: { section: string; fields: FieldDef<ListConstraints>[]
       { type: 'number', key: 'minItems', label: 'Minimum aantal items', unit: 'items' },
       { type: 'range', key: 'itemSentences', label: 'Itembeschrijving', unit: 'zinnen' },
       { type: 'number', key: 'quoteNormPerItems', label: 'Quote-norm — 1 quote per', unit: 'items' },
+      { type: 'toggle', key: 'quoteNormMandatory', label: 'Blockquote is verplicht', hint: 'Artikel wordt afgekeurd en automatisch herschreven als de quote-norm niet gehaald wordt, in plaats van alleen een melding voor de redactie.' },
       { type: 'number', key: 'minNamedItemsInClosing', label: 'Min. genoemde items in afsluiting', unit: 'items' },
     ],
   },

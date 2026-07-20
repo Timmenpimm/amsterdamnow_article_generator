@@ -229,6 +229,7 @@ export interface ListConstraints {
   minItems: number;
   itemSentences: WordRange;
   quoteNormPerItems: number;
+  quoteNormMandatory: boolean;
   minNamedItemsInClosing: number;
   forbiddenWords: string[];
   quoteSourceBlacklist: string[];
@@ -355,6 +356,7 @@ export const DEFAULT_LIST_CONSTRAINTS: ListConstraints = {
   minItems: 3,
   itemSentences: { min: 3, max: 5 },
   quoteNormPerItems: 3,
+  quoteNormMandatory: true,
   minNamedItemsInClosing: 2,
   forbiddenWords: [
     'hotspot', 'pareltje', 'bruisend', 'iconisch',
