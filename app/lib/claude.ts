@@ -18,20 +18,33 @@ function apiKey(): string {
   return key;
 }
 
+// Tijdelijke timing-instrumentatie (2026-07-20): productie zag na de
+// fase-opsplitsing nog altijd 60s-timeouts op een fase die maar 1 Claude-
+// call doet, dus het knelpunt zit ergens tussen "request start" en "response
+// klaar" — dit maakt zichtbaar in de Vercel-logs of dat de Anthropic-call
+// zelf is, of iets anders. Verwijderen zodra de oorzaak vaststaat.
 async function request(body: Record<string, unknown>): Promise<ClaudeResponse> {
-  const res = await fetch(API_URL, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-api-key': apiKey(),
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify(body),
-    cache: 'no-store',
-  });
-  const data = await res.json().catch(() => ({})) as ClaudeResponse;
-  if (!res.ok) throw new Error(`Claude ${res.status}: ${data.error?.message || 'onbekende fout'}`);
-  return data;
+  const start = Date.now();
+  const model = body.model;
+  try {
+    const res = await fetch(API_URL, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': apiKey(),
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify(body),
+      cache: 'no-store',
+    });
+    const data = await res.json().catch(() => ({})) as ClaudeResponse;
+    console.log(`[claude] ${model} ${res.status} in ${Date.now() - start}ms stop_reason=${data.stop_reason}`);
+    if (!res.ok) throw new Error(`Claude ${res.status}: ${data.error?.message || 'onbekende fout'}`);
+    return data;
+  } catch (error: any) {
+    console.log(`[claude] ${model} FAILED after ${Date.now() - start}ms: ${error.message}`);
+    throw error;
+  }
 }
 
 function textFrom(response: ClaudeResponse): string {
