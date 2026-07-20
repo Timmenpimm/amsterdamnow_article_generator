@@ -180,17 +180,38 @@ function trimFeiten(feiten: string | undefined): string {
   return (lastSentenceEnd > MAX_FEITEN_CHARS * 0.5 ? cut.slice(0, lastSentenceEnd + 1) : cut).trim();
 }
 
+function assertBatchComplete(items: any[], batch: ListItemState[]) {
+  const expected = new Set(batch.map(item => item.naam.toLocaleLowerCase('nl-NL')));
+  const returned = items.map(item => str(item?.naam).toLocaleLowerCase('nl-NL'));
+  if (items.length !== batch.length || returned.some(name => !expected.has(name)) || new Set(returned).size !== batch.length) {
+    throw new Error('Claude gaf niet precies één tekst terug voor elk item in dit schrijfblok.');
+  }
+  if (items.some(item => !str(item?.beschrijving))) {
+    throw new Error('Claude liet een itembeschrijving leeg.');
+  }
+}
+
 // Zelfs met getrimde research bleef één call voor alle items te traag bij
-// veel items (bevestigd: 11 items timede nog steeds uit op 60s). Compose
-// verwerkt daarom net als verify een beperkt aantal items per tik. Elke tik
-// vraagt het volledige lijst-schrijf-format op (dezelfde prompt, dus geen
-// aparte instructie nodig), maar met alleen de items van dat blok; we
-// gebruiken titel/subregel/introcontent/inleiding/afsluiting/categorieën van
-// het EERSTE blok en voegen de "items" van alle blokken samen. Dat kost een
-// klein beetje redactionele samenhang (de afsluiting kent alleen blok 1),
-// maar garandeert dat elke call binnen de tijdslimiet blijft, ongeacht het
-// totale aantal items.
-const COMPOSE_PER_TICK = 2; // eerste live test op 4 duurde al 43s (incl. WP-taxonomieën-call); te weinig marge tegen latentievariatie
+// veel items. De eerste schrijfstap maakt daarom de artikelstructuur en drie
+// items. Vervolgstappen schrijven uitsluitend itemteksten: zij hoeven geen
+// titel, intro, afsluiting, taxonomieën of de volledige lange schrijfprompt
+// opnieuw te genereren. Daarmee gaat een lijst van 11 items van zes naar drie
+// Claude-calls, terwijl de zwaarste call kleiner blijft dan de eerder geteste
+// vier-item-call die te weinig marge binnen de 60s had.
+const COMPOSE_FIRST_BATCH_SIZE = 3;
+const COMPOSE_ITEMS_PER_TICK = 4;
+
+const ITEM_COMPOSE_PROMPT = `Je bent journalist voor amsterdamnow.com. Schrijf uitsluitend de itemteksten voor een bestaand lijstartikel op basis van de aangeleverde, geverifieerde research.
+
+Regels:
+- Gebruik uitsluitend de aangeleverde feiten. Verzin niets en voeg geen items toe.
+- Schrijf per item 3 tot 5 gewone, concrete Nederlandse zinnen. Noem geen adres; dat wordt apart geplaatst.
+- Vermijd marketingtaal, superlatieven, de woorden hotspot, pareltje, bruisend, iconisch en gezellig, en em-dashes of en-dashes.
+- Houd buurtnamen aan en gebruik geen stadsdelen als West, Zuid of Oost.
+- Bepaal alleen of een aangeleverde, letterlijke quote na dit item past. Wijzig de quote nooit.
+
+Geef uitsluitend geldige JSON terug, zonder markdown:
+{"items":[{"naam":"exacte naam uit de research","beschrijving":"3-5 zinnen","plaats_quote":true}]}`;
 
 async function stepCompose(topic: Topic): Promise<ListStepResult> {
   const s = state(topic);
@@ -199,27 +220,41 @@ async function stepCompose(topic: Topic): Promise<ListStepResult> {
 
   const chunks = s.composeChunks || [];
   const doneCount = chunks.reduce((n, c) => n + c.items.length, 0);
-  const nextBatch = verified.slice(doneCount, doneCount + COMPOSE_PER_TICK);
+  const firstBatch = chunks.length === 0;
+  const batchSize = firstBatch ? COMPOSE_FIRST_BATCH_SIZE : COMPOSE_ITEMS_PER_TICK;
+  const nextBatch = verified.slice(doneCount, doneCount + batchSize);
 
   if (nextBatch.length > 0) {
-    const [prompt, taxonomies] = await Promise.all([activePrompt('lijst-schrijf'), taxonomyChoices()]);
     const input = {
       thema: topic.title,
       weekendgids: s.weekendgids,
-      beschikbare_categorieen: taxonomies.categories,
-      beschikbare_districten: taxonomies.districts,
       items: nextBatch.map(i => ({
         naam: i.naam, feiten: trimFeiten(i.feiten), adres: i.adres, buurt: i.buurt,
         extra_info: i.extra_info || null,
         quote: i.quote ? { tekst: i.quote.tekst, bron: i.quote.bron } : null,
       })),
     };
-    const result = await askClaudeJson(
-      prompt.content,
-      `Schrijf het lijstartikel. Kies "categories" (1-2) en "district" uit de beschikbare lijsten en voeg 3-6 "tags" en een "rubriek" (Locatie of Evenement) toe aan je JSON-output, naast de velden uit je instructie.\n\n${JSON.stringify(input)}`,
-      false, FAST_WRITE_MODEL
-    );
+    let result: Record<string, unknown>;
+    if (firstBatch) {
+      const [prompt, taxonomies] = await Promise.all([activePrompt('lijst-schrijf'), taxonomyChoices()]);
+      result = await askClaudeJson(
+        prompt.content,
+        `Schrijf het lijstartikel. Kies "categories" (1-2) en "district" uit de beschikbare lijsten en voeg 3-6 "tags" en een "rubriek" (Locatie of Evenement) toe aan je JSON-output, naast de velden uit je instructie.\n\n${JSON.stringify({
+          ...input,
+          beschikbare_categorieen: taxonomies.categories,
+          beschikbare_districten: taxonomies.districts,
+        })}`,
+        false, FAST_WRITE_MODEL
+      );
+    } else {
+      result = await askClaudeJson(
+        ITEM_COMPOSE_PROMPT,
+        `Thema van het lijstartikel: ${topic.title}\n\nSchrijf precies ${nextBatch.length} volgende items, in exact deze volgorde: ${nextBatch.map(item => item.naam).join(', ')}.\n\n${JSON.stringify(input)}`,
+        false, FAST_WRITE_MODEL
+      );
+    }
     const items = Array.isArray(result.items) ? result.items : [];
+    assertBatchComplete(items, nextBatch);
     chunks.push({
       title: str(result.title),
       subregel: str(result.subregel),
