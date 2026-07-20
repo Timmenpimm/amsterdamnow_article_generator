@@ -100,7 +100,7 @@ export async function askClaudeJsonWithImages(
 }
 
 export async function askClaudeJson(
-  system: string, prompt: string, withResearch = false, model = MODEL
+  system: string, prompt: string, withResearch = false, model = MODEL, maxTokens = 6000
 ): Promise<Record<string, unknown>> {
   const tools = withResearch ? [{ type: 'web_search_20260209', name: 'web_search', max_uses: 3 }] : undefined;
   // Prompt caching op de systeem-prompt. Dezelfde prompt wordt binnen één
@@ -113,14 +113,22 @@ export async function askClaudeJson(
   const messages: Array<{ role: 'user' | 'assistant'; content: unknown }> = [{ role: 'user', content: prompt }];
 
   async function requestUntilDone(): Promise<string> {
-    let response = await request({ model, max_tokens: 6000, system: systemBlocks, messages, ...(tools ? { tools } : {}) });
+    let response = await request({ model, max_tokens: maxTokens, system: systemBlocks, messages, ...(tools ? { tools } : {}) });
     // Server-side web search can pause a long-running turn. Continue it with
     // the returned content, as prescribed by the Messages API, up to two times.
     for (let attempt = 0; response.stop_reason === 'pause_turn' && attempt < 2; attempt++) {
       messages.push({ role: 'assistant', content: response.content || [] });
-      response = await request({ model, max_tokens: 6000, system: systemBlocks, messages, ...(tools ? { tools } : {}) });
+      response = await request({ model, max_tokens: maxTokens, system: systemBlocks, messages, ...(tools ? { tools } : {}) });
     }
     if (response.stop_reason === 'pause_turn') throw new Error('Claude kon het bronnenonderzoek niet binnen de beschikbare tijd afronden.');
+    // Bij max_tokens is de respons per definitie afgekapt (onvolledige JSON) —
+    // gezien op productie: het model liep hier soms tot 58s over voordat de
+    // limiet werd geraakt, wat de 60s-functielimiet in gevaar bracht. Direct
+    // falen i.p.v. de afgekapte tekst te laten stranden op een JSON-parsefout
+    // (die alsnog een 2e, even lange poging zou triggeren).
+    if (response.stop_reason === 'max_tokens') {
+      throw new Error(`Claude-respons afgekapt op max_tokens (${maxTokens}) — antwoord werd te lang.`);
+    }
     return textFrom(response);
   }
 

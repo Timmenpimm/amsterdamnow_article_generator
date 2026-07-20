@@ -5,6 +5,14 @@ import { researchWithTavily } from './tavily';
 import { validateArticle, GeneratedArticle } from './validation';
 import { parseStandaardState, type StandaardConstraints, type StandaardPhase, type StandaardState, type Topic, type WordRange } from './types';
 
+// Ruime marge boven een realistisch artikel (~450 woorden content + korte
+// titel/subregel/intro/quote-velden ≈ 800-1000 tokens als JSON), maar veel
+// krapper dan de standaard 6000: op productie liep de write-call een keer
+// tot 58s door voordat 'ie tegen de oude limiet van 6000 aanliep (afgekapt,
+// stop_reason=max_tokens) — gevaarlijk dicht bij de 60s-functielimiet. Een
+// lagere cap laat een op hol geslagen generatie veel eerder stoppen.
+const WRITE_MAX_TOKENS = 2000;
+
 function html(content: string): string {
   return content.split(/\n\s*\n/).map(p => `<p>${p.trim().replace(/\n/g, '<br>')}</p>`).join('\n');
 }
@@ -111,7 +119,7 @@ async function stepSchrijf(topic: Topic, s: StandaardState): Promise<StandaardSt
   const payload = await askClaudeJson(
     writePrompt.content,
     `Onderwerp: ${topic.title}\n\nGebruik uitsluitend deze gecontroleerde research van Tavily. Schrijf het artikel als geldige JSON volgens de actieve prompt.\n\nHoud je aan deze regels:\n${rules}\n\n${JSON.stringify(s.research)}`,
-    false, FAST_WRITE_MODEL,
+    false, FAST_WRITE_MODEL, WRITE_MAX_TOKENS,
   );
   try {
     const candidate = buildCandidate(payload);
@@ -140,7 +148,7 @@ async function stepSchrijfRetry(topic: Topic, s: StandaardState): Promise<Standa
   const payload = await askClaudeJson(
     writePrompt.content,
     `Je vorige versie van dit artikel is afgekeurd door de eindredactie.\n\nOnderwerp: ${topic.title}\nAfkeurreden: ${s.rejectReason}\n\nLever het VOLLEDIGE artikel opnieuw aan als JSON met exact dezelfde velden (title, subregel, introductie_tekst, content, quote). Los de afkeurreden op en houd de rest zoveel mogelijk intact. Alle regels blijven gelden:\n${rules}\n\nJe vorige versie:\n${JSON.stringify(s.draftPayload)}`,
-    false, FAST_WRITE_MODEL,
+    false, FAST_WRITE_MODEL, WRITE_MAX_TOKENS,
   );
   let checked: GeneratedArticle;
   try {
