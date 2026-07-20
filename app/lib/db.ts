@@ -117,7 +117,8 @@ async function initSqlite(): Promise<DB> {
       last_scan_at TEXT,
       last_scan_status TEXT,
       last_scan_error TEXT,
-      last_new_count INTEGER
+      last_new_count INTEGER,
+      content_hash TEXT
     );
     CREATE TABLE IF NOT EXISTS source_findings (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -153,6 +154,12 @@ async function initSqlite(): Promise<DB> {
   // Migratie voor databases van vóór de lijstpipeline.
   for (const col of ["type TEXT NOT NULL DEFAULT 'standaard'", 'phase TEXT', 'list_state TEXT', 'locked_at TEXT', 'lock_owner TEXT']) {
     try { db.exec(`ALTER TABLE topics ADD COLUMN ${col}`); } catch { /* kolom bestaat al */ }
+  }
+  // Migratie voor databases van vóór de pagina-hash: sla per bron de hash van
+  // de laatst gescande paginatekst op, zodat een ongewijzigde pagina de
+  // Claude-call kan overslaan.
+  for (const col of ['content_hash TEXT']) {
+    try { db.exec(`ALTER TABLE sources ADD COLUMN ${col}`); } catch { /* kolom bestaat al */ }
   }
   return {
     async all(q, p = []) { const [s, sp] = toSqlite(q, p); return db.prepare(s).all(...sp); },
@@ -233,7 +240,8 @@ async function initPostgres(): Promise<DB> {
       last_scan_at TEXT,
       last_scan_status TEXT,
       last_scan_error TEXT,
-      last_new_count INTEGER
+      last_new_count INTEGER,
+      content_hash TEXT
     );
   `);
   await pool.query(`
@@ -276,6 +284,10 @@ async function initPostgres(): Promise<DB> {
   await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS list_state TEXT`);
   await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS locked_at TEXT`);
   await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS lock_owner TEXT`);
+  // Migratie voor databases van vóór de pagina-hash: sla per bron de hash van
+  // de laatst gescande paginatekst op, zodat een ongewijzigde pagina de
+  // Claude-call kan overslaan.
+  await pool.query(`ALTER TABLE sources ADD COLUMN IF NOT EXISTS content_hash TEXT`);
   return {
     async all(q, p = []) { return (await pool.query(q, p)).rows; },
     async get(q, p = []) { return (await pool.query(q, p)).rows[0]; },
@@ -756,13 +768,22 @@ export async function deleteSource(id: number) {
 
 export async function updateSourceScan(
   id: number,
-  upd: { status: 'ok' | 'error'; error?: string | null; newCount?: number }
+  upd: { status: 'ok' | 'error'; error?: string | null; newCount?: number; contentHash?: string | null }
 ) {
   const db = await getDb();
-  await db.run(
-    `UPDATE sources SET last_scan_at = $1, last_scan_status = $2, last_scan_error = $3, last_new_count = $4 WHERE id = $5`,
-    [now(), upd.status, upd.error ?? null, upd.newCount ?? null, id]
-  );
+  // content_hash alleen meenemen als de aanroeper 'm meegeeft (bij een
+  // geslaagde scan) — bij een fout blijft de laatst bekende hash staan.
+  if (upd.contentHash !== undefined) {
+    await db.run(
+      `UPDATE sources SET last_scan_at = $1, last_scan_status = $2, last_scan_error = $3, last_new_count = $4, content_hash = $5 WHERE id = $6`,
+      [now(), upd.status, upd.error ?? null, upd.newCount ?? null, upd.contentHash, id]
+    );
+  } else {
+    await db.run(
+      `UPDATE sources SET last_scan_at = $1, last_scan_status = $2, last_scan_error = $3, last_new_count = $4 WHERE id = $5`,
+      [now(), upd.status, upd.error ?? null, upd.newCount ?? null, id]
+    );
+  }
 }
 
 export async function getFindingKeys(sourceId: number): Promise<Set<string>> {

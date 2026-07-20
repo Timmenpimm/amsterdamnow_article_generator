@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { askClaudeJson, FAST_WRITE_MODEL } from './claude';
 import { extractPageText } from './tavily';
 import {
@@ -35,8 +36,10 @@ export async function scanSource(id: number): Promise<ScanResult> {
   const source = await getSource(id);
   if (!source) throw new Error('Bron niet gevonden.');
   try {
-    const result = await runScan(source);
-    await updateSourceScan(id, { status: 'ok', newCount: result.added });
+    const { contentHash, ...result } = await runScan(source);
+    // Alleen bij een geslaagde scan de nieuwe hash wegschrijven; bij een fout
+    // (catch hieronder) blijft de laatst bekende hash staan.
+    await updateSourceScan(id, { status: 'ok', newCount: result.added, contentHash });
     return result;
   } catch (e: any) {
     const error = e?.message || 'Scan mislukt.';
@@ -45,8 +48,18 @@ export async function scanSource(id: number): Promise<ScanResult> {
   }
 }
 
-async function runScan(source: Source): Promise<ScanResult> {
+async function runScan(source: Source): Promise<ScanResult & { contentHash: string }> {
   const pageText = await extractPageText(source.url);
+
+  // Dagelijkse cron scant elke actieve bron, ook als de pagina niet is
+  // gewijzigd. Is de hash van de paginatekst gelijk aan de vorige scan, dan
+  // is de Claude-call pure verspilling (~4k input-tokens voor niets) — sla
+  // 'm dan over en meld een geslaagde scan zonder nieuwe items.
+  const contentHash = createHash('sha256').update(pageText).digest('hex');
+  if (contentHash === source.content_hash) {
+    return { sourceId: source.id, ok: true, added: 0, skipped: 0, contentHash };
+  }
+
   const prompt = `Bron: ${source.name}\nURL: ${source.url}\n\nUitgelezen pagina-inhoud:\n---\n${pageText}\n---`;
   const data = await askClaudeJson(SCAN_SYSTEM, prompt, false, FAST_WRITE_MODEL);
 
@@ -69,7 +82,7 @@ async function runScan(source: Source): Promise<ScanResult> {
   // onderdrukt — dat is de dedup-historie).
   const known = await getFindingKeys(source.id);
   const fresh = unique.filter(t => !known.has(findingKey(t))).slice(0, MAX_NEW_PER_SCAN);
-  if (!fresh.length) return { sourceId: source.id, ok: true, added: 0, skipped: 0 };
+  if (!fresh.length) return { sourceId: source.id, ok: true, added: 0, skipped: 0, contentHash };
 
   // addTopics ontdubbelt nog eens tegen de globale wachtrij (handmatige invoer of
   // een andere bron die hetzelfde al aandroeg).
@@ -78,7 +91,7 @@ async function runScan(source: Source): Promise<ScanResult> {
   const entries = fresh.map(t => ({ title: t, topicId: idMap.get(t.toLowerCase().trim()) ?? null }));
   await recordFindings(source.id, entries);
 
-  return { sourceId: source.id, ok: true, added: added.length, skipped: skipped.length };
+  return { sourceId: source.id, ok: true, added: added.length, skipped: skipped.length, contentHash };
 }
 
 // Voor de cron/"alle bronnen"-run: elke actieve bron sequentieel, best-effort.
