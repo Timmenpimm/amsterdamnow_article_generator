@@ -3,6 +3,7 @@ import { askClaudeJson, FAST_WRITE_MODEL } from './claude';
 import { createDraft, taxonomyChoices } from './wp';
 import { researchWithTavily } from './tavily';
 import { validateArticle } from './validation';
+import type { Topic } from './types';
 
 function html(content: string): string {
   return content.split(/\n\s*\n/).map(p => `<p>${p.trim().replace(/\n/g, '<br>')}</p>`).join('\n');
@@ -21,6 +22,12 @@ function strings(value: unknown, label: string): string[] {
 export async function writeNextTopic() {
   const topic = await claimNextTopic();
   if (!topic) return { topic: null, article: null };
+  return writeTopic(topic);
+}
+
+// De queue-route claimt werk van beide types atomisch en geeft een standaard-
+// topic hier direct door. Deze functie claimt dus zelf niets.
+export async function writeTopic(topic: Topic) {
   try {
     const [researchPrompt, writePrompt, seoPrompt, taxonomies, constraints] = await Promise.all([
       activePrompt('research'), activePrompt('schrijf'), activePrompt('seo'), taxonomyChoices(), activeConstraints('standaard'),
