@@ -1,4 +1,4 @@
-import { claimActiveListTopic, claimNextQueued, recoverStaleTopics, releaseTopicLock } from './db';
+import { claimNextQueued, recoverStaleTopics } from './db';
 import { processListStep } from './listWriter';
 import { writeTopic } from './writer';
 
@@ -7,25 +7,11 @@ import { writeTopic } from './writer';
 // is voor het voortzetten van de wachtrij.
 export async function processNextQueueJob() {
   const recovered = await recoverStaleTopics();
-  const running = await claimActiveListTopic();
-  if (running) {
-    try {
-      const step = await processListStep(running.id);
-      return { list: step, topic: step?.topic ?? null, article: step?.article ?? null, recovered };
-    } finally {
-      await releaseTopicLock(running.id);
-    }
-  }
-
   const next = await claimNextQueued();
   if (!next) return { topic: null, article: null, recovered };
   if (next.type === 'lijst') {
-    try {
-      const step = await processListStep(next.id);
-      return { list: step, topic: step?.topic ?? null, article: step?.article ?? null, recovered };
-    } finally {
-      await releaseTopicLock(next.id);
-    }
+    const step = await processListStep(next.id);
+    return { list: step, topic: step?.topic ?? null, article: step?.article ?? null, recovered };
   }
   return { ...(await writeTopic(next)), recovered };
 }

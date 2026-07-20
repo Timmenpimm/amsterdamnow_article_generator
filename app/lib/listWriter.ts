@@ -81,7 +81,7 @@ async function stepSelect(topic: Topic): Promise<ListStepResult> {
     .filter((k: ListItemState) => k.naam);
   if (items.length < 3) throw new Error('De selectiefase leverde minder dan 3 kandidaat-items op.');
   s.items = items;
-  await saveListProgress(topic.id, { phase: 'verify', state: s });
+  await saveListProgress(topic.id, { status: 'queued', phase: 'verify', state: s });
   return {
     topic, phase: 'verify', done: false,
     progress: `${items.length} kandidaten gevonden · verificatie start`,
@@ -135,7 +135,7 @@ async function stepVerify(topic: Topic): Promise<ListStepResult> {
     await saveListProgress(topic.id, { status: 'review', phase: 'review', state: s });
     return { topic, phase: 'review', done: true, progress: `Verificatie klaar: ${s.verified} opgenomen, ${s.rejected} afgevallen · wacht op controle` };
   }
-  await saveListProgress(topic.id, { state: s });
+  await saveListProgress(topic.id, { status: 'queued', state: s });
   return {
     topic, phase: 'verify', done: false,
     progress: `Item ${s.items.length - remaining}/${s.items.length} geverifieerd · ${s.rejected} afgevallen`,
@@ -161,7 +161,7 @@ export async function approveItems(topicId: number, includeNames: string[]): Pro
   if (s.items.filter(i => i.status === 'verified').length < 3) {
     throw new Error('Een lijstartikel heeft minimaal 3 goedgekeurde items nodig.');
   }
-  await saveListProgress(topicId, { status: 'writing', phase: 'compose', state: s, errorClear: true });
+  await saveListProgress(topicId, { status: 'queued', phase: 'compose', state: s, errorClear: true });
   return (await getTopic(topicId))!;
 }
 
@@ -270,7 +270,7 @@ async function stepCompose(topic: Topic): Promise<ListStepResult> {
     s.composeChunks = chunks;
     const newDoneCount = doneCount + nextBatch.length;
     if (newDoneCount < verified.length) {
-      await saveListProgress(topic.id, { state: s });
+      await saveListProgress(topic.id, { status: 'queued', state: s });
       return { topic, phase: 'compose', done: false, progress: `Artikel wordt geschreven · ${newDoneCount}/${verified.length} items` };
     }
   }
@@ -296,7 +296,7 @@ async function stepCompose(topic: Topic): Promise<ListStepResult> {
   s.artikel = composed;
   s.meldingen = meldingen;
   s.composeChunks = undefined;
-  await saveListProgress(topic.id, { phase: 'finalize', state: s });
+  await saveListProgress(topic.id, { status: 'queued', phase: 'finalize', state: s });
   return { topic, phase: 'finalize', done: false, progress: 'Artikel geschreven en gevalideerd · afronden' };
 }
 

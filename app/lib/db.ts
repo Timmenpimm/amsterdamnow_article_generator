@@ -416,7 +416,11 @@ export async function saveListProgress(
   if (upd.status) add('status', upd.status);
   if (upd.phase !== undefined) add('phase', upd.phase);
   if (upd.state) add('list_state', JSON.stringify(upd.state));
-  if (upd.status === 'writing' || upd.state) add('locked_at', now());
+  if (upd.status === 'writing') add('locked_at', now());
+  if (upd.status === 'queued' || upd.status === 'review') {
+    sets.push('locked_at = NULL');
+    sets.push('lock_owner = NULL');
+  }
   if (upd.errorClear) { sets.push('error = NULL'); sets.push('error_step = NULL'); }
   if (!sets.length) return;
   params.push(id);
