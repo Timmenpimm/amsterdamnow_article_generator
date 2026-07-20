@@ -105,6 +105,17 @@ function outputConfig(schema?: Record<string, unknown>): Record<string, unknown>
   return schema ? { output_config: { format: { type: 'json_schema', schema } } } : {};
 }
 
+// Thinking expliciet uit. Sonnet 5 draait "adaptive thinking" zodra het
+// thinking-veld ontbreekt (Opus 4.8 juist niet), en die denktokens tellen mee
+// in max_tokens én in de output-facturering. Op productie gezien (2026-07-20):
+// research-output sprong van ~1100 naar ~1500-2600 tokens en de schrijffase
+// liep bij muziekonderwerpen herhaaldelijk tegen de 3000-token-cap aan
+// ("afgekapt op max_tokens") doordat het denken de limiet opat. Alle calls in
+// deze pipeline zijn extractie- of formulewerk met een strak schema; denken
+// voegt hier niets toe. Expliciet 'disabled' wordt door Sonnet 5 én Opus 4.8
+// geaccepteerd.
+const THINKING_OFF = { thinking: { type: 'disabled' } };
+
 // Als askClaudeJson, maar met genummerde beelden vóór de vraag.
 // Voor de beeldselectie: één vision-call per request houdt ons binnen de
 // 60s-limiet; de aanroeper batcht zelf (max ~12 beelden per call).
@@ -121,7 +132,7 @@ export async function askClaudeJsonWithImages(
   content.push({ type: 'text', text: prompt });
   const messages: Array<{ role: 'user' | 'assistant'; content: unknown }> = [{ role: 'user', content }];
 
-  const response = await request({ model, max_tokens: 4000, system, messages, ...outputConfig(schema) });
+  const response = await request({ model, max_tokens: 4000, system, messages, ...THINKING_OFF, ...outputConfig(schema) });
   if (response.stop_reason === 'max_tokens') {
     throw new Error('Claude-respons afgekapt op max_tokens (4000) bij het beoordelen van de beelden.');
   }
@@ -163,12 +174,12 @@ export async function askClaudeJson(
   const messages: Array<{ role: 'user' | 'assistant'; content: unknown }> = [{ role: 'user', content: prompt }];
 
   async function requestUntilDone(): Promise<string> {
-    let response = await request({ model, max_tokens: maxTokens, system: systemBlocks, messages, ...(tools ? { tools } : {}), ...format });
+    let response = await request({ model, max_tokens: maxTokens, system: systemBlocks, messages, ...THINKING_OFF, ...(tools ? { tools } : {}), ...format });
     // Server-side web search can pause a long-running turn. Continue it with
     // the returned content, as prescribed by the Messages API, up to two times.
     for (let attempt = 0; response.stop_reason === 'pause_turn' && attempt < 2; attempt++) {
       messages.push({ role: 'assistant', content: response.content || [] });
-      response = await request({ model, max_tokens: maxTokens, system: systemBlocks, messages, ...(tools ? { tools } : {}), ...format });
+      response = await request({ model, max_tokens: maxTokens, system: systemBlocks, messages, ...THINKING_OFF, ...(tools ? { tools } : {}), ...format });
     }
     if (response.stop_reason === 'pause_turn') throw new Error('Claude kon het bronnenonderzoek niet binnen de beschikbare tijd afronden.');
     // Bij max_tokens is de respons per definitie afgekapt (onvolledige JSON) —
