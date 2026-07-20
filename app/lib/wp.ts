@@ -1,4 +1,4 @@
-import { demoGetAll, demoUpsert, ensureDemoSeed, STORAGE } from './db';
+import { demoDelete, demoGetAll, demoUpsert, ensureDemoSeed, STORAGE } from './db';
 import { DEMO_ARTICLES, DEMO_TOPICS } from './demo-seed';
 import type { Article, MediaRef } from './types';
 
@@ -248,6 +248,17 @@ export async function publishArticle(id: number): Promise<Article | null> {
   }
   await wpFetch(`/wp/v2/posts/${id}`, { method: 'POST', body: JSON.stringify({ status: 'publish' }) });
   return getArticle(id);
+}
+
+// Verplaatst een draft (bv. eentje die nog op beelden wacht) naar de
+// WordPress-prullenbak. Gepubliceerde artikelen horen hier niet doorheen —
+// dat filtert de API-route af.
+export async function deleteArticle(id: number): Promise<void> {
+  if (!LIVE) {
+    await demoDelete(id);
+    return;
+  }
+  await wpFetch(`/wp/v2/posts/${id}`, { method: 'DELETE' });
 }
 
 export interface GeneratedDraft {

@@ -202,6 +202,15 @@ export default function Pipeline() {
     load();
   }
 
+  async function deleteArticle(a: Article) {
+    if (!confirm(`"${a.title}" verwijderen? De draft gaat naar de prullenbak in WordPress.`)) return;
+    const res = await fetch(`/api/articles/${a.id}`, { method: 'DELETE' });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) toast(body.error || 'Verwijderen mislukt', { kind: 'error' });
+    else toast('Artikel verwijderd');
+    load();
+  }
+
   async function startWriting() {
     if (writingNow) return;
     setWritingNow(true);
@@ -431,11 +440,14 @@ export default function Pipeline() {
                         {[a.category, a.district.replace('Amsterdam ', '')].filter(Boolean).join(' · ')}
                       </span>
                     </div>
-                    <Link href={`/artikel/${a.id}`}>
-                      <button className="btn-primary" style={{ marginTop: 10, width: '100%', fontSize: 12.5, fontWeight: 700, padding: 8, borderRadius: 6 }}>
-                        Beelden toevoegen →
-                      </button>
-                    </Link>
+                    <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+                      <Link href={`/artikel/${a.id}`} style={{ flex: 1 }}>
+                        <button className="btn-primary" style={{ width: '100%', fontSize: 12.5, fontWeight: 700, padding: 8, borderRadius: 6 }}>
+                          Beelden toevoegen →
+                        </button>
+                      </Link>
+                      <button className="btn-small" title="Verwijderen" onClick={() => deleteArticle(a)}>✕</button>
+                    </div>
                   </div>
                 </div>
               );

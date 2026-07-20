@@ -503,6 +503,11 @@ export async function getListStructure(postId: number): Promise<ListArticleStruc
   try { return JSON.parse(row.json) as ListArticleStructure; } catch { return null; }
 }
 
+export async function deleteListStructure(postId: number) {
+  const db = await getDb();
+  await db.run('DELETE FROM list_articles WHERE post_id = $1', [postId]);
+}
+
 export async function listStructures(): Promise<Record<number, ListArticleStructure>> {
   const db = await getDb();
   const rows = await db.all('SELECT post_id, json FROM list_articles');
@@ -736,6 +741,11 @@ export async function demoUpsert(id: number, json: string) {
     'INSERT INTO demo_articles (id, json) VALUES ($1, $2) ON CONFLICT (id) DO UPDATE SET json = EXCLUDED.json',
     [id, json]
   );
+}
+
+export async function demoDelete(id: number) {
+  const db = await getDb();
+  await db.run('DELETE FROM demo_articles WHERE id = $1', [id]);
 }
 
 export async function ensureDemoSeed(
