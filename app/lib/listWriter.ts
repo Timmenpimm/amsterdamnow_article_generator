@@ -312,7 +312,7 @@ async function stepCompose(topic: Topic): Promise<ListStepResult> {
           beschikbare_categorieen: taxonomies.categories,
           beschikbare_districten: taxonomies.districts,
         })}`,
-        false, FAST_WRITE_MODEL, 6000, LIST_COMPOSE_FIRST_SCHEMA, true
+        false, FAST_WRITE_MODEL, 6000, LIST_COMPOSE_FIRST_SCHEMA
       );
     } else {
       // Elk blok kiest quote-plaatsing zonder de andere blokken te kennen.
@@ -329,7 +329,7 @@ async function stepCompose(topic: Topic): Promise<ListStepResult> {
       result = await askClaudeJson(
         ITEM_COMPOSE_PROMPT,
         `Thema van het lijstartikel: ${topic.title}\n\nSchrijf precies ${nextBatch.length} volgende items, in exact deze volgorde: ${nextBatch.map(item => item.naam).join(', ')}.${naadHint}${itemRulesHint}${feedbackHint}\n\n${JSON.stringify(input)}`,
-        false, FAST_WRITE_MODEL, 6000, LIST_COMPOSE_ITEMS_SCHEMA, true
+        false, FAST_WRITE_MODEL, 6000, LIST_COMPOSE_ITEMS_SCHEMA
       );
     }
     const items = Array.isArray(result.items) ? result.items : [];

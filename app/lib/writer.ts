@@ -15,13 +15,15 @@ import { parseStandaardState, type StandaardConstraints, type StandaardPhase, ty
 // een ander legitiem iets langer antwoord af; 3000 geeft daar ruimte voor
 // terwijl een op hol geslagen generatie nog altijd ruim (~35-40s, gemeten
 // lineair) onder de 60s-limiet stopt in plaats van er tegenaan te lopen.
-// 4500 i.p.v. 3000: de schrijfcall denkt (adaptive thinking, zie
-// lib/claude.ts) en die denktokens tellen mee in max_tokens. Een normaal
-// artikel is ~1100 output-tokens + ~1000-2000 denktokens; 3000 werd daardoor
-// bij denk-intensieve onderwerpen (events met veel acts) afgekapt. 4500 is
-// gemeten (~90 tokens/s) nog altijd ~50s in het slechtste geval, net binnen
-// de 60s-functielimiet; de max_tokens-throw in claude.ts blijft het vangnet.
+// De schrijfcall denkt bewust NIET (zie lib/claude.ts): op productie getest
+// (2026-07-20) kapte adaptive thinking + structured outputs élk artikel af,
+// zelfs op 4500 tokens. Zonder thinking is een artikel ~1100 output-tokens;
+// 4500 geeft ruim marge voor lange legitieme artikelen terwijl een op hol
+// geslagen generatie (~50s bij ~90 tokens/s) nog net binnen de
+// 60s-functielimiet stopt. De max_tokens-throw in claude.ts is het vangnet.
 const WRITE_MAX_TOKENS = 4500;
+// Maximaal aantal herschrijfrondes na de eerste schrijfpoging.
+const MAX_SCHRIJF_HERKANSINGEN = 2;
 
 function html(content: string): string {
   return content.split(/\n\s*\n/).map(p => `<p>${p.trim().replace(/\n/g, '<br>')}</p>`).join('\n');
@@ -148,7 +150,7 @@ async function stepSchrijf(topic: Topic, s: StandaardState): Promise<StandaardSt
   const payload = await askClaudeJson(
     writePrompt.content,
     `Onderwerp: ${topic.title}\n\nGebruik uitsluitend deze gecontroleerde research van Tavily. Schrijf het artikel als geldige JSON volgens de actieve prompt.\n\nHoud je aan deze regels:\n${rules}\n\n${JSON.stringify(s.research)}`,
-    false, FAST_WRITE_MODEL, WRITE_MAX_TOKENS, ARTICLE_SCHEMA, true,
+    false, FAST_WRITE_MODEL, WRITE_MAX_TOKENS, ARTICLE_SCHEMA,
   );
   try {
     const candidate = buildCandidate(payload);
@@ -177,20 +179,32 @@ async function stepSchrijfRetry(topic: Topic, s: StandaardState): Promise<Standa
   const payload = await askClaudeJson(
     writePrompt.content,
     `Je vorige versie van dit artikel is afgekeurd door de eindredactie.\n\nOnderwerp: ${topic.title}\nAfkeurreden: ${s.rejectReason}\n\nLever het VOLLEDIGE artikel opnieuw aan als JSON met exact dezelfde velden (title, subregel, introductie_tekst, content, quote). Los de afkeurreden op en houd de rest zoveel mogelijk intact. Alle regels blijven gelden:\n${rules}\n\nJe vorige versie:\n${JSON.stringify(s.draftPayload)}`,
-    false, FAST_WRITE_MODEL, WRITE_MAX_TOKENS, ARTICLE_SCHEMA, true,
+    false, FAST_WRITE_MODEL, WRITE_MAX_TOKENS, ARTICLE_SCHEMA,
   );
   let checked: GeneratedArticle;
   try {
     checked = buildCandidate(payload);
     validateArticle(checked, subjectName(topic, s), constraints);
   } catch (e: any) {
-    // Eén herkansing — meer past niet zonder het risico op een derde
-    // sequentiële Claude-call binnen één aanroep.
-    throw new Error(`${e.message} (ook na een herschrijfronde)`);
+    // Elke herkansing is sinds de fase-opsplitsing een eigen serverless-tick,
+    // dus meerdere rondes kunnen veilig (zelfde patroon als composeAttempts in
+    // listWriter.ts). Afkeuringen zijn vaak randmissers (intro 38/40 woorden,
+    // quote 14/15); een extra ronde mét de nieuwe afkeurreden redt die bijna
+    // altijd, tegen de prijs van één extra call — alleen bij falen.
+    const attempts = (s.schrijfAttempts || 0) + 1;
+    if (attempts >= MAX_SCHRIJF_HERKANSINGEN) {
+      throw new Error(`${e.message} (ook na ${attempts} herschrijfrondes)`);
+    }
+    s.schrijfAttempts = attempts;
+    s.draftPayload = payload;
+    s.rejectReason = e.message;
+    await saveTopicProgress(topic.id, { status: 'queued', phase: 'schrijf-retry', state: s });
+    return { topic, phase: 'schrijf-retry', done: false, progress: `Afgekeurd (${String(e.message).slice(0, 60)}…) · herkansing ${attempts + 1} start` };
   }
   s.article = checked;
   s.draftPayload = undefined;
   s.rejectReason = undefined;
+  s.schrijfAttempts = undefined;
   await saveTopicProgress(topic.id, { status: 'queued', phase: 'seo', state: s });
   return { topic, phase: 'seo', done: false, progress: 'Artikel geschreven en gevalideerd · SEO en draft' };
 }
