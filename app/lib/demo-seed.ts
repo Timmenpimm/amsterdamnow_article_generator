@@ -21,6 +21,7 @@ export const DEMO_ARTICLES: Article[] = [
     district: 'Amsterdam Centrum',
     rubriek: 'Locatie',
     featured: { id: 86463, url: `${UP}/techlab_event_marineterrein_amsterdam_3-e1783018526390.jpeg` },
+    inline: null,
     slider: [],
     fotograaf: 'Marineterrein Amsterdam',
     naam_locatie: 'Techlab Marineterrein',
@@ -53,6 +54,7 @@ export const DEMO_ARTICLES: Article[] = [
     district: 'Amsterdam Centrum',
     rubriek: 'Evenement',
     featured: { id: 86414, url: `${UP}/bols-spritz-garden-event-amstel-hotel-amsterdam_1-e1783020934360.jpg` },
+    inline: null,
     slider: [{ id: 86415, url: `${UP}/techlab_event_marineterrein_amsterdam_1-e1783016318571-600x413.jpeg` }],
     fotograaf: '',
     naam_locatie: 'Bols Spritz Garden',
@@ -84,6 +86,7 @@ export const DEMO_ARTICLES: Article[] = [
     district: 'Amsterdam Centrum',
     rubriek: 'Locatie',
     featured: null,
+    inline: null,
     slider: [],
     fotograaf: '',
     naam_locatie: 'Choux',
@@ -115,6 +118,7 @@ export const DEMO_ARTICLES: Article[] = [
     district: 'Amsterdam Noord',
     rubriek: 'Locatie',
     featured: { id: 86373, url: `${UP}/v12-restaurant-papaverhoek-amsterdam_2.jpeg` },
+    inline: null,
     slider: [
       { id: 86374, url: `${UP}/techlab_event_marineterrein_amsterdam_1-e1783016318571-1024x705.jpeg` },
       { id: 86375, url: `${UP}/bols-spritz-garden-event-amstel-hotel-amsterdam_1-e1783020934360.jpg` },
@@ -148,6 +152,7 @@ export const DEMO_ARTICLES: Article[] = [
     district: 'Amsterdam Oost',
     rubriek: 'Locatie',
     featured: { id: 86341, url: `${UP}/techlab_event_marineterrein_amsterdam_1-e1783016318571-600x413.jpeg` },
+    inline: null,
     slider: [
       { id: 86342, url: `${UP}/bols-spritz-garden-event-amstel-hotel-amsterdam_1-e1783020934360.jpg` },
       { id: 86343, url: `${UP}/v12-restaurant-papaverhoek-amsterdam_2.jpeg` },
@@ -180,6 +185,7 @@ export const DEMO_ARTICLES: Article[] = [
     district: 'Amsterdam Zuid',
     rubriek: 'Evenement',
     featured: { id: 86323, url: `${UP}/techlab_event_marineterrein_amsterdam_3-e1783018526390.jpeg` },
+    inline: null,
     slider: [
       { id: 86324, url: `${UP}/techlab_event_marineterrein_amsterdam_1-e1783016318571-1024x705.jpeg` },
       { id: 86325, url: `${UP}/bols-spritz-garden-event-amstel-hotel-amsterdam_1-e1783020934360.jpg` },
