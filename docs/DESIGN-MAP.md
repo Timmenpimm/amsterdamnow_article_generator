@@ -4,7 +4,7 @@
 uitpluizen. Lees eerst dít bestand, importeer het verse design, diff de
 schermlabels tegen de tabel hieronder, en bouw alléén de delta.
 
-_Laatst bijgewerkt: 20 juli 2026. Klopt er iets niet meer? Werk deze tabel bij
+_Laatst bijgewerkt: 20 juli 2026 (avond, na tokenoptimalisatie). Klopt er iets niet meer? Werk deze tabel bij
 in dezelfde PR als de codewijziging._
 
 ---
@@ -81,6 +81,24 @@ in dezelfde PR als de codewijziging._
   Serper.dev alleen met `SERPER_API_KEY`, CC-rechtenfilter vast aan —
   Googles eigen CSE/JSON API is sinds jan 2026 dicht voor nieuwe whole-web
   engines).
+- **Tokenoptimalisatie (juli 2026, PR #29–#33)** — bij nieuwe Claude-calls
+  aanhouden:
+  - Álle pipeline-calls draaien expliciet op `FAST_WRITE_MODEL` (Sonnet 5);
+    `MODEL` (Opus) is alleen nog de default/override via `ANTHROPIC_MODEL`.
+    Nieuwe extractie-/verificatie-/SEO-stappen: Sonnet, tenzij aantoonbaar
+    kwaliteit tekortschiet.
+  - Elke JSON-call geeft een schema uit `lib/schemas.ts` mee (structured
+    outputs via `output_config.format`); dan geldt gegarandeerd-geldige JSON
+    en vervalt het herkansingspad. Nieuwe call = nieuw schema in `schemas.ts`
+    (elk object `additionalProperties:false` + volledige `required`; geen
+    min/max-keywords).
+  - `[claude]`-logregel in `lib/claude.ts` logt tokens + cache-hits
+    (tijdelijke instrumentatie). Cache-minimum: systeem-prompts onder ~2k
+    tokens (Sonnet) cachen stilletjes níet.
+  - Bronscanner slaat een `content_hash` per bron op (`sources`-tabel) en
+    slaat de Claude-call over bij een ongewijzigde pagina.
+  - Beeldselectie: max 48 kandidaten (`MAX_CANDIDATES` in `imageSearch.ts`),
+    scoren alleen op thumbnails (bewust géén full-size fallback).
 - **API-routes**: `app/app/api/*` — altijd `export const dynamic =
   'force-dynamic'`, `NextResponse.json`, dynamische `[id]` uit `params`.
   Cron/worker-routes: `GET` met `Bearer CRON_SECRET` (zie `queue/worker` &
