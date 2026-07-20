@@ -88,6 +88,19 @@ export async function processStandaardStep(topic: Topic): Promise<StandaardStepR
   }
 }
 
+// De "naam van het onderwerp" voor de titelcheck in validateArticle. De
+// bron-scanner maakt tegenwoordig hele zinstitels als wachtrijtitel ("Vermut
+// opent in Amsterdam: restaurant én aperitivobar ineen"); eisen dat de
+// artikeltitel die volledige zin bevat is onhaalbaar én botst frontaal met de
+// regel dat "Amsterdam" niet in de titel mag — elke scanner-titel met
+// "Amsterdam" faalde daardoor gegarandeerd. De research-fase extraheert al de
+// echte naam van de zaak of het evenement (naam_locatie); dáár hoort de
+// titelcheck op te toetsen, met de wachtrijtitel als vangnet.
+function subjectName(topic: Topic, s: StandaardState): string {
+  const naam = s.research?.naam_locatie;
+  return typeof naam === 'string' && naam.trim() ? naam.trim() : topic.title;
+}
+
 function buildCandidate(payload: Record<string, unknown>): GeneratedArticle {
   return {
     title: string(payload.title, 'title'),
@@ -133,7 +146,7 @@ async function stepSchrijf(topic: Topic, s: StandaardState): Promise<StandaardSt
   );
   try {
     const candidate = buildCandidate(payload);
-    validateArticle(candidate, topic.title, constraints);
+    validateArticle(candidate, subjectName(topic, s), constraints);
     s.article = candidate;
     await saveTopicProgress(topic.id, { status: 'queued', phase: 'seo', state: s });
     return { topic, phase: 'seo', done: false, progress: 'Artikel geschreven en gevalideerd · SEO en draft' };
@@ -163,7 +176,7 @@ async function stepSchrijfRetry(topic: Topic, s: StandaardState): Promise<Standa
   let checked: GeneratedArticle;
   try {
     checked = buildCandidate(payload);
-    validateArticle(checked, topic.title, constraints);
+    validateArticle(checked, subjectName(topic, s), constraints);
   } catch (e: any) {
     // Eén herkansing — meer past niet zonder het risico op een derde
     // sequentiële Claude-call binnen één aanroep.
