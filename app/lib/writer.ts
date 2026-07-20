@@ -43,10 +43,14 @@ function strings(value: unknown, label: string): string[] {
 // Woordaantallen mikken op het midden van de bandbreedte: het model telt niet
 // exact, dus wie op de ondergrens mikt valt er regelmatig onder — precies de
 // fout die topics op "mislukt" zette.
-function describeStandaardConstraints(c: StandaardConstraints): string {
+function describeStandaardConstraints(c: StandaardConstraints, naam: string): string {
   const mid = (r: WordRange) => Math.round((r.min + r.max) / 2);
+  // De titelcheck (validateArticle) eist de naam létterlijk; zeg het model dus
+  // precies welke tekenreeks er in de titel moet, niet alleen "de naam van het
+  // onderwerp" — daar maakte het model zelf een kortere variant van (bv.
+  // "AMAZE" waar naam_locatie "AMAZE by ID&T" is), die de check dan afkeurt.
   const lines = [
-    `- Titel: ${c.titleWords.min}-${c.titleWords.max} woorden${c.titleMustContainTopic ? ', met de naam van het onderwerp erin' : ''}.`,
+    `- Titel: ${c.titleWords.min}-${c.titleWords.max} woorden${c.titleMustContainTopic ? `, met daarin letterlijk: "${naam}"` : ''}.`,
     `- Subregel: ${c.subregelWords.min}-${c.subregelWords.max} woorden.`,
     `- Introductie: ${c.introWords.min}-${c.introWords.max} woorden; mik op ~${mid(c.introWords)}.`,
     `- Artikeltekst: ${c.contentWords.min}-${c.contentWords.max} woorden; mik op ~${mid(c.contentWords)}, verdeeld over minimaal ${c.minParagraphs} alinea's. Schrijf liever iets te ruim dan te krap.`,
@@ -146,7 +150,7 @@ async function stepSchrijf(topic: Topic, s: StandaardState): Promise<StandaardSt
   const dbStart = Date.now();
   const [writePrompt, constraints] = await Promise.all([activePrompt('schrijf'), activeConstraints('standaard')]);
   console.log(`[standaard] topic=${topic.id} schrijf: prompt+constraints geladen in ${Date.now() - dbStart}ms`);
-  const rules = describeStandaardConstraints(constraints);
+  const rules = describeStandaardConstraints(constraints, subjectName(topic, s));
   const payload = await askClaudeJson(
     writePrompt.content,
     `Onderwerp: ${topic.title}\n\nGebruik uitsluitend deze gecontroleerde research van Tavily. Schrijf het artikel als geldige JSON volgens de actieve prompt.\n\nHoud je aan deze regels:\n${rules}\n\n${JSON.stringify(s.research)}`,
@@ -175,7 +179,7 @@ async function stepSchrijfRetry(topic: Topic, s: StandaardState): Promise<Standa
   const dbStart = Date.now();
   const [writePrompt, constraints] = await Promise.all([activePrompt('schrijf'), activeConstraints('standaard')]);
   console.log(`[standaard] topic=${topic.id} schrijf-retry: prompt+constraints geladen in ${Date.now() - dbStart}ms`);
-  const rules = describeStandaardConstraints(constraints);
+  const rules = describeStandaardConstraints(constraints, subjectName(topic, s));
   const payload = await askClaudeJson(
     writePrompt.content,
     `Je vorige versie van dit artikel is afgekeurd door de eindredactie.\n\nOnderwerp: ${topic.title}\nAfkeurreden: ${s.rejectReason}\n\nLever het VOLLEDIGE artikel opnieuw aan als JSON met exact dezelfde velden (title, subregel, introductie_tekst, content, quote). Los de afkeurreden op en houd de rest zoveel mogelijk intact. Alle regels blijven gelden:\n${rules}\n\nJe vorige versie:\n${JSON.stringify(s.draftPayload)}`,
