@@ -5,22 +5,15 @@ import type {
   ConstraintKind, ConstraintVersion, StandaardConstraints, ListConstraints,
 } from './types';
 import { DEFAULT_STANDAARD_CONSTRAINTS, DEFAULT_LIST_CONSTRAINTS } from './types';
+import { PROMPT_SEEDS } from './prompt-seeds';
 
-const MISSING_SEED = '(Seed-bestand ontbreekt in deze deployment — plak hier de oorspronkelijke prompt en sla op als nieuwe versie.)';
-
-function readSeed(file: string): string {
-  // Lokaal start Next vanuit app/, terwijl de Vercel-build vanuit de repo-root
-  // kan draaien. Ondersteun beide layouts zodat dezelfde prompt in elke runtime
-  // wordt geseed.
-  const candidates = [
-    path.join(process.cwd(), 'seeds', file),
-    path.join(process.cwd(), 'app', 'seeds', file),
-  ];
-  for (const candidate of candidates) {
-    try { return fs.readFileSync(candidate, 'utf8'); } catch { /* probeer volgende locatie */ }
-  }
-  return MISSING_SEED;
-}
+// Vóór dit bestand werden prompts vanuit losse .txt-bestanden onder
+// app/seeds/ ingelezen via fs.readFileSync met een dynamisch pad. Vercel's
+// build bundelde die bestanden niet betrouwbaar mee (vier eerdere
+// fixpogingen loste dat niet blijvend op), waardoor prompts op productie
+// stil bleven hangen op onderstaande placeholdertekst. PROMPT_SEEDS bevat
+// nu de prompts als code-constanten, die elke bundler wél meeneemt.
+const LEGACY_MISSING_SEED_PLACEHOLDER = '(Seed-bestand ontbreekt in deze deployment — plak hier de oorspronkelijke prompt en sla op als nieuwe versie.)';
 
 // Opslaglaag met twee drivers:
 // - Postgres (Supabase) zodra DATABASE_URL is gezet — persistent, voor Vercel
@@ -198,26 +191,26 @@ async function getDb(): Promise<DB> {
 }
 
 async function seedPrompts(db: DB) {
-  for (const [kind, file, note] of [
-    ['research', 'researchprompt.txt', 'Tavily-researchprompt voor Claude.'],
-    ['schrijf', 'schrijfprompt.txt', 'Oorspronkelijke schrijf-prompt voor Claude.'],
-    ['seo', 'seoprompt.txt', 'Oorspronkelijke SEO-prompt voor Claude.'],
-    ['lijst-selectie', 'lijst-selectieprompt.txt', 'Kandidaat-items voorstellen voor een lijstartikel.'],
-    ['lijst-research', 'lijst-researchprompt.txt', 'Per lijstitem verifiëren en researchen (o.b.v. de redactionele instructie).'],
-    ['lijst-schrijf', 'lijst-schrijfprompt.txt', 'Lijstartikel componeren uit geverifieerde items (o.b.v. de redactionele instructie).'],
-    ['lijst-seo', 'lijst-seoprompt.txt', 'RankMath-velden voor lijstartikelen (titel eindigt op | Amsterdam Now).'],
-  ]) {
-    const seed = readSeed(file);
+  for (const [kind, note] of [
+    ['research', 'Tavily-researchprompt voor Claude.'],
+    ['schrijf', 'Oorspronkelijke schrijf-prompt voor Claude.'],
+    ['seo', 'Oorspronkelijke SEO-prompt voor Claude.'],
+    ['lijst-selectie', 'Kandidaat-items voorstellen voor een lijstartikel.'],
+    ['lijst-research', 'Per lijstitem verifiëren en researchen (o.b.v. de redactionele instructie).'],
+    ['lijst-schrijf', 'Lijstartikel componeren uit geverifieerde items (o.b.v. de redactionele instructie).'],
+    ['lijst-seo', 'RankMath-velden voor lijstartikelen (titel eindigt op | Amsterdam Now).'],
+  ] as [PromptKind, string][]) {
+    const seed = PROMPT_SEEDS[kind];
     const row = await db.get('SELECT COUNT(*) AS c FROM prompts WHERE kind = $1', [kind]);
     if (Number(row.c) === 0) await db.run(
       `INSERT INTO prompts (kind, version, content, note, author, created_at, active) VALUES ($1, 1, $2, $3, 'import', $4, 1)`,
       [kind, seed, note, now()]
     );
-    // Herstel uitsluitend de bekende placeholder die door een eerdere Vercel
-    // deployment is opgeslagen; handmatig aangepaste prompts blijven intact.
-    else if (seed !== MISSING_SEED) await db.run(
+    // Herstel uitsluitend de bekende placeholder van vóór PROMPT_SEEDS;
+    // handmatig aangepaste prompts blijven intact.
+    else await db.run(
       `UPDATE prompts SET content = $1, note = $2, author = 'import', created_at = $3 WHERE kind = $4 AND active = 1 AND content = $5`,
-      [seed, note, now(), kind, MISSING_SEED]
+      [seed, note, now(), kind, LEGACY_MISSING_SEED_PLACEHOLDER]
     );
   }
 }
