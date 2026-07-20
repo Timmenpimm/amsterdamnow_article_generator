@@ -15,7 +15,13 @@ import { parseStandaardState, type StandaardConstraints, type StandaardPhase, ty
 // een ander legitiem iets langer antwoord af; 3000 geeft daar ruimte voor
 // terwijl een op hol geslagen generatie nog altijd ruim (~35-40s, gemeten
 // lineair) onder de 60s-limiet stopt in plaats van er tegenaan te lopen.
-const WRITE_MAX_TOKENS = 3000;
+// 4500 i.p.v. 3000: de schrijfcall denkt (adaptive thinking, zie
+// lib/claude.ts) en die denktokens tellen mee in max_tokens. Een normaal
+// artikel is ~1100 output-tokens + ~1000-2000 denktokens; 3000 werd daardoor
+// bij denk-intensieve onderwerpen (events met veel acts) afgekapt. 4500 is
+// gemeten (~90 tokens/s) nog altijd ~50s in het slechtste geval, net binnen
+// de 60s-functielimiet; de max_tokens-throw in claude.ts blijft het vangnet.
+const WRITE_MAX_TOKENS = 4500;
 
 function html(content: string): string {
   return content.split(/\n\s*\n/).map(p => `<p>${p.trim().replace(/\n/g, '<br>')}</p>`).join('\n');
@@ -142,7 +148,7 @@ async function stepSchrijf(topic: Topic, s: StandaardState): Promise<StandaardSt
   const payload = await askClaudeJson(
     writePrompt.content,
     `Onderwerp: ${topic.title}\n\nGebruik uitsluitend deze gecontroleerde research van Tavily. Schrijf het artikel als geldige JSON volgens de actieve prompt.\n\nHoud je aan deze regels:\n${rules}\n\n${JSON.stringify(s.research)}`,
-    false, FAST_WRITE_MODEL, WRITE_MAX_TOKENS, ARTICLE_SCHEMA,
+    false, FAST_WRITE_MODEL, WRITE_MAX_TOKENS, ARTICLE_SCHEMA, true,
   );
   try {
     const candidate = buildCandidate(payload);
@@ -171,7 +177,7 @@ async function stepSchrijfRetry(topic: Topic, s: StandaardState): Promise<Standa
   const payload = await askClaudeJson(
     writePrompt.content,
     `Je vorige versie van dit artikel is afgekeurd door de eindredactie.\n\nOnderwerp: ${topic.title}\nAfkeurreden: ${s.rejectReason}\n\nLever het VOLLEDIGE artikel opnieuw aan als JSON met exact dezelfde velden (title, subregel, introductie_tekst, content, quote). Los de afkeurreden op en houd de rest zoveel mogelijk intact. Alle regels blijven gelden:\n${rules}\n\nJe vorige versie:\n${JSON.stringify(s.draftPayload)}`,
-    false, FAST_WRITE_MODEL, WRITE_MAX_TOKENS, ARTICLE_SCHEMA,
+    false, FAST_WRITE_MODEL, WRITE_MAX_TOKENS, ARTICLE_SCHEMA, true,
   );
   let checked: GeneratedArticle;
   try {
