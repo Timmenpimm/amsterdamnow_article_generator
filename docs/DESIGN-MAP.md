@@ -36,6 +36,8 @@ in dezelfde PR als de codewijziging._
 | **1a** | Statusboard (kanban) | `app/components/Pipeline.tsx` (7 kolommen, poll `/api/board`, `listProgress`); gerenderd door `app/app/page.tsx` |
 | **1b** | Bulk toevoegen (modal) | `app/components/BulkModal.tsx` |
 | **1c** | Artikel-detail / beeldwerk | `app/components/ArticleDetail.tsx`; route `app/app/artikel/[id]/page.tsx` |
+| **1c** (sectie) | Voorgestelde beelden (beeldselectie) | sectie + `CandidateCard` in `ArticleDetail.tsx`; backend `lib/imageSearch.ts` + `api/articles/[id]/candidates{,/search,/score}`; briefing `BRIEFING-claude-design-addendum-beeldselectie.md`; spec `docs/superpowers/specs/2026-07-20-beeldselectie-design.md` |
+| **3d** | Voorgestelde beelden — states (leeg/bezig/lijstartikel item-kiezer) | losse states-doc van dezelfde sectie/component als 1c hierboven — geen eigen scherm, geen eigen bestand |
 | **1d** | Lege & fout-states wachtrij | onderdeel van `app/components/Pipeline.tsx` |
 | **1e** | Mobiele invoer | `MobileHome`-subcomponent ín `Pipeline.tsx` + `.mobile-only` in `TopBar.tsx` |
 | — | "Nieuw lijstartikel" (modal) | `app/components/ListArticleModal.tsx` |
@@ -72,8 +74,13 @@ in dezelfde PR als de codewijziging._
 - **Pipeline-libs**: `lib/queue.ts` (één taak per tik), `lib/writer.ts`,
   `lib/listWriter.ts`, `lib/validation.ts`, `lib/wp.ts` (WordPress REST + `LIVE`
   = live/demo), `lib/tavily.ts` (research + `extractPageText`), `lib/claude.ts`
-  (`askClaudeJson`, `MODEL`=Opus 4.8, `FAST_WRITE_MODEL`=Sonnet 5),
-  `lib/scanner.ts` (Bronnen).
+  (`askClaudeJson` + `askClaudeJsonWithImages` (vision), `MODEL`=Opus 4.8,
+  `FAST_WRITE_MODEL`=Sonnet 5), `lib/scanner.ts` (Bronnen),
+  `lib/imageSearch.ts` (beeldselectie: Openverse/Commons/Pexels/Google,
+  `MIN_EDGE` = 1000; Pexels alleen met `PEXELS_API_KEY`, Google via
+  Serper.dev alleen met `SERPER_API_KEY`, CC-rechtenfilter vast aan —
+  Googles eigen CSE/JSON API is sinds jan 2026 dicht voor nieuwe whole-web
+  engines).
 - **API-routes**: `app/app/api/*` — altijd `export const dynamic =
   'force-dynamic'`, `NextResponse.json`, dynamische `[id]` uit `params`.
   Cron/worker-routes: `GET` met `Bearer CRON_SECRET` (zie `queue/worker` &

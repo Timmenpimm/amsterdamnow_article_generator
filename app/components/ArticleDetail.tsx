@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Article, BoardData, ListArticleStructure, MediaRef } from '@/lib/types';
+import type { Article, BoardData, ImageCandidate, ListArticleStructure, MediaRef } from '@/lib/types';
 import { imageCount, REQUIRED_IMAGES } from '@/lib/types';
 import { toast } from './toast';
 
@@ -23,6 +23,8 @@ export default function ArticleDetail({ id }: { id: number }) {
   const [busy, setBusy] = useState(false);
   const [dragOver, setDragOver] = useState<UploadTarget | null>(null);
   const [fotograaf, setFotograaf] = useState('');
+  const [candidates, setCandidates] = useState<ImageCandidate[]>([]);
+  const [suggestPhase, setSuggestPhase] = useState('');   // '' = niet bezig
   const fileInput = useRef<HTMLInputElement>(null);
   const uploadRole = useRef<UploadTarget>('slider');
 
@@ -52,6 +54,92 @@ export default function ArticleDetail({ id }: { id: number }) {
   }, [id]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Eerder gevonden kandidaat-beelden meteen tonen bij openen van het scherm.
+  useEffect(() => {
+    let stop = false;
+    fetch(`/api/articles/${id}/candidates`)
+      .then(r => r.json())
+      .then(d => { if (!stop && Array.isArray(d.candidates)) setCandidates(d.candidates); })
+      .catch(() => { /* paneel blijft gewoon leeg */ });
+    return () => { stop = true; };
+  }, [id]);
+
+  // Zoeken + scoren. Scoren gaat in tikken van max 12 beelden (één
+  // Claude-call per request i.v.m. de serverless-limiet).
+  async function suggestImages() {
+    if (suggestPhase) return;
+    try {
+      setSuggestPhase('Zoeken bij Openverse, Wikimedia Commons, Pexels en Google…');
+      const sRes = await fetch(`/api/articles/${id}/candidates/search`, { method: 'POST' });
+      const sData = await sRes.json();
+      if (!sRes.ok) throw new Error(sData.error);
+      setCandidates(sData.candidates);
+      if (sData.errors?.length) toast(`Niet alle bronnen deden mee: ${sData.errors.join(' · ')}`, { kind: 'error' });
+
+      let remaining = (sData.candidates as ImageCandidate[]).filter(c => c.status === 'new').length;
+      let safety = 6;
+      while (remaining > 0 && safety-- > 0) {
+        setSuggestPhase(`Claude beoordeelt de beelden… nog ${remaining} te gaan`);
+        const res = await fetch(`/api/articles/${id}/candidates/score`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+        setCandidates(data.candidates);
+        remaining = data.remaining;
+      }
+    } catch (e: any) {
+      toast(e.message, { kind: 'error' });
+    } finally {
+      setSuggestPhase('');
+    }
+  }
+
+  // Kandidaat in een slot zetten via de bestaande media-endpoints; daarna de
+  // kandidaat op 'used' en — als het veld leeg is — de fotograaf invullen
+  // (naamsvermelding hoort bij CC BY).
+  async function useCandidate(c: ImageCandidate, target: UploadTarget) {
+    if (!article) return;
+    setBusy(true);
+    try {
+      const endpoint = typeof target === 'number'
+        ? `/api/articles/${article.id}/item-media?item=${target}`
+        : `/api/articles/${article.id}/media?role=${target}`;
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: c.url }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setArticle(data.article);
+      if (data.list) setList(data.list);
+      const credit = [c.author, c.source, c.license].filter(Boolean).join(' · ');
+      if (!fotograaf.trim() && credit) {
+        setFotograaf(credit);
+        await fetch(`/api/articles/${article.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fotograaf: credit, knownMedia: allMedia(data.article) }),
+        }).catch(() => { /* credit staat in elk geval in het veld */ });
+      }
+      await patchCandidate(c.id, 'used');
+      toast(typeof target === 'number' ? 'Kandidaat als itemfoto gezet' : `Kandidaat naar ${target === 'featured' ? 'featured' : 'slider'}`);
+    } catch (e: any) {
+      toast(e.message, { kind: 'error' });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function patchCandidate(candidateId: number, status: 'used' | 'dismissed') {
+    const res = await fetch(`/api/articles/${id}/candidates`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ candidateId, status }),
+    });
+    const data = await res.json();
+    if (res.ok) setCandidates(data.candidates);
+  }
 
   async function patch(body: Record<string, unknown>) {
     if (!article) return;
@@ -213,6 +301,9 @@ export default function ArticleDetail({ id }: { id: number }) {
   const needList = worklist.filter(a => (worklistCounts[a.id] ?? 0) < REQUIRED_IMAGES);
   const readyList = worklist.filter(a => (worklistCounts[a.id] ?? 0) >= REQUIRED_IMAGES);
   const sliderMissing = Math.max(0, 2 - article.slider.length);
+  // Gebruikte en afgewezen kandidaten verdwijnen uit de grid; gescoorde staan
+  // op volgorde van score (de db-query sorteert al).
+  const visibleCandidates = candidates.filter(c => c.status === 'new' || c.status === 'scored');
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--panel)' }}>
@@ -554,19 +645,54 @@ export default function ArticleDetail({ id }: { id: number }) {
               </div>
             )}
 
-            {/* image agent */}
-            <div
-              style={{
-                border: '1px dashed var(--border)', borderRadius: 10, padding: '12px 14px',
-                display: 'flex', alignItems: 'center', gap: 12, background: 'rgba(255,255,255,0.5)',
-              }}
-            >
-              <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.06em', color: 'var(--muted)', border: '1px solid var(--border)', padding: '3px 7px', borderRadius: 4, flexShrink: 0 }}>
-                BINNENKORT
-              </span>
-              <span style={{ fontSize: 12, color: 'var(--gray)', lineHeight: 1.4 }}>
-                Voorgestelde beelden van de image-agent verschijnen hier als kandidaten — aanklikken om ze in een slot te zetten.
-              </span>
+            {/* beeldselectie: voorgestelde rechtenvrije kandidaten */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                  {list ? '4' : '3'} · Voorgestelde beelden
+                </span>
+                <span style={{ fontSize: 11, color: 'var(--gray)' }}>rechtenvrij · minimaal 1000×1000</span>
+                <button
+                  className="btn-small"
+                  style={{ marginLeft: 'auto', fontSize: 11.5, padding: '5px 10px', opacity: suggestPhase ? 0.6 : 1 }}
+                  disabled={!!suggestPhase}
+                  onClick={suggestImages}
+                >
+                  {suggestPhase ? 'Bezig…' : visibleCandidates.length ? '↻ Vernieuwen' : 'Zoek kandidaten'}
+                </button>
+              </div>
+
+              {suggestPhase && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--blue-dark)' }}>
+                  <span style={{ width: 60, height: 3, background: 'var(--border-light)', borderRadius: 2, overflow: 'hidden', flexShrink: 0 }}>
+                    <span style={{ display: 'block', width: '45%', height: '100%', background: 'var(--blue)' }} />
+                  </span>
+                  {suggestPhase}
+                </div>
+              )}
+
+              {!suggestPhase && !visibleCandidates.length && (
+                <div style={{ border: '1px dashed var(--border)', borderRadius: 10, padding: '12px 14px', fontSize: 12, color: 'var(--gray)', lineHeight: 1.45, background: 'rgba(255,255,255,0.5)' }}>
+                  Nog geen kandidaten. &quot;Zoek kandidaten&quot; doorzoekt Openverse, Wikimedia Commons, Pexels en
+                  Google (met rechtenfilter) op {article.naam_locatie ? `"${article.naam_locatie}"` : 'het onderwerp'} en
+                  laat Claude de vondsten beoordelen op de AmsterdamNOW-beeldstijl.
+                </div>
+              )}
+
+              {visibleCandidates.length > 0 && (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  {visibleCandidates.map(c => (
+                    <CandidateCard
+                      key={c.id}
+                      c={c}
+                      busy={busy}
+                      items={list?.items.map(it => it.naam) || null}
+                      onUse={target => useCandidate(c, target)}
+                      onDismiss={() => patchCandidate(c.id, 'dismissed')}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
@@ -673,6 +799,78 @@ function Flag({ on, label }: { on: boolean; label: string }) {
     >
       {on ? '✓ ' : ''}{label}
     </span>
+  );
+}
+
+function CandidateCard({
+  c, busy, items, onUse, onDismiss,
+}: {
+  c: ImageCandidate; busy: boolean; items: string[] | null;
+  onUse: (target: UploadTarget) => void; onDismiss: () => void;
+}) {
+  const [showItems, setShowItems] = useState(false);
+  const scored = c.score != null;
+  const scoreColor = !scored ? 'var(--muted)'
+    : c.score! >= 75 ? 'var(--green-dark)'
+    : c.score! >= 50 ? 'var(--amber-dark)'
+    : 'var(--gray)';
+  return (
+    <div style={{ border: '1px solid var(--border-light)', borderRadius: 10, background: 'var(--card)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+      <a href={c.source_page || c.url} target="_blank" rel="noreferrer" title="Bekijk bij de bron">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={c.thumb_url}
+          alt={c.title || 'kandidaat'}
+          style={{ width: '100%', height: 128, objectFit: 'cover', display: 'block', background: 'var(--soft)' }}
+          loading="lazy"
+          onError={e => {
+            // Sommige bronnen (m.n. Openverse-thumbs) weigeren hotlinks;
+            // val dan terug op het volledige beeld.
+            const img = e.currentTarget;
+            if (img.src !== c.url) img.src = c.url;
+          }}
+        />
+      </a>
+      <div style={{ padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 5, flex: 1 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontSize: 11.5, fontWeight: 800, color: scoreColor }}>
+            {scored ? `${c.score}` : '…'}
+          </span>
+          {c.role === 'featured' && <span className="chip-green" style={{ fontSize: 10 }}>tip: featured</span>}
+          <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--muted)' }}>{c.width}×{c.height}</span>
+        </div>
+        {c.reason && (
+          <div style={{ fontSize: 11, color: 'var(--gray)', lineHeight: 1.35 }}>{c.reason}</div>
+        )}
+        <div style={{ fontSize: 10.5, color: 'var(--muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {[c.source, c.author, c.license].filter(Boolean).join(' · ')}
+        </div>
+        <div style={{ display: 'flex', gap: 5, marginTop: 'auto', flexWrap: 'wrap' }}>
+          <button className="btn-small" disabled={busy} style={{ fontSize: 11, padding: '4px 8px' }} onClick={() => onUse('featured')}>★ Featured</button>
+          <button className="btn-small" disabled={busy} style={{ fontSize: 11, padding: '4px 8px' }} onClick={() => onUse('slider')}>+ Slider</button>
+          {items && (
+            <button className="btn-small" disabled={busy} style={{ fontSize: 11, padding: '4px 8px' }} onClick={() => setShowItems(v => !v)}>item ▾</button>
+          )}
+          <button className="btn-small" disabled={busy} title="Afwijzen" style={{ fontSize: 11, padding: '4px 8px', marginLeft: 'auto' }} onClick={onDismiss}>✕</button>
+        </div>
+        {showItems && items && (
+          <div style={{ borderTop: '1px solid var(--border-light)', marginTop: 4, paddingTop: 8, display: 'flex', flexDirection: 'column', gap: 3 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 2 }}>Koppel aan item</div>
+            {items.map((naam, i) => (
+              <button
+                key={i}
+                className="btn-small"
+                disabled={busy}
+                style={{ fontSize: 11, padding: '4px 8px', textAlign: 'left' }}
+                onClick={() => { setShowItems(false); onUse(i); }}
+              >
+                {i + 1} · {naam}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

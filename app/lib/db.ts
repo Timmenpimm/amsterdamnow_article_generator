@@ -4,6 +4,7 @@ import type {
   ListArticleStructure, ListState, PromptKind, Topic, PromptVersion,
   ConstraintKind, ConstraintVersion, StandaardConstraints, ListConstraints,
   Source, SourceSummary, SourceFinding, FindingState,
+  ImageCandidate, ImageCandidateDraft, CandidateStatus,
 } from './types';
 import { DEFAULT_STANDAARD_CONSTRAINTS, DEFAULT_LIST_CONSTRAINTS } from './types';
 import { PROMPT_SEEDS } from './prompt-seeds';
@@ -120,6 +121,27 @@ async function initSqlite(): Promise<DB> {
       topic_id INTEGER
     );
     CREATE INDEX IF NOT EXISTS idx_findings_source ON source_findings (source_id);
+    CREATE TABLE IF NOT EXISTS image_candidates (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      post_id INTEGER NOT NULL,
+      url TEXT NOT NULL,
+      thumb_url TEXT NOT NULL,
+      width INTEGER NOT NULL,
+      height INTEGER NOT NULL,
+      source TEXT NOT NULL DEFAULT '',
+      source_page TEXT NOT NULL DEFAULT '',
+      license TEXT NOT NULL DEFAULT '',
+      license_url TEXT NOT NULL DEFAULT '',
+      author TEXT NOT NULL DEFAULT '',
+      title TEXT NOT NULL DEFAULT '',
+      query TEXT NOT NULL DEFAULT '',
+      score INTEGER,
+      reason TEXT NOT NULL DEFAULT '',
+      role TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'new',
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_candidates_post ON image_candidates (post_id);
   `);
   // Migratie voor databases van vóór de lijstpipeline.
   for (const col of ["type TEXT NOT NULL DEFAULT 'standaard'", 'phase TEXT', 'list_state TEXT', 'locked_at TEXT', 'lock_owner TEXT']) {
@@ -218,6 +240,29 @@ async function initPostgres(): Promise<DB> {
     );
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_findings_source ON source_findings (source_id)`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS image_candidates (
+      id SERIAL PRIMARY KEY,
+      post_id BIGINT NOT NULL,
+      url TEXT NOT NULL,
+      thumb_url TEXT NOT NULL,
+      width INTEGER NOT NULL,
+      height INTEGER NOT NULL,
+      source TEXT NOT NULL DEFAULT '',
+      source_page TEXT NOT NULL DEFAULT '',
+      license TEXT NOT NULL DEFAULT '',
+      license_url TEXT NOT NULL DEFAULT '',
+      author TEXT NOT NULL DEFAULT '',
+      title TEXT NOT NULL DEFAULT '',
+      query TEXT NOT NULL DEFAULT '',
+      score INTEGER,
+      reason TEXT NOT NULL DEFAULT '',
+      role TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'new',
+      created_at TEXT NOT NULL
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_candidates_post ON image_candidates (post_id)`);
   // Migratie voor databases van vóór de lijstpipeline.
   await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'standaard'`);
   await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS phase TEXT`);
@@ -726,6 +771,67 @@ export async function topicIdsByTitle(titles: string[]): Promise<Map<string, num
   );
   for (const r of rows) if (!map.has(r.t)) map.set(r.t as string, Number(r.id));
   return map;
+}
+
+// ---------- beeldselectie (kandidaat-beelden per artikel) ----------
+
+// Slaat nieuwe kandidaten op; URL's die al bij dit artikel horen (in welke
+// status dan ook, inclusief 'dismissed') worden overgeslagen — zo komt een
+// eerder afgewezen beeld bij "Vernieuwen" niet terug.
+export async function addImageCandidates(postId: number, drafts: ImageCandidateDraft[]): Promise<number> {
+  const db = await getDb();
+  const rows = await db.all('SELECT url FROM image_candidates WHERE post_id = $1', [postId]);
+  const existing = new Set(rows.map(r => String(r.url).split('?')[0]));
+  let added = 0;
+  for (const d of drafts) {
+    if (existing.has(d.url.split('?')[0])) continue;
+    existing.add(d.url.split('?')[0]);
+    await db.run(
+      `INSERT INTO image_candidates
+         (post_id, url, thumb_url, width, height, source, source_page, license, license_url, author, title, query, status, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'new', $13)`,
+      [postId, d.url, d.thumb_url, d.width, d.height, d.source, d.source_page,
+       d.license, d.license_url, d.author.slice(0, 200), d.title.slice(0, 300), d.query, now()]
+    );
+    added += 1;
+  }
+  return added;
+}
+
+export async function listImageCandidates(postId: number): Promise<ImageCandidate[]> {
+  const db = await getDb();
+  const rows = await db.all(
+    `SELECT * FROM image_candidates WHERE post_id = $1
+     ORDER BY (status = 'used') DESC, (score IS NULL), score DESC, id ASC`,
+    [postId]
+  );
+  return rows.map(r => ({ ...r, score: r.score == null ? null : Number(r.score) })) as ImageCandidate[];
+}
+
+export async function unscoredImageCandidates(postId: number, limit: number): Promise<ImageCandidate[]> {
+  const db = await getDb();
+  return db.all(
+    `SELECT * FROM image_candidates WHERE post_id = $1 AND status = 'new' ORDER BY id ASC LIMIT ${Math.max(1, limit)}`,
+    [postId]
+  );
+}
+
+export async function scoreImageCandidate(id: number, score: number, reason: string, role: string) {
+  const db = await getDb();
+  await db.run(
+    `UPDATE image_candidates SET score = $1, reason = $2, role = $3, status = 'scored' WHERE id = $4 AND status = 'new'`,
+    [Math.max(0, Math.min(100, Math.round(score))), reason.slice(0, 400), role, id]
+  );
+}
+
+export async function setImageCandidateStatus(postId: number, id: number, status: CandidateStatus) {
+  const db = await getDb();
+  await db.run('UPDATE image_candidates SET status = $1 WHERE id = $2 AND post_id = $3', [status, id, postId]);
+}
+
+export async function getImageCandidate(postId: number, id: number): Promise<ImageCandidate | undefined> {
+  const db = await getDb();
+  return db.get('SELECT * FROM image_candidates WHERE id = $1 AND post_id = $2', [id, postId]);
 }
 
 // ---------- demo store ----------

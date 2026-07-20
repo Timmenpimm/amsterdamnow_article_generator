@@ -290,6 +290,40 @@ export interface ScanResult {
   error?: string;
 }
 
+// ---------- beeldselectie (voorselectie rechtenvrije beelden) ----------
+
+// Levenscyclus van een kandidaat-beeld:
+// 'new'       → gevonden, nog niet gescoord
+// 'scored'    → door Claude beoordeeld op de AmsterdamNOW-beeldstijl
+// 'used'      → door de redactie in een slot gezet (featured/slider/item)
+// 'dismissed' → afgewezen; blijft bewaard zodat hij bij vernieuwen niet terugkomt
+export type CandidateStatus = 'new' | 'scored' | 'used' | 'dismissed';
+
+// Wat een provider oplevert vóór opslag (zonder id/status/score).
+export interface ImageCandidateDraft {
+  url: string;                // volledige afbeelding (deze wordt geüpload bij gebruik)
+  thumb_url: string;          // kleiner beeld voor de grid + Claude-scoring
+  width: number;
+  height: number;
+  source: string;             // bv. "Openverse · Flickr", "Wikimedia Commons", "Pexels"
+  source_page: string;        // pagina van het beeld bij de bron (voor de redactie)
+  license: string;            // bv. "CC BY 2.0", "Pexels-licentie (vrij te gebruiken)"
+  license_url: string;
+  author: string;
+  title: string;
+  query: string;              // met welke zoekterm dit beeld gevonden is
+}
+
+export interface ImageCandidate extends ImageCandidateDraft {
+  id: number;
+  post_id: number;
+  score: number | null;       // 0-100, door Claude
+  reason: string;             // korte motivatie bij de score
+  role: string;               // advies: 'featured' | 'slider' | 'geen'
+  status: CandidateStatus;
+  created_at: string;
+}
+
 export const DEFAULT_LIST_CONSTRAINTS: ListConstraints = {
   titleMaxChars: 75,
   introSentences: { min: 2, max: 3 },

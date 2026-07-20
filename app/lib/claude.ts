@@ -57,6 +57,35 @@ function extractJson(raw: string): Record<string, unknown> | null {
   return null;
 }
 
+// Als askClaudeJson, maar met genummerde beelden (URL-blocks) vóór de vraag.
+// Voor de beeldselectie: één vision-call per request houdt ons binnen de
+// 60s-limiet; de aanroeper batcht zelf (max ~12 beelden per call).
+export async function askClaudeJsonWithImages(
+  system: string, prompt: string, imageUrls: string[], model = FAST_WRITE_MODEL
+): Promise<Record<string, unknown>> {
+  const content: unknown[] = imageUrls.flatMap((url, i) => ([
+    { type: 'text', text: `Beeld ${i + 1}:` },
+    { type: 'image', source: { type: 'url', url } },
+  ]));
+  content.push({ type: 'text', text: prompt });
+  const messages: Array<{ role: 'user' | 'assistant'; content: unknown }> = [{ role: 'user', content }];
+
+  const response = await request({ model, max_tokens: 4000, system, messages });
+  const raw = textFrom(response);
+  const parsed = extractJson(raw);
+  if (parsed) return parsed;
+
+  messages.push({ role: 'assistant', content: raw });
+  messages.push({
+    role: 'user',
+    content: 'Dit is geen geldig JSON-object. Antwoord nu ALLEEN met het JSON-object uit de instructie hierboven — geen uitleg, geen tekst ervoor of erna, geen markdown-codeblok.',
+  });
+  const retry = await request({ model, max_tokens: 4000, system, messages });
+  const retryParsed = extractJson(textFrom(retry));
+  if (retryParsed) return retryParsed;
+  throw new Error('Claude gaf geen geldige JSON terug bij het beoordelen van de beelden.');
+}
+
 export async function askClaudeJson(
   system: string, prompt: string, withResearch = false, model = MODEL
 ): Promise<Record<string, unknown>> {
