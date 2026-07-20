@@ -339,20 +339,31 @@ export async function backfillDraftEditorialFormatting(dryRun = false): Promise<
   const boardDrafts = (await listArticles()).filter(article => article.status === 'draft');
   const result: FormattingBackfillResult = { scanned: boardDrafts.length, updated: [], skipped: [], done: true, remaining: 0 };
   const todo: { id: number; title: string; content: string }[] = [];
-  for (const boardArticle of boardDrafts) {
-    const post = await wpFetch(`/wp/v2/posts/${boardArticle.id}?context=edit&_fields=id,title,content,acf`);
-    const html = post.content?.raw ?? post.content?.rendered ?? '';
-    const title = decodeHtmlEntities(String(post.title?.raw ?? post.title?.rendered ?? `Artikel ${post.id}`));
-    if (hasEditorialFormatting(html)) {
-      result.skipped.push({ id: post.id, title, reason: 'al redactioneel opgemaakt' });
-      continue;
+  // Elke draft heeft een aparte WP-call nodig voor de volledige raw content
+  // (het bordoverzicht bevat die niet). Nu het bord dankzij de paginering-fix
+  // ook drafts voorbij de oude 50-cap laat zien, liep dit sequentieel ruim
+  // over de 60s-serverless-limiet (159 drafts ⇒ FUNCTION_INVOCATION_TIMEOUT).
+  // In chunks parallel blijft dit ruim binnen de limiet.
+  const DETAIL_FETCH_CONCURRENCY = 15;
+  for (let i = 0; i < boardDrafts.length; i += DETAIL_FETCH_CONCURRENCY) {
+    const chunk = boardDrafts.slice(i, i + DETAIL_FETCH_CONCURRENCY);
+    const posts = await Promise.all(
+      chunk.map(a => wpFetch(`/wp/v2/posts/${a.id}?context=edit&_fields=id,title,content,acf`))
+    );
+    for (const post of posts) {
+      const html = post.content?.raw ?? post.content?.rendered ?? '';
+      const title = decodeHtmlEntities(String(post.title?.raw ?? post.title?.rendered ?? `Artikel ${post.id}`));
+      if (hasEditorialFormatting(html)) {
+        result.skipped.push({ id: post.id, title, reason: 'al redactioneel opgemaakt' });
+        continue;
+      }
+      const formatted = formatExistingStandardArticleHtml(html, String(post.acf?.quote ?? ''));
+      if (!formatted) {
+        result.skipped.push({ id: post.id, title, reason: 'geen bruikbare quote of onvoldoende alinea’s' });
+        continue;
+      }
+      todo.push({ id: post.id, title, content: formatted });
     }
-    const formatted = formatExistingStandardArticleHtml(html, String(post.acf?.quote ?? ''));
-    if (!formatted) {
-      result.skipped.push({ id: post.id, title, reason: 'geen bruikbare quote of onvoldoende alinea’s' });
-      continue;
-    }
-    todo.push({ id: post.id, title, content: formatted });
   }
   if (dryRun) {
     result.updated = todo.map(({ id, title }) => ({ id, title }));
