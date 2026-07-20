@@ -104,9 +104,15 @@ async function stepResearch(topic: Topic, s: StandaardState): Promise<StandaardS
   const tavilyStart = Date.now();
   const sources = await researchWithTavily(topic.title);
   console.log(`[standaard] topic=${topic.id} research: tavily klaar in ${Date.now() - tavilyStart}ms (${sources.length} bronnen)`);
+  // Research = feiten extraheren uit aangeleverde bronnen, geen creatief werk:
+  // Sonnet 5 volstaat en kost een fractie van Opus (zie FAST_WRITE_MODEL in
+  // lib/claude.ts). Bronnen worden hier ook getrimd op 8000 tekens — relevante
+  // info zoals adres/feiten staat doorgaans vooraan in de geëxtraheerde
+  // content (zie VERIFY_SOURCE_CHARS in listWriter.ts voor dezelfde afweging).
   const research = await askClaudeJson(
     researchPrompt.content,
-    `Onderwerp: ${topic.title}\n\nBeschikbare WordPress-categorieën: ${taxonomies.categories.join(', ')}\nBeschikbare WordPress-districten: ${taxonomies.districts.join(', ')}\n\nTavily-bronnen:\n${sources.map((src, i) => `\n[${i + 1}] ${src.title}\n${src.url}\n${src.content}`).join('\n')}`,
+    `Onderwerp: ${topic.title}\n\nBeschikbare WordPress-categorieën: ${taxonomies.categories.join(', ')}\nBeschikbare WordPress-districten: ${taxonomies.districts.join(', ')}\n\nTavily-bronnen:\n${sources.map((src, i) => `\n[${i + 1}] ${src.title}\n${src.url}\n${src.content.slice(0, 8000)}`).join('\n')}`,
+    false, FAST_WRITE_MODEL,
   );
   s.research = research;
   await saveTopicProgress(topic.id, { status: 'queued', phase: 'schrijf', state: s });
@@ -176,6 +182,7 @@ async function stepSeo(topic: Topic, s: StandaardState): Promise<StandaardStepRe
   const seo = await askClaudeJson(
     seoPrompt.content,
     `POST_TITLE: ${title}\nPOST_EXCERPT: ${intro}\nPOST_CONTENT: ${content}\nCATEGORY: ${strings(s.research.categories, 'categories').join(', ')}\nDISTRICT: ${string(s.research.district, 'district')}`,
+    false, FAST_WRITE_MODEL,
   );
   const wpStart = Date.now();
   const draft = await createDraft({
