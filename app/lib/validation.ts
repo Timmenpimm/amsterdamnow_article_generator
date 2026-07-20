@@ -124,7 +124,10 @@ export function validateArticle(article: GeneratedArticle, topic: string, config
   range('Artikeltekst', article.content, config.contentWords.min, config.contentWords.max);
   range('Quote', article.quote, config.quoteWords.min, config.quoteWords.max);
   if (config.titleMustContainTopic && !normal(article.title).includes(normal(topic))) {
-    throw new Error('De titel moet de naam van het onderwerp bevatten.');
+    // Noem de vereiste naam letterlijk: deze melding wordt als afkeurreden aan
+    // de herschrijfronde meegegeven, en zonder de concrete naam blijft het
+    // model gokken welke formulering de check verwacht.
+    throw new Error(`De titel moet de naam van het onderwerp bevatten ("${topic}").`);
   }
   if (config.quoteMustBeVerbatimInContent && !normal(article.content).includes(normal(article.quote))) {
     throw new Error('De quote moet letterlijk in de artikeltekst voorkomen.');
