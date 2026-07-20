@@ -5,13 +5,13 @@ import { toast } from '@/components/toast';
 import type { PromptKind, PromptVersion } from '@/lib/types';
 
 const VARS: Record<PromptKind, string[]> = {
-  research: ['{{onderwerp}}', '{{tavily_bronnen}}', '{{categorieën}}', '{{districten}}'],
-  schrijf: ['{{onderwerp}}', '{{research}}', '{{categorieën}}', '{{districten}}'],
-  seo: ['{{post_title}}', '{{post_content}}', '{{category}}', '{{district}}'],
-  'lijst-selectie': ['{{thema}}', '{{tavily_bronnen}}'],
-  'lijst-research': ['{{thema}}', '{{item}}', '{{tavily_bronnen}}', '{{doelweekend}}'],
-  'lijst-schrijf': ['{{thema}}', '{{items_research}}', '{{categorieën}}', '{{districten}}'],
-  'lijst-seo': ['{{titel}}', '{{intro}}', '{{items}}'],
+  research: ['onderwerp', 'tavily_bronnen', 'categorieën', 'districten'],
+  schrijf: ['onderwerp', 'research', 'categorieën', 'districten'],
+  seo: ['post_title', 'post_content', 'category', 'district'],
+  'lijst-selectie': ['thema', 'tavily_bronnen'],
+  'lijst-research': ['thema', 'item', 'tavily_bronnen', 'doelweekend'],
+  'lijst-schrijf': ['thema', 'items_research', 'categorieën', 'districten'],
+  'lijst-seo': ['titel', 'intro', 'items'],
 };
 
 export default function PromptEditor({ kind }: { kind: PromptKind }) {
@@ -91,7 +91,7 @@ export default function PromptEditor({ kind }: { kind: PromptKind }) {
         />
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 12, color: 'var(--gray)', fontWeight: 600 }}>Variabelen — Claude vult deze bij elke run in:</span>
+          <span style={{ fontSize: 12, color: 'var(--gray)', fontWeight: 600 }}>Extra context die Claude er los van deze prompt bij krijgt, elke run:</span>
           {VARS[kind].map(v => (
             <span
               key={v}
