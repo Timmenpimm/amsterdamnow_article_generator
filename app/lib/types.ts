@@ -212,6 +212,7 @@ export interface WordRange {
 
 export interface StandaardConstraints {
   titleWords: WordRange;
+  titleMaxChars: number;
   subregelWords: WordRange;
   introWords: WordRange;
   contentWords: WordRange;
@@ -257,6 +258,7 @@ export interface ConstraintVersion {
 
 export const DEFAULT_STANDAARD_CONSTRAINTS: StandaardConstraints = {
   titleWords: { min: 8, max: 12 },
+  titleMaxChars: 70,
   subregelWords: { min: 10, max: 15 },
   introWords: { min: 40, max: 60 },
   contentWords: { min: 400, max: 450 },
