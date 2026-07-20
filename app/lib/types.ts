@@ -5,6 +5,12 @@ export type TopicType = 'standaard' | 'lijst';
 // stap binnen de serverless-limiet blijft.
 export type ListPhase = 'select' | 'verify' | 'review' | 'compose' | 'finalize';
 
+// Fasen van de standaardpipeline (één los artikel). Zelfde reden als
+// hierboven: research, schrijven en SEO+draft waren ooit één aaneengesloten
+// aanroep met 3-4 Claude-calls, wat regelmatig over de 60s-serverless-limiet
+// heen liep (FUNCTION_INVOCATION_TIMEOUT). Nu één fase per process-aanroep.
+export type StandaardPhase = 'research' | 'schrijf' | 'seo';
+
 export interface ListItemState {
   naam: string;
   status: 'pending' | 'verified' | 'rejected' | 'excluded';
@@ -48,8 +54,8 @@ export interface Topic {
   title: string;
   status: TopicStatus;
   type: TopicType;
-  phase: ListPhase | null;
-  list_state: string | null; // JSON van ListState (alleen bij type 'lijst')
+  phase: ListPhase | StandaardPhase | null;
+  list_state: string | null; // JSON van ListState (lijst) of StandaardState (standaard)
   sort: number;
   created_at: string;
   started_at: string | null;
@@ -64,6 +70,17 @@ export interface Topic {
 export function parseListState(topic: Topic): ListState | null {
   if (topic.type !== 'lijst' || !topic.list_state) return null;
   try { return JSON.parse(topic.list_state) as ListState; } catch { return null; }
+}
+
+// Tussentijdse staat van de standaardpipeline, bewaard tussen fase-stappen.
+export interface StandaardState {
+  research?: Record<string, unknown>; // ruwe research-JSON van Claude
+  article?: { title: string; subregel: string; introductie_tekst: string; content: string; quote: string };
+}
+
+export function parseStandaardState(topic: Topic): StandaardState | null {
+  if (topic.type !== 'standaard' || !topic.list_state) return null;
+  try { return JSON.parse(topic.list_state) as StandaardState; } catch { return null; }
 }
 
 export interface MediaRef {

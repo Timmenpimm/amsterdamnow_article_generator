@@ -1,7 +1,7 @@
 import path from 'path';
 import fs from 'fs';
 import type {
-  ListArticleStructure, ListState, PromptKind, Topic, PromptVersion,
+  ListArticleStructure, ListState, StandaardState, PromptKind, Topic, PromptVersion,
   ConstraintKind, ConstraintVersion, StandaardConstraints, ListConstraints,
   Source, SourceSummary, SourceFinding, FindingState,
   ImageCandidate, ImageCandidateDraft, CandidateStatus,
@@ -352,7 +352,7 @@ export async function addTopics(titles: string[]): Promise<{ added: Topic[]; ski
     existing.add(key);
     sort += 1;
     const rec = await db.get(
-      `INSERT INTO topics (title, status, sort, created_at) VALUES ($1, 'queued', $2, $3) RETURNING *`,
+      `INSERT INTO topics (title, status, phase, sort, created_at) VALUES ($1, 'queued', 'research', $2, $3) RETURNING *`,
       [title, sort, now()]
     );
     added.push(rec as Topic);
@@ -501,9 +501,11 @@ export async function getTopic(id: number): Promise<Topic | undefined> {
   return db.get('SELECT * FROM topics WHERE id = $1', [id]);
 }
 
-export async function saveListProgress(
+// Generiek: bewaart voortgang van zowel de lijst- als de standaardpipeline
+// (beide fase-gebaseerd, beide met JSON-staat in dezelfde list_state-kolom).
+export async function saveTopicProgress(
   id: number,
-  upd: { status?: string; phase?: string | null; state?: ListState; errorClear?: boolean }
+  upd: { status?: string; phase?: string | null; state?: ListState | StandaardState; errorClear?: boolean }
 ) {
   const db = await getDb();
   const sets: string[] = [];

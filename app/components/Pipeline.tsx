@@ -254,21 +254,22 @@ export default function Pipeline() {
     if (writingNow) return;
     setWritingNow(true);
     try {
-      // Lijstruns bestaan uit meerdere fase-stappen: blijf aanroepen tot de
-      // run klaar is, op itemcontrole wacht, of de wachtrij leeg is.
+      // Beide pipelines bestaan uit meerdere fase-stappen: blijf aanroepen tot
+      // de run klaar is, op itemcontrole wacht, of de wachtrij leeg is.
       for (let tick = 0; tick < 40; tick++) {
         const res = await fetch('/api/topics/process', { method: 'POST' });
         const body = await res.json();
         if (!res.ok) throw new Error(body.error || 'Schrijven mislukt');
-        if (body.list) {
+        if (!body.topic) { toast('De wachtrij is leeg'); return; }
+        const step = body.list || body.standaard;
+        if (step) {
           load();
-          if (!body.list.done) continue;
-          if (body.list.phase === 'review') toast('Items geverifieerd — controleer de selectie op het bord');
+          if (!step.done) continue;
+          if (step.phase === 'review') toast('Items geverifieerd — controleer de selectie op het bord');
           else if (body.article) toast(`Draft gemaakt: ${body.article.title}`);
           return;
         }
-        if (!body.topic) toast('De wachtrij is leeg');
-        else toast(`Draft gemaakt: ${body.article.title}`);
+        toast(`Draft gemaakt: ${body.article.title}`);
         return;
       }
     } catch (e: any) {
