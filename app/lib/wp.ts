@@ -10,6 +10,18 @@ function authHeader(): string {
   return 'Basic ' + Buffer.from(`${process.env.WP_USER}:${process.env.WP_APP_PASSWORD}`).toString('base64');
 }
 
+// Claude plakt af en toe ongevraagd een categorie/tag-linkblok achter de
+// artikeltekst (bv. "<p><a href="…/tag/musea-amsterdam/">Musea</a><br><a
+// href="…/cultuur/">Cultuur</a></p>"), hoewel categorieën en tags al als
+// WordPress-taxonomie meegaan. Dat mag nooit als klikbare tekst in de content
+// zelf staan, dus dit blok wordt overal waar content gelezen of geschreven
+// wordt weggeknipt.
+const TAXONOMY_FOOTER = /(?:\s*<p>(?:\s*<a href="https?:\/\/(?:www\.)?amsterdamnow\.com\/[^"]*"[^>]*>[^<]*<\/a>\s*(?:<br\s*\/?>)?\s*)+<\/p>)+\s*$/i;
+
+function stripTaxonomyFooter(html: string): string {
+  return html.replace(TAXONOMY_FOOTER, '');
+}
+
 async function wpFetch(pathname: string, init: RequestInit = {}): Promise<any> {
   const res = await fetch(`${WP_URL}/wp-json${pathname}`, {
     ...init,
@@ -105,7 +117,7 @@ async function mapPost(p: any, media: Record<number, MediaRef>): Promise<Article
     title: p.title?.rendered || '',
     subregel: acf.subregel || '',
     intro: acf.introductie_tekst || '',
-    contentHtml: p.content?.rendered || '',
+    contentHtml: stripTaxonomyFooter(p.content?.rendered || ''),
     status: p.status === 'publish' ? 'publish' : 'draft',
     link: p.link,
     modified: p.modified,
@@ -246,7 +258,14 @@ export async function publishArticle(id: number): Promise<Article | null> {
     await demoSave(a);
     return a;
   }
-  await wpFetch(`/wp/v2/posts/${id}`, { method: 'POST', body: JSON.stringify({ status: 'publish' }) });
+  // Ouder klaargezette drafts (van vóór deze opschoning) kunnen het
+  // ongewenste linkblok nog in de opgeslagen WordPress-content hebben staan.
+  // Schoon dat bij publicatie definitief op, niet alleen in de weergave.
+  const current = await wpFetch(`/wp/v2/posts/${id}?context=edit&_fields=content`);
+  const cleanContent = stripTaxonomyFooter(current.content?.raw ?? current.content?.rendered ?? '');
+  const body: Record<string, unknown> = { status: 'publish' };
+  if (cleanContent !== (current.content?.raw ?? current.content?.rendered)) body.content = cleanContent;
+  await wpFetch(`/wp/v2/posts/${id}`, { method: 'POST', body: JSON.stringify(body) });
   return getArticle(id);
 }
 
@@ -282,6 +301,7 @@ export interface GeneratedDraft {
 }
 
 export async function createDraft(draft: GeneratedDraft): Promise<Article> {
+  const contentHtml = stripTaxonomyFooter(draft.contentHtml);
   if (!LIVE) {
     const articles = await demoArticles();
     const id = Math.max(Date.now() % 2147483647, ...articles.map(a => a.id + 1));
@@ -290,7 +310,7 @@ export async function createDraft(draft: GeneratedDraft): Promise<Article> {
       title: draft.title,
       subregel: draft.subregel,
       intro: draft.intro,
-      contentHtml: draft.contentHtml,
+      contentHtml,
       status: 'draft',
       link: `https://www.amsterdamnow.com/?p=${id}`,
       modified: new Date().toISOString(),
@@ -314,7 +334,7 @@ export async function createDraft(draft: GeneratedDraft): Promise<Article> {
     body: JSON.stringify({
       status: 'draft',
       title: draft.title,
-      content: draft.contentHtml,
+      content: contentHtml,
       excerpt: draft.intro,
       slug: draft.slug,
       categories: categoryIds,
