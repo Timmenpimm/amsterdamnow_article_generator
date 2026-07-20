@@ -84,12 +84,17 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
     const best = uploaded[0].candidate;
     const credit = [best.author, best.source, best.license].filter(Boolean).join(' · ');
+    // Standaardartikel: featured + 1 slider + 1 inline. Lijstartikel heeft geen
+    // inline-beeld (eigen itemfoto-flow, content wordt her-geassembleerd) → de
+    // resterende beelden gaan naar de slider zoals voorheen.
+    const placement = list
+      ? { sliderIds: uploaded.slice(1).map(u => u.media.id) }
+      : { sliderIds: uploaded[1] ? [uploaded[1].media.id] : [], inlineId: uploaded[2] ? uploaded[2].media.id : undefined };
     const updated = await updateImages(
       article.id,
       {
         featuredId: uploaded[0].media.id,
-        sliderIds: uploaded[1] ? [uploaded[1].media.id] : [],
-        inlineId: uploaded[2] ? uploaded[2].media.id : undefined,
+        ...placement,
         ...(article.fotograaf ? {} : { fotograaf: credit }),
       },
       uploaded.map(u => u.media)
