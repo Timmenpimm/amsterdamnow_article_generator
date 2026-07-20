@@ -15,8 +15,5 @@
     { "src": "^/api/prompts/([^/]+)/activate/?$", "dest": "/app/api/prompts/[id]/activate?id=$1" },
     { "src": "^/artikel/([^/]+)/?$", "dest": "/app/artikel/[id]?id=$1" },
     { "src": "/(.*)", "dest": "/app/$1", "check": true }
-  ],
-  "crons": [
-    { "path": "/api/queue/worker", "schedule": "* * * * *" }
   ]
 }
