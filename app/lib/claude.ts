@@ -94,11 +94,25 @@ function extractJson(raw: string): Record<string, unknown> | null {
 // haalt de beelden dus zelf op en levert base64 aan.
 export type ClaudeImage = { media_type: string; data: string };
 
+// Structured outputs van de Messages API: met output_config.format garandeert
+// de API dat het (enige) text-block geldige JSON is conform het schema — dus
+// direct JSON.parse, zonder markdown-stripping of extractie. Dit vervangt het
+// corrigerende-herkansingspad hieronder. Let op: bij stop_reason 'max_tokens'
+// kan de JSON alsnog afgekapt zijn (die throw blijft dus gelden). De eerste
+// call met een nieuw schema kent een eenmalige compilatie-latency; daarna
+// geldt een schema-cache van ~24u (relevant i.v.m. de 60s-serverless-limiet).
+function outputConfig(schema?: Record<string, unknown>): Record<string, unknown> {
+  return schema ? { output_config: { format: { type: 'json_schema', schema } } } : {};
+}
+
 // Als askClaudeJson, maar met genummerde beelden vóór de vraag.
 // Voor de beeldselectie: één vision-call per request houdt ons binnen de
 // 60s-limiet; de aanroeper batcht zelf (max ~12 beelden per call).
+// Met `schema` gebruikt de call structured outputs (gegarandeerd geldige JSON,
+// geen herkansing); zonder schema geldt het schemaloze vangnetgedrag.
 export async function askClaudeJsonWithImages(
-  system: string, prompt: string, images: ClaudeImage[], model = FAST_WRITE_MODEL
+  system: string, prompt: string, images: ClaudeImage[], model = FAST_WRITE_MODEL,
+  schema?: Record<string, unknown>
 ): Promise<Record<string, unknown>> {
   const content: unknown[] = images.flatMap((img, i) => ([
     { type: 'text', text: `Beeld ${i + 1}:` },
@@ -107,11 +121,18 @@ export async function askClaudeJsonWithImages(
   content.push({ type: 'text', text: prompt });
   const messages: Array<{ role: 'user' | 'assistant'; content: unknown }> = [{ role: 'user', content }];
 
-  const response = await request({ model, max_tokens: 4000, system, messages });
+  const response = await request({ model, max_tokens: 4000, system, messages, ...outputConfig(schema) });
+  if (response.stop_reason === 'max_tokens') {
+    throw new Error('Claude-respons afgekapt op max_tokens (4000) bij het beoordelen van de beelden.');
+  }
   const raw = textFrom(response);
+  // Met schema is het text-block gegarandeerd geldige JSON: direct parsen.
+  if (schema) return JSON.parse(raw);
   const parsed = extractJson(raw);
   if (parsed) return parsed;
 
+  // Schemaloos vangnet: corrigerende herkansing als het model met tekst i.p.v.
+  // een JSON-object antwoordde.
   messages.push({ role: 'assistant', content: raw });
   messages.push({
     role: 'user',
@@ -123,10 +144,15 @@ export async function askClaudeJsonWithImages(
   throw new Error('Claude gaf geen geldige JSON terug bij het beoordelen van de beelden.');
 }
 
+// Met `schema` gebruikt de call structured outputs: de API garandeert geldige
+// JSON conform het schema, dus direct JSON.parse en géén herkansing. Zonder
+// schema geldt het ongewijzigde vangnetgedrag (extractJson + herkansing).
 export async function askClaudeJson(
-  system: string, prompt: string, withResearch = false, model = MODEL, maxTokens = 6000
+  system: string, prompt: string, withResearch = false, model = MODEL, maxTokens = 6000,
+  schema?: Record<string, unknown>
 ): Promise<Record<string, unknown>> {
   const tools = withResearch ? [{ type: 'web_search_20260209', name: 'web_search', max_uses: 3 }] : undefined;
+  const format = outputConfig(schema);
   // Prompt caching op de systeem-prompt. Dezelfde prompt wordt binnen één
   // artikel vaak herhaald (bv. de verificatie-prompt bij elk item, de
   // lijst-schrijf-prompt bij elk compose-blok) én tussen opeenvolgende
@@ -137,12 +163,12 @@ export async function askClaudeJson(
   const messages: Array<{ role: 'user' | 'assistant'; content: unknown }> = [{ role: 'user', content: prompt }];
 
   async function requestUntilDone(): Promise<string> {
-    let response = await request({ model, max_tokens: maxTokens, system: systemBlocks, messages, ...(tools ? { tools } : {}) });
+    let response = await request({ model, max_tokens: maxTokens, system: systemBlocks, messages, ...(tools ? { tools } : {}), ...format });
     // Server-side web search can pause a long-running turn. Continue it with
     // the returned content, as prescribed by the Messages API, up to two times.
     for (let attempt = 0; response.stop_reason === 'pause_turn' && attempt < 2; attempt++) {
       messages.push({ role: 'assistant', content: response.content || [] });
-      response = await request({ model, max_tokens: maxTokens, system: systemBlocks, messages, ...(tools ? { tools } : {}) });
+      response = await request({ model, max_tokens: maxTokens, system: systemBlocks, messages, ...(tools ? { tools } : {}), ...format });
     }
     if (response.stop_reason === 'pause_turn') throw new Error('Claude kon het bronnenonderzoek niet binnen de beschikbare tijd afronden.');
     // Bij max_tokens is de respons per definitie afgekapt (onvolledige JSON) —
@@ -157,15 +183,18 @@ export async function askClaudeJson(
   }
 
   const raw = await requestUntilDone();
+  // Met schema is de respons gegarandeerd geldige JSON conform het schema:
+  // direct parsen, geen extractie en geen herkansing.
+  if (schema) return JSON.parse(raw);
   const parsed = extractJson(raw);
   if (parsed) return parsed;
 
-  // Corrigerende herkansing: het model antwoordde met uitleg/redenering in
-  // lopende tekst in plaats van het gevraagde JSON-object — gebeurt af en toe,
-  // ook met een expliciete "alleen JSON"-instructie in de prompt. De eigen
-  // foute respons teruggeven en expliciet om alleen JSON vragen lost dit
-  // vrijwel altijd op, zonder dat elke aanroeper deze logica zelf hoeft te
-  // implementeren.
+  // Schemaloos vangnet — corrigerende herkansing: het model antwoordde met
+  // uitleg/redenering in lopende tekst in plaats van het gevraagde JSON-object
+  // — gebeurt af en toe, ook met een expliciete "alleen JSON"-instructie in de
+  // prompt. De eigen foute respons teruggeven en expliciet om alleen JSON
+  // vragen lost dit vrijwel altijd op, zonder dat elke aanroeper deze logica
+  // zelf hoeft te implementeren.
   messages.push({ role: 'assistant', content: raw });
   messages.push({
     role: 'user',

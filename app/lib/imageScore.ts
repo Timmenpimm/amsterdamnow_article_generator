@@ -1,4 +1,5 @@
-import { askClaudeJsonWithImages, ClaudeImage } from './claude';
+import { askClaudeJsonWithImages, ClaudeImage, FAST_WRITE_MODEL } from './claude';
+import { IMAGE_SCORES_SCHEMA } from './schemas';
 import { scoreImageCandidate } from './db';
 import type { Article, ImageCandidate } from './types';
 
@@ -76,7 +77,7 @@ export async function scoreOneBatch(
 
   let scores: Score[];
   try {
-    scores = parseScores(await askClaudeJsonWithImages(STYLE_SYSTEM, buildPrompt(article, loadable), images));
+    scores = parseScores(await askClaudeJsonWithImages(STYLE_SYSTEM, buildPrompt(article, loadable), images, FAST_WRITE_MODEL, IMAGE_SCORES_SCHEMA));
   } catch (e: any) {
     // Ontbrekende API-key is een configuratiefout — die melding moet de
     // redactie letterlijk zien.

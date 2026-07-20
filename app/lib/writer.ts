@@ -1,5 +1,6 @@
 import { activeConstraints, activePrompt, completeTopic, failTopic, saveTopicProgress } from './db';
 import { askClaudeJson, FAST_WRITE_MODEL } from './claude';
+import { RESEARCH_SCHEMA, ARTICLE_SCHEMA, SEO_SCHEMA } from './schemas';
 import { createDraft, taxonomyChoices } from './wp';
 import { researchWithTavily } from './tavily';
 import { validateArticle, GeneratedArticle } from './validation';
@@ -112,7 +113,7 @@ async function stepResearch(topic: Topic, s: StandaardState): Promise<StandaardS
   const research = await askClaudeJson(
     researchPrompt.content,
     `Onderwerp: ${topic.title}\n\nBeschikbare WordPress-categorieën: ${taxonomies.categories.join(', ')}\nBeschikbare WordPress-districten: ${taxonomies.districts.join(', ')}\n\nTavily-bronnen:\n${sources.map((src, i) => `\n[${i + 1}] ${src.title}\n${src.url}\n${src.content.slice(0, 8000)}`).join('\n')}`,
-    false, FAST_WRITE_MODEL,
+    false, FAST_WRITE_MODEL, 6000, RESEARCH_SCHEMA,
   );
   s.research = research;
   await saveTopicProgress(topic.id, { status: 'queued', phase: 'schrijf', state: s });
@@ -128,7 +129,7 @@ async function stepSchrijf(topic: Topic, s: StandaardState): Promise<StandaardSt
   const payload = await askClaudeJson(
     writePrompt.content,
     `Onderwerp: ${topic.title}\n\nGebruik uitsluitend deze gecontroleerde research van Tavily. Schrijf het artikel als geldige JSON volgens de actieve prompt.\n\nHoud je aan deze regels:\n${rules}\n\n${JSON.stringify(s.research)}`,
-    false, FAST_WRITE_MODEL, WRITE_MAX_TOKENS,
+    false, FAST_WRITE_MODEL, WRITE_MAX_TOKENS, ARTICLE_SCHEMA,
   );
   try {
     const candidate = buildCandidate(payload);
@@ -157,7 +158,7 @@ async function stepSchrijfRetry(topic: Topic, s: StandaardState): Promise<Standa
   const payload = await askClaudeJson(
     writePrompt.content,
     `Je vorige versie van dit artikel is afgekeurd door de eindredactie.\n\nOnderwerp: ${topic.title}\nAfkeurreden: ${s.rejectReason}\n\nLever het VOLLEDIGE artikel opnieuw aan als JSON met exact dezelfde velden (title, subregel, introductie_tekst, content, quote). Los de afkeurreden op en houd de rest zoveel mogelijk intact. Alle regels blijven gelden:\n${rules}\n\nJe vorige versie:\n${JSON.stringify(s.draftPayload)}`,
-    false, FAST_WRITE_MODEL, WRITE_MAX_TOKENS,
+    false, FAST_WRITE_MODEL, WRITE_MAX_TOKENS, ARTICLE_SCHEMA,
   );
   let checked: GeneratedArticle;
   try {
@@ -182,7 +183,7 @@ async function stepSeo(topic: Topic, s: StandaardState): Promise<StandaardStepRe
   const seo = await askClaudeJson(
     seoPrompt.content,
     `POST_TITLE: ${title}\nPOST_EXCERPT: ${intro}\nPOST_CONTENT: ${content}\nCATEGORY: ${strings(s.research.categories, 'categories').join(', ')}\nDISTRICT: ${string(s.research.district, 'district')}`,
-    false, FAST_WRITE_MODEL,
+    false, FAST_WRITE_MODEL, 6000, SEO_SCHEMA,
   );
   const wpStart = Date.now();
   const draft = await createDraft({

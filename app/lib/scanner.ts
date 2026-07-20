@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { askClaudeJson, FAST_WRITE_MODEL } from './claude';
+import { SCAN_SCHEMA } from './schemas';
 import { extractPageText } from './tavily';
 import {
   activeSources, addTopics, getFindingKeys, getSource,
@@ -61,7 +62,7 @@ async function runScan(source: Source): Promise<ScanResult & { contentHash: stri
   }
 
   const prompt = `Bron: ${source.name}\nURL: ${source.url}\n\nUitgelezen pagina-inhoud:\n---\n${pageText}\n---`;
-  const data = await askClaudeJson(SCAN_SYSTEM, prompt, false, FAST_WRITE_MODEL);
+  const data = await askClaudeJson(SCAN_SYSTEM, prompt, false, FAST_WRITE_MODEL, 6000, SCAN_SCHEMA);
 
   const rawItems = Array.isArray((data as any).items) ? (data as any).items : [];
   const titles: string[] = rawItems
