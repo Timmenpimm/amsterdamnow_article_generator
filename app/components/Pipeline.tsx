@@ -184,6 +184,15 @@ export default function Pipeline() {
     load();
   }
 
+  async function cancelWriting(t: Topic) {
+    if (!confirm(`"${t.title}" annuleren? Dit stopt de lopende Claude-generatie.`)) return;
+    const res = await fetch(`/api/topics/${t.id}`, { method: 'DELETE' });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) toast(body.error || 'Annuleren mislukt', { kind: 'error' });
+    else toast('Onderwerp geannuleerd');
+    load();
+  }
+
   async function retryTopic(t: Topic) {
     await fetch(`/api/topics/${t.id}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
@@ -435,9 +444,18 @@ export default function Pipeline() {
             })}
             {writing.map(t => (
               <div key={t.id} className="card" style={{ padding: 12 }}>
-                <div style={{ fontSize: 13.5, fontWeight: 600, lineHeight: 1.35 }}>
-                  {t.type === 'lijst' && <><ListBadge />{' '}</>}
-                  {t.title}
+                <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                  <div style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 600, lineHeight: 1.35 }}>
+                    {t.type === 'lijst' && <><ListBadge />{' '}</>}
+                    {t.title}
+                  </div>
+                  <span
+                    style={{ cursor: 'pointer', fontSize: 12, color: 'var(--gray)', flexShrink: 0 }}
+                    title="Annuleren"
+                    onClick={() => cancelWriting(t)}
+                  >
+                    ✕
+                  </span>
                 </div>
                 <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <div style={{ height: 4, background: '#eceae5', borderRadius: 2, overflow: 'hidden' }}>
