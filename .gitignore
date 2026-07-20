@@ -12,3 +12,4 @@ data/
 public/*.log
 .vercel
 .env*
+.claude/worktrees/
