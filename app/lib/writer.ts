@@ -5,6 +5,7 @@ import { createDraft, taxonomyChoices } from './wp';
 import { researchWithTavily } from './tavily';
 import { validateArticle, GeneratedArticle } from './validation';
 import { parseStandaardState, type StandaardConstraints, type StandaardPhase, type StandaardState, type Topic, type WordRange } from './types';
+import { formatStandardArticleHtml } from './articleHtml';
 
 // Ruime marge boven een realistisch artikel (~450 woorden content + korte
 // titel/subregel/intro/quote-velden ≈ 800-1000 tokens als JSON), maar veel
@@ -24,10 +25,6 @@ import { parseStandaardState, type StandaardConstraints, type StandaardPhase, ty
 const WRITE_MAX_TOKENS = 4500;
 // Maximaal aantal herschrijfrondes na de eerste schrijfpoging.
 const MAX_SCHRIJF_HERKANSINGEN = 2;
-
-function html(content: string): string {
-  return content.split(/\n\s*\n/).map(p => `<p>${p.trim().replace(/\n/g, '<br>')}</p>`).join('\n');
-}
 
 function string(value: unknown, label: string): string {
   if (typeof value !== 'string' || !value.trim()) throw new Error(`Claude liet ${label} leeg.`);
@@ -208,7 +205,7 @@ async function stepSeo(topic: Topic, s: StandaardState): Promise<StandaardStepRe
     false, FAST_WRITE_MODEL, 6000, SEO_SCHEMA,
   );
   const draft = await createDraft({
-    title, subregel, intro, contentHtml: html(content), quote,
+    title, subregel, intro, contentHtml: formatStandardArticleHtml(content, quote), quote,
     focusKeyword: string(seo.rank_math_focus_keyword, 'rank_math_focus_keyword'),
     slug: string(seo.slug, 'slug'),
     seoTitle: string(seo.rank_math_title, 'rank_math_title'),

@@ -1,6 +1,7 @@
 import { demoDelete, demoGetAll, demoUpsert, ensureDemoSeed, STORAGE } from './db';
 import { DEMO_ARTICLES, DEMO_TOPICS } from './demo-seed';
 import { decodeHtmlEntities } from './htmlEntities';
+import { formatExistingStandardArticleHtml, hasEditorialFormatting } from './articleHtml';
 import type { Article, MediaRef } from './types';
 
 export const WP_URL = process.env.WP_URL || 'https://www.amsterdamnow.com';
@@ -299,6 +300,38 @@ export async function updateArticleContent(id: number, html: string): Promise<vo
     return;
   }
   await wpFetch(`/wp/v2/posts/${id}`, { method: 'POST', body: JSON.stringify({ content: html }) });
+}
+
+export interface FormattingBackfillResult {
+  scanned: number;
+  updated: { id: number; title: string }[];
+  skipped: { id: number; title: string; reason: string }[];
+}
+
+// Eenmalige, idempotente backfill voor oude AI-drafts. Alleen drafts zonder
+// én H2 én blockquote komen in aanmerking: elke handmatig bewerkte of al
+// opgemaakte post blijft dus onaangeroerd. Gepubliceerde artikelen worden
+// bewust nooit door deze routine opgehaald.
+export async function backfillDraftEditorialFormatting(dryRun = false): Promise<FormattingBackfillResult> {
+  if (!LIVE) throw new Error('Backfill is alleen beschikbaar in live-modus.');
+  const posts = await wpFetch('/wp/v2/posts?status=draft&per_page=100&orderby=date&order=asc&context=edit&_fields=id,title,content,acf');
+  const result: FormattingBackfillResult = { scanned: posts.length, updated: [], skipped: [] };
+  for (const post of posts) {
+    const html = post.content?.raw ?? post.content?.rendered ?? '';
+    const title = decodeHtmlEntities(String(post.title?.raw ?? post.title?.rendered ?? `Artikel ${post.id}`));
+    if (hasEditorialFormatting(html)) {
+      result.skipped.push({ id: post.id, title, reason: 'al redactioneel opgemaakt' });
+      continue;
+    }
+    const formatted = formatExistingStandardArticleHtml(html, String(post.acf?.quote ?? ''));
+    if (!formatted) {
+      result.skipped.push({ id: post.id, title, reason: 'geen bruikbare quote of onvoldoende alinea’s' });
+      continue;
+    }
+    if (!dryRun) await wpFetch(`/wp/v2/posts/${post.id}`, { method: 'POST', body: JSON.stringify({ content: formatted }) });
+    result.updated.push({ id: post.id, title });
+  }
+  return result;
 }
 
 export async function publishArticle(id: number): Promise<Article | null> {
