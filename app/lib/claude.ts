@@ -70,15 +70,23 @@ function extractJson(raw: string): Record<string, unknown> | null {
   return null;
 }
 
-// Als askClaudeJson, maar met genummerde beelden (URL-blocks) vóór de vraag.
+// Eén beeld voor een vision-call, als base64. Beelden gaan bewust NIET als
+// URL-source naar de API: Anthropic haalt URL's zelf op en weigert hosts
+// waarvan robots.txt dat verbiedt ("Claude 400: This URL is disallowed by
+// the website's robots.txt file") — o.a. de gstatic-thumbnails van Google-
+// resultaten. Eén zo'n URL liet de hele batch-call klappen. De aanroeper
+// haalt de beelden dus zelf op en levert base64 aan.
+export type ClaudeImage = { media_type: string; data: string };
+
+// Als askClaudeJson, maar met genummerde beelden vóór de vraag.
 // Voor de beeldselectie: één vision-call per request houdt ons binnen de
 // 60s-limiet; de aanroeper batcht zelf (max ~12 beelden per call).
 export async function askClaudeJsonWithImages(
-  system: string, prompt: string, imageUrls: string[], model = FAST_WRITE_MODEL
+  system: string, prompt: string, images: ClaudeImage[], model = FAST_WRITE_MODEL
 ): Promise<Record<string, unknown>> {
-  const content: unknown[] = imageUrls.flatMap((url, i) => ([
+  const content: unknown[] = images.flatMap((img, i) => ([
     { type: 'text', text: `Beeld ${i + 1}:` },
-    { type: 'image', source: { type: 'url', url } },
+    { type: 'image', source: { type: 'base64', media_type: img.media_type, data: img.data } },
   ]));
   content.push({ type: 'text', text: prompt });
   const messages: Array<{ role: 'user' | 'assistant'; content: unknown }> = [{ role: 'user', content }];
