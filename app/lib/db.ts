@@ -395,12 +395,18 @@ export async function reorderTopics(ids: number[]) {
 export async function retryTopic(id: number) {
   const db = await getDb();
   const min = await db.get('SELECT COALESCE(MIN(sort), 1) AS m FROM topics');
+  const topic = await db.get('SELECT type FROM topics WHERE id = $1', [id]);
   // Een bewuste retry door de redactie is een verse start: zonder attempts-
   // reset zou een topic dat ooit MAX_JOB_ATTEMPTS haalde bij de eerstvolgende
   // verlopen lease direct weer op 'failed' klappen, hoe vaak je ook opnieuw
-  // probeert.
+  // probeert. Voor standaard-topics ook fase en tussentijdse staat wissen:
+  // anders hervat de retry exact dezelfde afgekeurde schrijf(-retry)-poging
+  // met dezelfde afkeurreden, en faalt hij keer op keer op precies dezelfde
+  // manier (gezien op productie). Lijst-topics behouden hun staat — de
+  // geselecteerde/geverifieerde items zijn kostbaar om opnieuw te doen.
+  const resetPhase = topic?.type === 'standaard';
   await db.run(
-    `UPDATE topics SET status = 'queued', error = NULL, error_step = NULL, locked_at = NULL, lock_owner = NULL, attempts = 0, sort = $1 WHERE id = $2`,
+    `UPDATE topics SET status = 'queued', error = NULL, error_step = NULL, locked_at = NULL, lock_owner = NULL, attempts = 0, sort = $1${resetPhase ? ', phase = NULL, list_state = NULL' : ''} WHERE id = $2`,
     [Number(min.m) - 1, id]
   );
 }
