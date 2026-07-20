@@ -23,27 +23,34 @@ Wees streng: 75+ betekent "kan zo op de site". Twijfel over of het beeld wel ech
 // robots.txt file" — o.a. de gstatic-thumbnails van Google-resultaten), en
 // dan klapte de héle batch. Zelf ophalen maakt een onbereikbaar beeld een
 // individueel probleem in plaats van een blokkade.
+//
+// Bewust géén fallback op c.url (het full-size beeld): Sonnet 5 rekent tot
+// ~2576px zonder te downscalen, dus een full-size beeld kost tot ~4.800
+// input-tokens tegenover ~300-500 voor een echte thumbnail — een fallback
+// zou dus 10× zo duur zijn per beeld. Een onbereikbare thumbnail krijgt
+// gewoon score 0 met reden via het bestaande "niet laadbaar"-pad hieronder;
+// thumb_url ontbreekt in de praktijk nooit (de search-laag zet 'm gelijk
+// aan url als er geen apart thumbnail is).
 const THUMB_TIMEOUT_MS = 6000;
 const THUMB_MAX_BYTES = 4 * 1024 * 1024;
 const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
 
 async function fetchThumb(c: ImageCandidate): Promise<ClaudeImage | null> {
-  for (const url of [c.thumb_url, c.url]) {
-    try {
-      const res = await fetch(url, {
-        cache: 'no-store',
-        signal: AbortSignal.timeout(THUMB_TIMEOUT_MS),
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AmsterdamNOW-beeldselectie)' },
-      });
-      if (!res.ok) continue;
-      const type = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
-      if (!IMAGE_TYPES.has(type)) continue;
-      const buf = Buffer.from(await res.arrayBuffer());
-      if (!buf.length || buf.length > THUMB_MAX_BYTES) continue;
-      return { media_type: type, data: buf.toString('base64') };
-    } catch { /* probeer de volgende URL */ }
+  try {
+    const res = await fetch(c.thumb_url, {
+      cache: 'no-store',
+      signal: AbortSignal.timeout(THUMB_TIMEOUT_MS),
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AmsterdamNOW-beeldselectie)' },
+    });
+    if (!res.ok) return null;
+    const type = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+    if (!IMAGE_TYPES.has(type)) return null;
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (!buf.length || buf.length > THUMB_MAX_BYTES) return null;
+    return { media_type: type, data: buf.toString('base64') };
+  } catch {
+    return null;
   }
-  return null;
 }
 
 type Score = { beeld: number; score: number; reden: string; rol: string };

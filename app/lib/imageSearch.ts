@@ -18,6 +18,11 @@ import type { Article, ImageCandidateDraft } from './types';
 export const MIN_EDGE = 1000;
 const PER_QUERY = 20;
 const FETCH_TIMEOUT_MS = 8000;
+// Bovengrens op het aantal kandidaten dat doorgaat naar scoring. Scoren kost
+// ~300-500 tokens per beeld en de redactie kiest er uiteindelijk ~3 uit —
+// 48 kandidaten is dus ruim, terwijl 4 zoektermen × 4 providers × 20 per
+// query in het slechtste geval 100+ ongescoorde kandidaten zou opleveren.
+const MAX_CANDIDATES = 48;
 
 // Licenties op Commons die commercieel gebruik + bewerking toestaan.
 const COMMONS_LICENSE_OK = /^(cc0|cc[ -]by(?:[ -]sa)?(?:[ -]\d\.\d)?|public domain|pd)/i;
@@ -187,5 +192,9 @@ export async function searchImageCandidates(
       drafts.push(d);
     }
   });
-  return { drafts, queries, errors };
+  // jobs (en dus drafts) volgen de queryvolgorde van buildImageQueries, die
+  // specifiek → generiek levert. Afkappen op MAX_CANDIDATES behoudt zo de
+  // meest specifieke resultaten (venue/locatie) en offert alleen de
+  // generiekste kandidaten op.
+  return { drafts: drafts.slice(0, MAX_CANDIDATES), queries, errors };
 }
