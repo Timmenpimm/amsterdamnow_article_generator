@@ -307,10 +307,11 @@ async function stepCompose(topic: Topic): Promise<ListStepResult> {
       const [prompt, taxonomies] = await Promise.all([activePrompt('lijst-schrijf'), taxonomyChoices()]);
       result = await askClaudeJson(
         prompt.content,
-        `Schrijf het lijstartikel. Kies "categories" (1-2) en "district" uit de beschikbare lijsten en voeg 3-6 "tags" en een "rubriek" (Locatie of Evenement) toe aan je JSON-output, naast de velden uit je instructie.\n\nHoud je aan deze regels:\n${describeArticleConstraints(constraints)}\n${describeItemConstraints(constraints)}${feedbackHint}\n\n${JSON.stringify({
+        `Schrijf het lijstartikel. Kies "categories" (1-2) en "district" uit de beschikbare lijsten en kies 3-6 "tags" uitsluitend uit "beschikbare_tags" (nooit nieuwe tags verzinnen; laat "tags" leeg als er geen passen). Voeg ook een "rubriek" (Locatie of Evenement) toe aan je JSON-output, naast de velden uit je instructie.\n\nHoud je aan deze regels:\n${describeArticleConstraints(constraints)}\n${describeItemConstraints(constraints)}${feedbackHint}\n\n${JSON.stringify({
           ...input,
           beschikbare_categorieen: taxonomies.categories,
           beschikbare_districten: taxonomies.districts,
+          beschikbare_tags: taxonomies.tags,
         })}`,
         false, FAST_WRITE_MODEL, 6000, LIST_COMPOSE_FIRST_SCHEMA
       );
