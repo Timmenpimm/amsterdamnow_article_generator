@@ -10,6 +10,8 @@ import ListArticleModal from './ListArticleModal';
 import ReviewModal from './ReviewModal';
 import { toast } from './toast';
 
+const AUTO_WRITE_STORAGE_KEY = 'artikel-tool:auto-write';
+
 function ListBadge() {
   return (
     <span
@@ -93,6 +95,7 @@ export default function Pipeline() {
   const [writingNow, setWritingNow] = useState(false);
   const writingRef = useRef(false);
   const [autoOn, setAutoOn] = useState(false);
+  const autoOnFirstWrite = useRef(true);
   const dragId = useRef<number | null>(null);
   const [dragOverId, setDragOverId] = useState<number | null>(null);
 
@@ -112,6 +115,18 @@ export default function Pipeline() {
     const t = setInterval(load, 12000);
     return () => clearInterval(t);
   }, [load]);
+
+  // Automatisch-schrijven-status overleeft een refresh: laden bij opstarten,
+  // bewaren bij elke wijziging (de allereerste render — de starttoestand
+  // false — slaan we over, anders overschrijft die meteen een opgeslagen
+  // 'aan' voordat het geladen kan worden).
+  useEffect(() => {
+    if (localStorage.getItem(AUTO_WRITE_STORAGE_KEY) === '1') setAutoOn(true);
+  }, []);
+  useEffect(() => {
+    if (autoOnFirstWrite.current) { autoOnFirstWrite.current = false; return; }
+    localStorage.setItem(AUTO_WRITE_STORAGE_KEY, autoOn ? '1' : '0');
+  }, [autoOn]);
 
   // Beeldselectie-autofill op de achtergrond: voor het eerste verse artikel
   // zonder beelden vult Claude alvast de beste 3 in (zoeken → scoren →
