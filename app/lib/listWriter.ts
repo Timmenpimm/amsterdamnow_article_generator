@@ -190,7 +190,7 @@ function trimFeiten(feiten: string | undefined): string {
 // klein beetje redactionele samenhang (de afsluiting kent alleen blok 1),
 // maar garandeert dat elke call binnen de tijdslimiet blijft, ongeacht het
 // totale aantal items.
-const COMPOSE_PER_TICK = 4;
+const COMPOSE_PER_TICK = 2; // eerste live test op 4 duurde al 43s (incl. WP-taxonomieën-call); te weinig marge tegen latentievariatie
 
 async function stepCompose(topic: Topic): Promise<ListStepResult> {
   const s = state(topic);
