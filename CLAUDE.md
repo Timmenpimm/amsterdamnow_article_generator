@@ -1,5 +1,26 @@
 # amsterdamnow-artikel-tool
 
+## Standard workflow — ALWAYS use branches + PRs
+
+Never commit or push directly to `main`, and never edit in place on `main` in
+the primary checkout. Every change — even a one-line fix or a docs tweak —
+goes through this loop:
+
+1. **Branch off current `main`.** First `git fetch` + confirm you're based on
+   the latest `origin/main`, then create a `feat/…`, `fix/…`, `chore/…` or
+   `docs/…` branch (ideally inside an isolated worktree — see below).
+2. **Commit** your work on that branch with clear messages.
+3. **Open a PR into `main`** with `gh pr create` (title + short body of what
+   changed and why).
+4. **Merge the PR** with `gh pr merge <n> --merge --delete-branch` once it's
+   green. This is the only way work reaches `main`.
+5. **Clean up**: `git checkout main && git pull`, delete the local branch. Keep
+   the branch list short — a merged branch is a deletable branch.
+
+Do **not** `reset --hard`, force-push, or otherwise rewrite `main` or any
+shared branch. If a branch is based on a stale point, **rebase it onto current
+`main`** before opening/merging the PR (see the merge-base note below).
+
 ## Concurrent Claude Code sessions
 
 This repo is regularly worked on by more than one Claude Code session at the
