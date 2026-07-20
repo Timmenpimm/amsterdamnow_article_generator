@@ -8,6 +8,10 @@ export const maxDuration = 60;
 // migratie, geen actie die bij gewoon paginabezoek mag gebeuren. `dryRun`
 // geeft eerst de exacte kandidaatlijst terug zonder WordPress te wijzigen.
 export async function POST(req: NextRequest) {
+  const secret = process.env.CRON_SECRET;
+  if (!secret || req.headers.get('authorization') !== `Bearer ${secret}`) {
+    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  }
   try {
     const body = await req.json().catch(() => ({}));
     const result = await backfillDraftEditorialFormatting(Boolean(body.dryRun));

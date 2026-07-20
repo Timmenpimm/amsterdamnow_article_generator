@@ -306,6 +306,8 @@ export interface FormattingBackfillResult {
   scanned: number;
   updated: { id: number; title: string }[];
   skipped: { id: number; title: string; reason: string }[];
+  done: boolean;
+  remaining: number;
 }
 
 // Eenmalige, idempotente backfill voor oude AI-drafts. Alleen drafts zonder
@@ -314,9 +316,14 @@ export interface FormattingBackfillResult {
 // bewust nooit door deze routine opgehaald.
 export async function backfillDraftEditorialFormatting(dryRun = false): Promise<FormattingBackfillResult> {
   if (!LIVE) throw new Error('Backfill is alleen beschikbaar in live-modus.');
-  const posts = await wpFetch('/wp/v2/posts?status=draft&per_page=100&orderby=date&order=asc&context=edit&_fields=id,title,content,acf');
-  const result: FormattingBackfillResult = { scanned: posts.length, updated: [], skipped: [] };
-  for (const post of posts) {
+  // Gebruik exact dezelfde selectie als het kanbanbord. Daarmee zijn dit
+  // uitsluitend de artikelen in “Klaar — beelden nodig” en “Klaar voor
+  // publicatie”, nooit andere WordPress-drafts buiten de redactietool.
+  const boardDrafts = (await listArticles()).filter(article => article.status === 'draft');
+  const result: FormattingBackfillResult = { scanned: boardDrafts.length, updated: [], skipped: [], done: true, remaining: 0 };
+  const todo: { id: number; title: string; content: string }[] = [];
+  for (const boardArticle of boardDrafts) {
+    const post = await wpFetch(`/wp/v2/posts/${boardArticle.id}?context=edit&_fields=id,title,content,acf`);
     const html = post.content?.raw ?? post.content?.rendered ?? '';
     const title = decodeHtmlEntities(String(post.title?.raw ?? post.title?.rendered ?? `Artikel ${post.id}`));
     if (hasEditorialFormatting(html)) {
@@ -328,9 +335,21 @@ export async function backfillDraftEditorialFormatting(dryRun = false): Promise<
       result.skipped.push({ id: post.id, title, reason: 'geen bruikbare quote of onvoldoende alinea’s' });
       continue;
     }
-    if (!dryRun) await wpFetch(`/wp/v2/posts/${post.id}`, { method: 'POST', body: JSON.stringify({ content: formatted }) });
-    result.updated.push({ id: post.id, title });
+    todo.push({ id: post.id, title, content: formatted });
   }
+  if (dryRun) {
+    result.updated = todo.map(({ id, title }) => ({ id, title }));
+    result.remaining = todo.length;
+    return result;
+  }
+  // Kleine batches houden de serverless-aanroep ruimschoots binnen de limiet.
+  const batch = todo.slice(0, 8);
+  for (const item of batch) {
+    await wpFetch(`/wp/v2/posts/${item.id}`, { method: 'POST', body: JSON.stringify({ content: item.content }) });
+    result.updated.push({ id: item.id, title: item.title });
+  }
+  result.done = todo.length <= batch.length;
+  result.remaining = Math.max(0, todo.length - batch.length);
   return result;
 }
 
