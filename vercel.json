@@ -8,6 +8,7 @@
     { "src": "^/api/topics/process/?$", "dest": "/app/api/topics/process" },
     { "src": "^/api/topics/([^/]+)/approve/?$", "dest": "/app/api/topics/[id]/approve?id=$1" },
     { "src": "^/api/topics/([^/]+)/?$", "dest": "/app/api/topics/[id]?id=$1" },
+    { "src": "^/api/articles/([^/]+)/candidates/autofill/?$", "dest": "/app/api/articles/[id]/candidates/autofill?id=$1" },
     { "src": "^/api/articles/([^/]+)/candidates/search/?$", "dest": "/app/api/articles/[id]/candidates/search?id=$1" },
     { "src": "^/api/articles/([^/]+)/candidates/score/?$", "dest": "/app/api/articles/[id]/candidates/score?id=$1" },
     { "src": "^/api/articles/([^/]+)/candidates/?$", "dest": "/app/api/articles/[id]/candidates?id=$1" },

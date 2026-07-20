@@ -24,6 +24,15 @@ zin, plus bron, maker en licentie (naamsvermelding hoort bij CC BY — bij
 gebruik vult de tool het fotograaf-veld automatisch met "maker · bron ·
 licentie" als dat veld nog leeg is).
 
+**Autofill:** bij een vers artikel (nog geen beelden, redactie heeft nog
+niets gedaan) vult de tool de beste 3 beelden automatisch in — featured +
+2 slider, alleen bij score ≥ 55. De redactie ziet dus meestal een al
+gevuld beeldwerk-scherm en gebruikt de sectie "Voorgestelde beelden" om
+te **vervangen of aan te vullen**; de knop heet dan "↻ Meer alternatieven".
+Dit moet in het ontwerp voelbaar zijn: de automatisch geplaatste beelden
+zijn gewone featured/slider-beelden (geen aparte markering nodig), en de
+sectie presenteert zich als "meer keuze", niet als verplichte eerste stap.
+
 ## 2. Wat moet ontworpen worden
 
 De sectie **"Voorgestelde beelden"** in het rechterpaneel van scherm 1c,
@@ -33,8 +42,8 @@ nummert mee: 3 bij standaard, 4 bij lijst). Zelfde tokens, zelfde toon.
 ### A. Sectiekop
 - Titel in de bestaande sectiekop-stijl ("3 · Voorgestelde beelden") met
   ernaast klein en grijs: "rechtenvrij · minimaal 1000×1000".
-- Rechts een secundaire knop: **"Zoek kandidaten"** (eerste keer) of
-  **"↻ Vernieuwen"** (als er al kandidaten staan).
+- Rechts een secundaire knop: **"Zoek kandidaten"** (nog geen kandidaten)
+  of **"↻ Meer alternatieven"** (als er al kandidaten staan).
 
 ### B. Bezig-state (twee fasen, tekstueel)
 1. "Zoeken bij Openverse, Wikimedia Commons, Pexels en Google…"

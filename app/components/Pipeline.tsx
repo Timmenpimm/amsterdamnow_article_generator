@@ -111,6 +111,45 @@ export default function Pipeline() {
     return () => clearInterval(t);
   }, [load]);
 
+  // Beeldselectie-autofill op de achtergrond: voor het eerste verse artikel
+  // zonder beelden vult Claude alvast de beste 3 in (zoeken → scoren →
+  // plaatsen, één stap per tik). Artikelen waar de redactie al beeldwerk aan
+  // deed slaat de server over (eligible: false), dus dit raakt alleen
+  // onaangeraakt werk. autofillBusy voorkomt dubbele runs bij elke poll.
+  const autofillBusy = useRef(false);
+  const autofillDone = useRef(new Set<number>());
+  useEffect(() => {
+    const fresh = (data?.articles || []).find(a =>
+      a.status === 'draft'
+      && imageCount(a) + (data?.lists?.[a.id]?.withMedia || 0) === 0
+      && !autofillDone.current.has(a.id)
+    );
+    if (!fresh || autofillBusy.current) return;
+    autofillBusy.current = true;
+    (async () => {
+      try {
+        for (let tick = 0; tick < 10; tick++) {
+          const res = await fetch(`/api/articles/${fresh.id}/candidates/autofill`, { method: 'POST' });
+          const body = await res.json();
+          if (!res.ok) throw new Error(body.error);
+          if (body.done) {
+            autofillDone.current.add(fresh.id);
+            if (body.placed > 0) {
+              toast(`Claude heeft ${body.placed} beelden alvast ingevuld bij "${fresh.title}"`);
+              load();
+            }
+            return;
+          }
+        }
+        autofillDone.current.add(fresh.id); // na 10 tikken niet klaar: niet blijven hameren
+      } catch {
+        autofillDone.current.add(fresh.id); // stil falen; handmatig zoeken kan altijd nog
+      } finally {
+        autofillBusy.current = false;
+      }
+    })();
+  }, [data, load]);
+
   const topics = data?.topics || [];
   const queued = topics.filter(t => t.status === 'queued');
   const writing = topics.filter(t => t.status === 'writing');

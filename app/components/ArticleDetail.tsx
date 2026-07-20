@@ -65,6 +65,43 @@ export default function ArticleDetail({ id }: { id: number }) {
     return () => { stop = true; };
   }, [id]);
 
+  // Vers artikel zonder beelden? Dan vult Claude alvast de beste 3 in
+  // (zelfde autofill als het bord op de achtergrond draait; de server
+  // bewaakt dat al-aangeraakt werk wordt overgeslagen).
+  const autofillTried = useRef(false);
+  useEffect(() => {
+    if (!article || autofillTried.current) return;
+    if (article.status !== 'draft' || imageCount(article, list) > 0) return;
+    autofillTried.current = true;
+    (async () => {
+      try {
+        for (let tick = 0; tick < 10; tick++) {
+          setSuggestPhase(tick === 0
+            ? 'Claude vult alvast de beste 3 beelden in… (zoeken)'
+            : 'Claude vult alvast de beste 3 beelden in… (beoordelen)');
+          const res = await fetch(`/api/articles/${article.id}/candidates/autofill`, { method: 'POST' });
+          const body = await res.json();
+          if (!res.ok) throw new Error(body.error);
+          if (body.done) {
+            if (body.eligible === false) return; // redactie was hier al — niets doen
+            if (body.placed > 0) {
+              toast(`${body.placed} beelden alvast ingevuld — vervang of vul aan waar nodig`);
+              await load();
+            }
+            const cRes = await fetch(`/api/articles/${article.id}/candidates`);
+            const cData = await cRes.json();
+            if (Array.isArray(cData.candidates)) setCandidates(cData.candidates);
+            return;
+          }
+        }
+      } catch (e: any) {
+        toast(e.message, { kind: 'error' });
+      } finally {
+        setSuggestPhase('');
+      }
+    })();
+  }, [article, list, load]);
+
   // Zoeken + scoren. Scoren gaat in tikken van max 12 beelden (één
   // Claude-call per request i.v.m. de serverless-limiet).
   async function suggestImages() {
@@ -658,7 +695,7 @@ export default function ArticleDetail({ id }: { id: number }) {
                   disabled={!!suggestPhase}
                   onClick={suggestImages}
                 >
-                  {suggestPhase ? 'Bezig…' : visibleCandidates.length ? '↻ Vernieuwen' : 'Zoek kandidaten'}
+                  {suggestPhase ? 'Bezig…' : visibleCandidates.length ? '↻ Meer alternatieven' : 'Zoek kandidaten'}
                 </button>
               </div>
 
@@ -673,9 +710,10 @@ export default function ArticleDetail({ id }: { id: number }) {
 
               {!suggestPhase && !visibleCandidates.length && (
                 <div style={{ border: '1px dashed var(--border)', borderRadius: 10, padding: '12px 14px', fontSize: 12, color: 'var(--gray)', lineHeight: 1.45, background: 'rgba(255,255,255,0.5)' }}>
-                  Nog geen kandidaten. &quot;Zoek kandidaten&quot; doorzoekt Openverse, Wikimedia Commons, Pexels en
-                  Google (met rechtenfilter) op {article.naam_locatie ? `"${article.naam_locatie}"` : 'het onderwerp'} en
-                  laat Claude de vondsten beoordelen op de AmsterdamNOW-beeldstijl.
+                  Bij een vers artikel vult Claude de beste 3 beelden automatisch in. &quot;Zoek kandidaten&quot;
+                  doorzoekt Openverse, Wikimedia Commons, Pexels en Google (met rechtenfilter) op{' '}
+                  {article.naam_locatie ? `"${article.naam_locatie}"` : 'het onderwerp'} als je zelf
+                  (meer) alternatieven wilt bekijken.
                 </div>
               )}
 

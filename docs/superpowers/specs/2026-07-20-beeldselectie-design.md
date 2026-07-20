@@ -94,8 +94,30 @@ Setup: account op serper.dev → API-key = `SERPER_API_KEY` op Vercel.
 - Scoren zonder resultaten of zonder ANTHROPIC_API_KEY geeft een duidelijke
   Nederlandse melding; de gevonden (ongescoorde) kandidaten blijven bruikbaar.
 
+## Autofill (toegevoegd op verzoek van de redactie, zelfde dag)
+
+Voor een **vers** artikel (draft, 0 beelden, geen enkele kandidaat door de
+redactie gebruikt of afgewezen) vult de tool de beste 3 beelden alvast in:
+featured (het rol-advies van de beoordelaar, anders de hoogste score) + de
+twee beste daarna voor de slider. Alleen kandidaten met score ≥ 55
+(`AUTO_MIN_SCORE`) komen in aanmerking; scoort niets zo hoog, dan blijft
+het artikel leeg en staan de kandidaten klaar in de grid.
+
+- Route `POST /api/articles/[id]/candidates/autofill` — één stap per tik
+  (zoeken → per tik één scorebatch → plaatsen), zelfde 60s-patroon.
+- **Aanjagers**: het Pipeline-bord draait autofill op de achtergrond voor
+  het eerste verse artikel (met toast als er geplaatst is), en het
+  beeldwerk-scherm start hem bij openen als het bord er nog niet aan
+  toegekomen is. De server bewaakt idempotentie: aangeraakt werk geeft
+  `eligible: false`.
+- De knop in het beeldwerk-scherm heet daarna "↻ Meer alternatieven":
+  handmatig zoeken blijft de route naar extra keuze.
+- Scoringslogica gedeeld in `lib/imageScore.ts` (gebruikt door /score en
+  /autofill).
+
 ## Bewuste beperkingen (YAGNI)
 
 - Geen aparte pagina; alles in het bestaande beeldwerk-scherm.
-- Geen automatische plaatsing — de redactie kiest; de tool selecteert voor.
-- Geen achtergrond-cron; zoeken gebeurt on demand per artikel.
+- Automatische plaatsing alleen voor onaangeraakte artikelen; zodra de
+  redactie iets deed blijft de machine eraf.
+- Geen achtergrond-cron; het bord en het beeldwerk-scherm jagen de tikken aan.

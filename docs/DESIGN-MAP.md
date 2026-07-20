@@ -36,7 +36,7 @@ in dezelfde PR als de codewijziging._
 | **1a** | Statusboard (kanban) | `app/components/Pipeline.tsx` (7 kolommen, poll `/api/board`, `listProgress`); gerenderd door `app/app/page.tsx` |
 | **1b** | Bulk toevoegen (modal) | `app/components/BulkModal.tsx` |
 | **1c** | Artikel-detail / beeldwerk | `app/components/ArticleDetail.tsx`; route `app/app/artikel/[id]/page.tsx` |
-| **1c** (sectie) | Voorgestelde beelden (beeldselectie) | sectie + `CandidateCard` in `ArticleDetail.tsx`; backend `lib/imageSearch.ts` + `api/articles/[id]/candidates{,/search,/score}`; briefing `BRIEFING-claude-design-addendum-beeldselectie.md`; spec `docs/superpowers/specs/2026-07-20-beeldselectie-design.md` |
+| **1c** (sectie) | Voorgestelde beelden (beeldselectie + autofill top-3) | sectie + `CandidateCard` in `ArticleDetail.tsx`; autofill-driver ook in `Pipeline.tsx`; backend `lib/imageSearch.ts` + `lib/imageScore.ts` + `api/articles/[id]/candidates{,/search,/score,/autofill}`; briefing `BRIEFING-claude-design-addendum-beeldselectie.md`; spec `docs/superpowers/specs/2026-07-20-beeldselectie-design.md` |
 | **3d** | Voorgestelde beelden — states (leeg/bezig/lijstartikel item-kiezer) | losse states-doc van dezelfde sectie/component als 1c hierboven — geen eigen scherm, geen eigen bestand |
 | **1d** | Lege & fout-states wachtrij | onderdeel van `app/components/Pipeline.tsx` |
 | **1e** | Mobiele invoer | `MobileHome`-subcomponent ín `Pipeline.tsx` + `.mobile-only` in `TopBar.tsx` |
