@@ -80,21 +80,14 @@ export async function processStandaardStep(topic: Topic): Promise<StandaardStepR
   const s = parseStandaardState(topic) ?? {};
   const phase: StandaardPhase =
     topic.phase === 'schrijf' || topic.phase === 'schrijf-retry' || topic.phase === 'seo' ? topic.phase : 'research';
-  // Tijdelijke timing-instrumentatie (2026-07-20), zie lib/claude.ts.
-  const stepStart = Date.now();
-  console.log(`[standaard] topic=${topic.id} phase=${phase} start`);
   try {
-    let result: StandaardStepResult;
     switch (phase) {
-      case 'research': result = await stepResearch(topic, s); break;
-      case 'schrijf': result = await stepSchrijf(topic, s); break;
-      case 'schrijf-retry': result = await stepSchrijfRetry(topic, s); break;
-      case 'seo': result = await stepSeo(topic, s); break;
+      case 'research': return await stepResearch(topic, s);
+      case 'schrijf': return await stepSchrijf(topic, s);
+      case 'schrijf-retry': return await stepSchrijfRetry(topic, s);
+      case 'seo': return await stepSeo(topic, s);
     }
-    console.log(`[standaard] topic=${topic.id} phase=${phase} done in ${Date.now() - stepStart}ms -> ${result.phase}`);
-    return result;
   } catch (error: any) {
-    console.log(`[standaard] topic=${topic.id} phase=${phase} FAILED after ${Date.now() - stepStart}ms: ${error.message}`);
     await failTopic(topic.id, error.message || 'Onbekende fout', `standaardfase: ${phase}`);
     throw error;
   }
@@ -124,12 +117,8 @@ function buildCandidate(payload: Record<string, unknown>): GeneratedArticle {
 }
 
 async function stepResearch(topic: Topic, s: StandaardState): Promise<StandaardStepResult> {
-  const dbStart = Date.now();
   const [researchPrompt, taxonomies] = await Promise.all([activePrompt('research'), taxonomyChoices()]);
-  console.log(`[standaard] topic=${topic.id} research: prompt+taxonomieën geladen in ${Date.now() - dbStart}ms`);
-  const tavilyStart = Date.now();
   const sources = await researchWithTavily(topic.title);
-  console.log(`[standaard] topic=${topic.id} research: tavily klaar in ${Date.now() - tavilyStart}ms (${sources.length} bronnen)`);
   // Research = feiten extraheren uit aangeleverde bronnen, geen creatief werk:
   // Sonnet 5 volstaat en kost een fractie van Opus (zie FAST_WRITE_MODEL in
   // lib/claude.ts). Bronnen worden hier ook getrimd op 8000 tekens — relevante
@@ -147,9 +136,7 @@ async function stepResearch(topic: Topic, s: StandaardState): Promise<StandaardS
 
 async function stepSchrijf(topic: Topic, s: StandaardState): Promise<StandaardStepResult> {
   if (!s.research) throw new Error('Research ontbreekt voor de schrijffase.');
-  const dbStart = Date.now();
   const [writePrompt, constraints] = await Promise.all([activePrompt('schrijf'), activeConstraints('standaard')]);
-  console.log(`[standaard] topic=${topic.id} schrijf: prompt+constraints geladen in ${Date.now() - dbStart}ms`);
   const rules = describeStandaardConstraints(constraints, subjectName(topic, s));
   const payload = await askClaudeJson(
     writePrompt.content,
@@ -176,9 +163,7 @@ async function stepSchrijf(topic: Topic, s: StandaardState): Promise<StandaardSt
 
 async function stepSchrijfRetry(topic: Topic, s: StandaardState): Promise<StandaardStepResult> {
   if (!s.research || !s.draftPayload || !s.rejectReason) throw new Error('Onvolledige staat voor de herschrijfronde.');
-  const dbStart = Date.now();
   const [writePrompt, constraints] = await Promise.all([activePrompt('schrijf'), activeConstraints('standaard')]);
-  console.log(`[standaard] topic=${topic.id} schrijf-retry: prompt+constraints geladen in ${Date.now() - dbStart}ms`);
   const rules = describeStandaardConstraints(constraints, subjectName(topic, s));
   const payload = await askClaudeJson(
     writePrompt.content,
@@ -222,7 +207,6 @@ async function stepSeo(topic: Topic, s: StandaardState): Promise<StandaardStepRe
     `POST_TITLE: ${title}\nPOST_EXCERPT: ${intro}\nPOST_CONTENT: ${content}\nCATEGORY: ${strings(s.research.categories, 'categories').join(', ')}\nDISTRICT: ${string(s.research.district, 'district')}`,
     false, FAST_WRITE_MODEL, 6000, SEO_SCHEMA,
   );
-  const wpStart = Date.now();
   const draft = await createDraft({
     title, subregel, intro, contentHtml: html(content), quote,
     focusKeyword: string(seo.rank_math_focus_keyword, 'rank_math_focus_keyword'),
@@ -238,7 +222,6 @@ async function stepSeo(topic: Topic, s: StandaardState): Promise<StandaardStepRe
     stad: string(s.research.stad, 'stad'),
     website: string(s.research.website, 'website'),
   });
-  console.log(`[standaard] topic=${topic.id} seo: wp-draft aangemaakt in ${Date.now() - wpStart}ms`);
   await completeTopic(topic.id, draft.id);
   return { topic, phase: 'seo', done: true, progress: 'Draft aangemaakt', article: { id: draft.id, title: draft.title } };
 }

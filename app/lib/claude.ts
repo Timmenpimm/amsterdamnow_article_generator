@@ -10,13 +10,7 @@ const MODEL = process.env.ANTHROPIC_MODEL || 'claude-opus-4-8';
 export const FAST_WRITE_MODEL = process.env.ANTHROPIC_FAST_MODEL || 'claude-sonnet-5';
 
 type ClaudeBlock = { type: string; text?: string };
-type ClaudeUsage = {
-  input_tokens?: number;
-  output_tokens?: number;
-  cache_read_input_tokens?: number;
-  cache_creation_input_tokens?: number;
-};
-type ClaudeResponse = { content?: ClaudeBlock[]; stop_reason?: string; usage?: ClaudeUsage; error?: { message?: string } };
+type ClaudeResponse = { content?: ClaudeBlock[]; stop_reason?: string; error?: { message?: string } };
 
 function apiKey(): string {
   const key = process.env.ANTHROPIC_API_KEY;
@@ -24,43 +18,20 @@ function apiKey(): string {
   return key;
 }
 
-// Tijdelijke timing-instrumentatie (2026-07-20): productie zag na de
-// fase-opsplitsing nog altijd 60s-timeouts op een fase die maar 1 Claude-
-// call doet, dus het knelpunt zit ergens tussen "request start" en "response
-// klaar" — dit maakt zichtbaar in de Vercel-logs of dat de Anthropic-call
-// zelf is, of iets anders. Verwijderen zodra de oorzaak vaststaat.
 async function request(body: Record<string, unknown>): Promise<ClaudeResponse> {
-  const start = Date.now();
-  const model = body.model;
-  try {
-    const res = await fetch(API_URL, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': apiKey(),
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify(body),
-      cache: 'no-store',
-    });
-    const data = await res.json().catch(() => ({})) as ClaudeResponse;
-    // Tijdelijke token-instrumentatie (2026-07-20): maakt per call zichtbaar
-    // waar de tokens heengaan én of de prompt-cache echt wordt geraakt
-    // (cache_read > 0). Let op: onder het cache-minimum van het model (Opus
-    // 4.8: 4096 tokens) cachet een systeem-prompt stilletjes niet — dat is
-    // precies wat deze regel moet aantonen. Verwijderen na de optimalisatie.
-    const u = data.usage || {};
-    console.log(
-      `[claude] ${model} ${res.status} in ${Date.now() - start}ms stop_reason=${data.stop_reason}` +
-      ` in=${u.input_tokens ?? '-'} out=${u.output_tokens ?? '-'}` +
-      ` cache_read=${u.cache_read_input_tokens ?? '-'} cache_write=${u.cache_creation_input_tokens ?? '-'}`
-    );
-    if (!res.ok) throw new Error(`Claude ${res.status}: ${data.error?.message || 'onbekende fout'}`);
-    return data;
-  } catch (error: any) {
-    console.log(`[claude] ${model} FAILED after ${Date.now() - start}ms: ${error.message}`);
-    throw error;
-  }
+  const res = await fetch(API_URL, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': apiKey(),
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify(body),
+    cache: 'no-store',
+  });
+  const data = await res.json().catch(() => ({})) as ClaudeResponse;
+  if (!res.ok) throw new Error(`Claude ${res.status}: ${data.error?.message || 'onbekende fout'}`);
+  return data;
 }
 
 function textFrom(response: ClaudeResponse): string {
