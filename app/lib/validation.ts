@@ -123,6 +123,9 @@ export function validateListArticle(article: GeneratedListArticle, config: ListC
 
 export function validateArticle(article: GeneratedArticle, topic: string, config: StandaardConstraints) {
   range('Titel', article.title, config.titleWords.min, config.titleWords.max);
+  if (article.title.length > config.titleMaxChars) {
+    throw new Error(`Titel is ${article.title.length} tekens; maximaal ${config.titleMaxChars}.`);
+  }
   range('Subregel', article.subregel, config.subregelWords.min, config.subregelWords.max);
   range('Introductie', article.introductie_tekst, config.introWords.min, config.introWords.max);
   range('Artikeltekst', article.content, config.contentWords.min, config.contentWords.max);

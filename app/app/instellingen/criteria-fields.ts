@@ -12,6 +12,7 @@ export const STANDAARD_FIELDS: { section: string; fields: FieldDef<StandaardCons
     section: 'Lengtes / aantallen',
     fields: [
       { type: 'range', key: 'titleWords', label: 'Titel', unit: 'woorden' },
+      { type: 'number', key: 'titleMaxChars', label: 'Titel — max. lengte', unit: 'tekens' },
       { type: 'range', key: 'subregelWords', label: 'Subregel', unit: 'woorden' },
       { type: 'range', key: 'introWords', label: 'Introductie', unit: 'woorden' },
       { type: 'range', key: 'contentWords', label: 'Artikeltekst', unit: 'woorden' },
