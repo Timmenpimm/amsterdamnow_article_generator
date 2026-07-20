@@ -2,8 +2,8 @@ import { activeConstraints, activePrompt, claimNextTopic, completeTopic, failTop
 import { askClaudeJson, FAST_WRITE_MODEL } from './claude';
 import { createDraft, taxonomyChoices } from './wp';
 import { researchWithTavily } from './tavily';
-import { validateArticle } from './validation';
-import type { Topic } from './types';
+import { validateArticle, GeneratedArticle } from './validation';
+import type { StandaardConstraints, Topic, WordRange } from './types';
 
 function html(content: string): string {
   return content.split(/\n\s*\n/).map(p => `<p>${p.trim().replace(/\n/g, '<br>')}</p>`).join('\n');
@@ -17,6 +17,24 @@ function string(value: unknown, label: string): string {
 function strings(value: unknown, label: string): string[] {
   if (!Array.isArray(value) || !value.every(v => typeof v === 'string' && v.trim())) throw new Error(`Claude gaf geen geldige ${label} terug.`);
   return value.map(v => v.trim());
+}
+
+// De actieve Criteria als expliciete instructieregels bij de schrijfopdracht.
+// Woordaantallen mikken op het midden van de bandbreedte: het model telt niet
+// exact, dus wie op de ondergrens mikt valt er regelmatig onder — precies de
+// fout die topics op "mislukt" zette.
+function describeStandaardConstraints(c: StandaardConstraints): string {
+  const mid = (r: WordRange) => Math.round((r.min + r.max) / 2);
+  const lines = [
+    `- Titel: ${c.titleWords.min}-${c.titleWords.max} woorden${c.titleMustContainTopic ? ', met de naam van het onderwerp erin' : ''}.`,
+    `- Subregel: ${c.subregelWords.min}-${c.subregelWords.max} woorden.`,
+    `- Introductie: ${c.introWords.min}-${c.introWords.max} woorden; mik op ~${mid(c.introWords)}.`,
+    `- Artikeltekst: ${c.contentWords.min}-${c.contentWords.max} woorden; mik op ~${mid(c.contentWords)}, verdeeld over minimaal ${c.minParagraphs} alinea's. Schrijf liever iets te ruim dan te krap.`,
+    `- Quote: ${c.quoteWords.min}-${c.quoteWords.max} woorden${c.quoteMustBeVerbatimInContent ? ', en woord voor woord letterlijk terug te vinden in de artikeltekst' : ''}.`,
+  ];
+  if (c.noDashInText) lines.push('- Geen em dash (—) of en dash (–), nergens.');
+  if (c.noAmsterdamRepeatInTitleSubregelIntro) lines.push('- Het woord "Amsterdam" mag níet in titel, subregel of introductie staan.');
+  return lines.join('\n');
 }
 
 export async function writeNextTopic() {
@@ -37,17 +55,39 @@ export async function writeTopic(topic: Topic) {
       researchPrompt.content,
       `Onderwerp: ${topic.title}\n\nBeschikbare WordPress-categorieën: ${taxonomies.categories.join(', ')}\nBeschikbare WordPress-districten: ${taxonomies.districts.join(', ')}\n\nTavily-bronnen:\n${sources.map((s, i) => `\n[${i + 1}] ${s.title}\n${s.url}\n${s.content}`).join('\n')}`,
     );
-    const article = await askClaudeJson(
+    const rules = describeStandaardConstraints(constraints);
+    let payload = await askClaudeJson(
       writePrompt.content,
-      `Onderwerp: ${topic.title}\n\nGebruik uitsluitend deze gecontroleerde research van Tavily. Schrijf het artikel als geldige JSON volgens de actieve prompt.\n\n${JSON.stringify(research)}`,
+      `Onderwerp: ${topic.title}\n\nGebruik uitsluitend deze gecontroleerde research van Tavily. Schrijf het artikel als geldige JSON volgens de actieve prompt.\n\nHoud je aan deze regels:\n${rules}\n\n${JSON.stringify(research)}`,
       false, FAST_WRITE_MODEL,
     );
-    const title = string(article.title, 'title');
-    const intro = string(article.introductie_tekst, 'introductie_tekst');
-    const content = string(article.content, 'content');
-    const subregel = string(article.subregel, 'subregel');
-    const quote = string(article.quote, 'quote');
-    validateArticle({ title, subregel, introductie_tekst: intro, content, quote }, topic.title, constraints);
+    // Herkansing binnen dezelfde request: een validatiefout (te weinig woorden,
+    // dash, quote niet letterlijk, …) gaat mét afkeurreden en de vorige versie
+    // terug naar het snelle model in plaats van het topic direct op "mislukt"
+    // te zetten. Eén ronde — meer past niet binnen de 60s-limiet.
+    let checked: GeneratedArticle | null = null;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const candidate: GeneratedArticle = {
+          title: string(payload.title, 'title'),
+          subregel: string(payload.subregel, 'subregel'),
+          introductie_tekst: string(payload.introductie_tekst, 'introductie_tekst'),
+          content: string(payload.content, 'content'),
+          quote: string(payload.quote, 'quote'),
+        };
+        validateArticle(candidate, topic.title, constraints);
+        checked = candidate;
+        break;
+      } catch (e: any) {
+        if (attempt >= 1) throw new Error(`${e.message} (ook na een herschrijfronde)`);
+        payload = await askClaudeJson(
+          writePrompt.content,
+          `Je vorige versie van dit artikel is afgekeurd door de eindredactie.\n\nOnderwerp: ${topic.title}\nAfkeurreden: ${e.message}\n\nLever het VOLLEDIGE artikel opnieuw aan als JSON met exact dezelfde velden (title, subregel, introductie_tekst, content, quote). Los de afkeurreden op en houd de rest zoveel mogelijk intact. Alle regels blijven gelden:\n${rules}\n\nJe vorige versie:\n${JSON.stringify(payload)}`,
+          false, FAST_WRITE_MODEL,
+        );
+      }
+    }
+    const { title, subregel, introductie_tekst: intro, content, quote } = checked;
     const seo = await askClaudeJson(
       seoPrompt.content,
       `POST_TITLE: ${title}\nPOST_EXCERPT: ${intro}\nPOST_CONTENT: ${content}\nCATEGORY: ${strings(research.categories, 'categories').join(', ')}\nDISTRICT: ${string(research.district, 'district')}`,
