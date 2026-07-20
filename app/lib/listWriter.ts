@@ -3,6 +3,10 @@ import {
   getTopic, saveTopicProgress, saveListStructure,
 } from './db';
 import { askClaudeJson, FAST_WRITE_MODEL } from './claude';
+import {
+  LIST_SELECT_SCHEMA, LIST_VERIFY_SCHEMA, LIST_COMPOSE_FIRST_SCHEMA,
+  LIST_COMPOSE_ITEMS_SCHEMA, SEO_SCHEMA,
+} from './schemas';
 import { researchWithTavily } from './tavily';
 import { createDraft, findArticleLink, taxonomyChoices } from './wp';
 import { assembleListHtml } from './listHtml';
@@ -80,7 +84,7 @@ async function stepSelect(topic: Topic): Promise<ListStepResult> {
   const result = await askClaudeJson(
     prompt.content,
     `Thema van het lijstartikel: ${topic.title}${weekendContext(s.weekendgids)}\n\nTavily-bronnen:\n${sources.map((x, i) => `\n[${i + 1}] ${x.title}\n${x.url}\n${x.content.slice(0, 6000)}`).join('\n')}`,
-    false, FAST_WRITE_MODEL,
+    false, FAST_WRITE_MODEL, 6000, LIST_SELECT_SCHEMA,
   );
   const kandidaten = Array.isArray(result.kandidaten) ? result.kandidaten : [];
   const items: ListItemState[] = kandidaten
@@ -122,7 +126,7 @@ async function stepVerify(topic: Topic): Promise<ListStepResult> {
     const result = await askClaudeJson(
       prompt.content,
       `Thema van het lijstartikel: ${topic.title}\nTe verifiëren item: ${item.naam}${weekendContext(s.weekendgids)}\n\nTavily-bronnen:\n${sources.map((x, i) => `\n[${i + 1}] ${x.title}\n${x.url}\n${x.content.slice(0, VERIFY_SOURCE_CHARS)}`).join('\n')}`,
-      false, FAST_WRITE_MODEL,
+      false, FAST_WRITE_MODEL, 6000, LIST_VERIFY_SCHEMA,
     );
     if (str(result.status) === 'verified' && str(result.adres) && str(result.buurt)) {
       item.status = 'verified';
@@ -308,7 +312,7 @@ async function stepCompose(topic: Topic): Promise<ListStepResult> {
           beschikbare_categorieen: taxonomies.categories,
           beschikbare_districten: taxonomies.districts,
         })}`,
-        false, FAST_WRITE_MODEL
+        false, FAST_WRITE_MODEL, 6000, LIST_COMPOSE_FIRST_SCHEMA
       );
     } else {
       // Elk blok kiest quote-plaatsing zonder de andere blokken te kennen.
@@ -325,7 +329,7 @@ async function stepCompose(topic: Topic): Promise<ListStepResult> {
       result = await askClaudeJson(
         ITEM_COMPOSE_PROMPT,
         `Thema van het lijstartikel: ${topic.title}\n\nSchrijf precies ${nextBatch.length} volgende items, in exact deze volgorde: ${nextBatch.map(item => item.naam).join(', ')}.${naadHint}${itemRulesHint}${feedbackHint}\n\n${JSON.stringify(input)}`,
-        false, FAST_WRITE_MODEL
+        false, FAST_WRITE_MODEL, 6000, LIST_COMPOSE_ITEMS_SCHEMA
       );
     }
     const items = Array.isArray(result.items) ? result.items : [];
@@ -462,7 +466,7 @@ async function stepFinalize(topic: Topic): Promise<ListStepResult> {
   const seo = await askClaudeJson(
     seoPrompt.content,
     `Onderwerp: ${topic.title}\nTitel: ${composed.title}\nIntro: ${composed.introcontent}\nItems: ${structure.items.map(i => i.naam).join(', ')}`,
-    false, FAST_WRITE_MODEL,
+    false, FAST_WRITE_MODEL, 6000, SEO_SCHEMA,
   );
 
   const draft = await createDraft({
