@@ -54,17 +54,29 @@ export interface StandaardStepResult {
 // lijstpipeline: één fase per process-aanroep.
 export async function processStandaardStep(topic: Topic): Promise<StandaardStepResult> {
   const s = parseStandaardState(topic) ?? {};
-  const phase: StandaardPhase = topic.phase === 'schrijf' || topic.phase === 'seo' ? topic.phase : 'research';
+  const phase: StandaardPhase =
+    topic.phase === 'schrijf' || topic.phase === 'schrijf-retry' || topic.phase === 'seo' ? topic.phase : 'research';
   try {
     switch (phase) {
       case 'research': return await stepResearch(topic, s);
       case 'schrijf': return await stepSchrijf(topic, s);
+      case 'schrijf-retry': return await stepSchrijfRetry(topic, s);
       case 'seo': return await stepSeo(topic, s);
     }
   } catch (error: any) {
     await failTopic(topic.id, error.message || 'Onbekende fout', `standaardfase: ${phase}`);
     throw error;
   }
+}
+
+function buildCandidate(payload: Record<string, unknown>): GeneratedArticle {
+  return {
+    title: string(payload.title, 'title'),
+    subregel: string(payload.subregel, 'subregel'),
+    introductie_tekst: string(payload.introductie_tekst, 'introductie_tekst'),
+    content: string(payload.content, 'content'),
+    quote: string(payload.quote, 'quote'),
+  };
 }
 
 async function stepResearch(topic: Topic, s: StandaardState): Promise<StandaardStepResult> {
@@ -83,39 +95,50 @@ async function stepSchrijf(topic: Topic, s: StandaardState): Promise<StandaardSt
   if (!s.research) throw new Error('Research ontbreekt voor de schrijffase.');
   const [writePrompt, constraints] = await Promise.all([activePrompt('schrijf'), activeConstraints('standaard')]);
   const rules = describeStandaardConstraints(constraints);
-  let payload = await askClaudeJson(
+  const payload = await askClaudeJson(
     writePrompt.content,
     `Onderwerp: ${topic.title}\n\nGebruik uitsluitend deze gecontroleerde research van Tavily. Schrijf het artikel als geldige JSON volgens de actieve prompt.\n\nHoud je aan deze regels:\n${rules}\n\n${JSON.stringify(s.research)}`,
     false, FAST_WRITE_MODEL,
   );
-  // Herkansing binnen dezelfde fase-stap: een validatiefout (te weinig woorden,
-  // dash, quote niet letterlijk, …) gaat mét afkeurreden en de vorige versie
-  // terug naar het snelle model in plaats van het topic direct op "mislukt"
-  // te zetten. Eén ronde — meer past niet binnen de 60s-limiet, en beide
-  // pogingen gebruiken het snelle model, dus dit blijft ruim binnen de tijd.
-  let checked: GeneratedArticle | null = null;
-  for (let attempt = 0; ; attempt++) {
-    try {
-      const candidate: GeneratedArticle = {
-        title: string(payload.title, 'title'),
-        subregel: string(payload.subregel, 'subregel'),
-        introductie_tekst: string(payload.introductie_tekst, 'introductie_tekst'),
-        content: string(payload.content, 'content'),
-        quote: string(payload.quote, 'quote'),
-      };
-      validateArticle(candidate, topic.title, constraints);
-      checked = candidate;
-      break;
-    } catch (e: any) {
-      if (attempt >= 1) throw new Error(`${e.message} (ook na een herschrijfronde)`);
-      payload = await askClaudeJson(
-        writePrompt.content,
-        `Je vorige versie van dit artikel is afgekeurd door de eindredactie.\n\nOnderwerp: ${topic.title}\nAfkeurreden: ${e.message}\n\nLever het VOLLEDIGE artikel opnieuw aan als JSON met exact dezelfde velden (title, subregel, introductie_tekst, content, quote). Los de afkeurreden op en houd de rest zoveel mogelijk intact. Alle regels blijven gelden:\n${rules}\n\nJe vorige versie:\n${JSON.stringify(payload)}`,
-        false, FAST_WRITE_MODEL,
-      );
-    }
+  try {
+    const candidate = buildCandidate(payload);
+    validateArticle(candidate, topic.title, constraints);
+    s.article = candidate;
+    await saveTopicProgress(topic.id, { status: 'queued', phase: 'seo', state: s });
+    return { topic, phase: 'seo', done: false, progress: 'Artikel geschreven en gevalideerd · SEO en draft' };
+  } catch (e: any) {
+    // Herkansing als eigen fase-stap (niet meer als 2e Claude-call binnen
+    // dezelfde aanroep): een validatiefout (te weinig woorden, dash, quote
+    // niet letterlijk, …) gaat mét afkeurreden en de vorige versie naar de
+    // volgende tik, in plaats van het topic direct op "mislukt" te zetten.
+    s.draftPayload = payload;
+    s.rejectReason = e.message;
+    await saveTopicProgress(topic.id, { status: 'queued', phase: 'schrijf-retry', state: s });
+    return { topic, phase: 'schrijf-retry', done: false, progress: `Afgekeurd (${String(e.message).slice(0, 60)}…) · herkansing start` };
+  }
+}
+
+async function stepSchrijfRetry(topic: Topic, s: StandaardState): Promise<StandaardStepResult> {
+  if (!s.research || !s.draftPayload || !s.rejectReason) throw new Error('Onvolledige staat voor de herschrijfronde.');
+  const [writePrompt, constraints] = await Promise.all([activePrompt('schrijf'), activeConstraints('standaard')]);
+  const rules = describeStandaardConstraints(constraints);
+  const payload = await askClaudeJson(
+    writePrompt.content,
+    `Je vorige versie van dit artikel is afgekeurd door de eindredactie.\n\nOnderwerp: ${topic.title}\nAfkeurreden: ${s.rejectReason}\n\nLever het VOLLEDIGE artikel opnieuw aan als JSON met exact dezelfde velden (title, subregel, introductie_tekst, content, quote). Los de afkeurreden op en houd de rest zoveel mogelijk intact. Alle regels blijven gelden:\n${rules}\n\nJe vorige versie:\n${JSON.stringify(s.draftPayload)}`,
+    false, FAST_WRITE_MODEL,
+  );
+  let checked: GeneratedArticle;
+  try {
+    checked = buildCandidate(payload);
+    validateArticle(checked, topic.title, constraints);
+  } catch (e: any) {
+    // Eén herkansing — meer past niet zonder het risico op een derde
+    // sequentiële Claude-call binnen één aanroep.
+    throw new Error(`${e.message} (ook na een herschrijfronde)`);
   }
   s.article = checked;
+  s.draftPayload = undefined;
+  s.rejectReason = undefined;
   await saveTopicProgress(topic.id, { status: 'queued', phase: 'seo', state: s });
   return { topic, phase: 'seo', done: false, progress: 'Artikel geschreven en gevalideerd · SEO en draft' };
 }
