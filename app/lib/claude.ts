@@ -10,7 +10,13 @@ const MODEL = process.env.ANTHROPIC_MODEL || 'claude-opus-4-8';
 export const FAST_WRITE_MODEL = process.env.ANTHROPIC_FAST_MODEL || 'claude-sonnet-5';
 
 type ClaudeBlock = { type: string; text?: string };
-type ClaudeResponse = { content?: ClaudeBlock[]; stop_reason?: string; error?: { message?: string } };
+type ClaudeUsage = {
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+};
+type ClaudeResponse = { content?: ClaudeBlock[]; stop_reason?: string; usage?: ClaudeUsage; error?: { message?: string } };
 
 function apiKey(): string {
   const key = process.env.ANTHROPIC_API_KEY;
@@ -38,7 +44,17 @@ async function request(body: Record<string, unknown>): Promise<ClaudeResponse> {
       cache: 'no-store',
     });
     const data = await res.json().catch(() => ({})) as ClaudeResponse;
-    console.log(`[claude] ${model} ${res.status} in ${Date.now() - start}ms stop_reason=${data.stop_reason}`);
+    // Tijdelijke token-instrumentatie (2026-07-20): maakt per call zichtbaar
+    // waar de tokens heengaan én of de prompt-cache echt wordt geraakt
+    // (cache_read > 0). Let op: onder het cache-minimum van het model (Opus
+    // 4.8: 4096 tokens) cachet een systeem-prompt stilletjes niet — dat is
+    // precies wat deze regel moet aantonen. Verwijderen na de optimalisatie.
+    const u = data.usage || {};
+    console.log(
+      `[claude] ${model} ${res.status} in ${Date.now() - start}ms stop_reason=${data.stop_reason}` +
+      ` in=${u.input_tokens ?? '-'} out=${u.output_tokens ?? '-'}` +
+      ` cache_read=${u.cache_read_input_tokens ?? '-'} cache_write=${u.cache_creation_input_tokens ?? '-'}`
+    );
     if (!res.ok) throw new Error(`Claude ${res.status}: ${data.error?.message || 'onbekende fout'}`);
     return data;
   } catch (error: any) {
