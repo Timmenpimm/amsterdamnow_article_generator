@@ -27,6 +27,10 @@ en vul `WP_USER` + `WP_APP_PASSWORD` (WordPress Application Password), `TAVILY_A
 `ANTHROPIC_API_KEY` in voor live-modus. Start vervolgens vanuit de wachtrij één run;
 Tavily doet bronnenonderzoek, Claude schrijft het artikel, vult SEO in en maakt een WordPress-draft.
 
+Voor autonome wachtrijverwerking roept Vercel iedere minuut `/api/queue/worker` aan.
+Zet hiervoor ook `CRON_SECRET` als omgevingsvariabele in Vercel; Vercel stuurt die
+waarde als Bearer-token mee. Zonder deze variabele blijft de worker bewust geblokkeerd.
+
 ## Opslag: SQLite lokaal, Supabase op Vercel
 
 De opslaglaag ([lib/db.ts](lib/db.ts)) kiest automatisch een driver:

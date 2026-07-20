@@ -55,6 +55,8 @@ export interface Topic {
   error_step: string | null;
   attempts: number;
   post_id: number | null;
+  locked_at?: string | null;
+  lock_owner?: string | null;
 }
 
 export function parseListState(topic: Topic): ListState | null {

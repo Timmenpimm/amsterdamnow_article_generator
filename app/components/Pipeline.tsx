@@ -181,10 +181,14 @@ export default function Pipeline() {
         ...d.topics.filter(t => t.status !== 'queued'),
       ],
     });
-    await fetch('/api/topics/reorder', {
+    const res = await fetch('/api/topics/reorder', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ids }),
     });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      toast(body.error || 'Volgorde opslaan mislukt', { kind: 'error' });
+    }
     load();
   }
 

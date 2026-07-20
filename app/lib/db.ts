@@ -19,6 +19,8 @@ const LEGACY_MISSING_SEED_PLACEHOLDER = '(Seed-bestand ontbreekt in deze deploym
 // - Postgres (Supabase) zodra DATABASE_URL is gezet — persistent, voor Vercel
 // - SQLite lokaal (op Vercel zonder DATABASE_URL: /tmp, níet persistent)
 const PG_URL = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || process.env.POSTGRES_URL || '';
+const JOB_LEASE_MS = 5 * 60 * 1000;
+const MAX_JOB_ATTEMPTS = 3;
 
 export const STORAGE: 'postgres' | 'sqlite' = PG_URL ? 'postgres' : 'sqlite';
 
@@ -62,7 +64,9 @@ async function initSqlite(): Promise<DB> {
       error TEXT,
       error_step TEXT,
       attempts INTEGER NOT NULL DEFAULT 0,
-      post_id INTEGER
+      post_id INTEGER,
+      locked_at TEXT,
+      lock_owner TEXT
     );
     CREATE TABLE IF NOT EXISTS prompts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -96,7 +100,7 @@ async function initSqlite(): Promise<DB> {
     );
   `);
   // Migratie voor databases van vóór de lijstpipeline.
-  for (const col of ["type TEXT NOT NULL DEFAULT 'standaard'", 'phase TEXT', 'list_state TEXT']) {
+  for (const col of ["type TEXT NOT NULL DEFAULT 'standaard'", 'phase TEXT', 'list_state TEXT', 'locked_at TEXT', 'lock_owner TEXT']) {
     try { db.exec(`ALTER TABLE topics ADD COLUMN ${col}`); } catch { /* kolom bestaat al */ }
   }
   return {
@@ -124,7 +128,9 @@ async function initPostgres(): Promise<DB> {
       error TEXT,
       error_step TEXT,
       attempts INTEGER NOT NULL DEFAULT 0,
-      post_id INTEGER
+      post_id INTEGER,
+      locked_at TEXT,
+      lock_owner TEXT
     );
   `);
   await pool.query(`
@@ -169,6 +175,8 @@ async function initPostgres(): Promise<DB> {
   await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'standaard'`);
   await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS phase TEXT`);
   await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS list_state TEXT`);
+  await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS locked_at TEXT`);
+  await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS lock_owner TEXT`);
   return {
     async all(q, p = []) { return (await pool.query(q, p)).rows; },
     async get(q, p = []) { return (await pool.query(q, p)).rows[0]; },
@@ -272,49 +280,111 @@ export async function deleteTopic(id: number) {
 
 export async function reorderTopics(ids: number[]) {
   const db = await getDb();
-  for (let i = 0; i < ids.length; i++) {
-    await db.run('UPDATE topics SET sort = $1 WHERE id = $2', [i + 1, ids[i]]);
+  if (!ids.length || ids.some(id => !Number.isInteger(id)) || new Set(ids).size !== ids.length) {
+    throw new Error('Ongeldige wachtrijvolgorde.');
   }
+  const rows = await db.all(`SELECT id FROM topics WHERE status = 'queued' AND id IN (${ids.map((_, i) => `$${i + 1}`).join(', ')})`, ids);
+  if (rows.length !== ids.length) throw new Error('De wachtrij is gewijzigd; vernieuw het bord en probeer opnieuw.');
+
+  const cases = ids.map((_, i) => `WHEN $${i + 1} THEN ${i + 1}`).join(' ');
+  await db.run(
+    `UPDATE topics SET sort = CASE id ${cases} END WHERE status = 'queued' AND id IN (${ids.map((_, i) => `$${i + 1}`).join(', ')})`,
+    ids
+  );
 }
 
 export async function retryTopic(id: number) {
   const db = await getDb();
   const min = await db.get('SELECT COALESCE(MIN(sort), 1) AS m FROM topics');
   await db.run(
-    `UPDATE topics SET status = 'queued', error = NULL, error_step = NULL, sort = $1 WHERE id = $2`,
+    `UPDATE topics SET status = 'queued', error = NULL, error_step = NULL, locked_at = NULL, lock_owner = NULL, sort = $1 WHERE id = $2`,
     [Number(min.m) - 1, id]
   );
 }
 
-async function claimNext(type: 'standaard' | 'lijst'): Promise<Topic | null> {
+async function claimNext(where = '', values: unknown[] = []): Promise<Topic | null> {
   const db = await getDb();
-  const topic = await db.get(`SELECT * FROM topics WHERE status = 'queued' AND type = $1 ORDER BY sort ASC LIMIT 1`, [type]);
-  if (!topic) return null;
-  await db.run(
-    `UPDATE topics SET status = 'writing', started_at = $1, attempts = attempts + 1 WHERE id = $2`,
-    [now(), topic.id]
+  const claimedAt = now();
+  const owner = `process-${crypto.randomUUID()}`;
+  const condition = where ? ` AND ${where}` : '';
+  return db.get(
+    `UPDATE topics
+     SET status = 'writing', started_at = $1, locked_at = $1, lock_owner = $2, attempts = attempts + 1
+     WHERE id = (
+       SELECT id FROM topics WHERE status = 'queued'${condition} ORDER BY sort ASC LIMIT 1
+     ) AND status = 'queued'
+       AND NOT EXISTS (SELECT 1 FROM topics WHERE status = 'writing' AND lock_owner IS NOT NULL)
+     RETURNING *`,
+    [claimedAt, owner, ...values]
   );
-  return db.get('SELECT * FROM topics WHERE id = $1', [topic.id]);
 }
 
 export async function claimNextTopic(): Promise<Topic | null> {
-  return claimNext('standaard');
+  return claimNext('type = $3', ['standaard']);
 }
 
 export async function claimNextListTopic(): Promise<Topic | null> {
-  return claimNext('lijst');
+  return claimNext('type = $3', ['lijst']);
 }
 
-// De eerstvolgende queued topic (elk type), om de wachtrijvolgorde te
-// respecteren bij het kiezen tussen de standaard- en lijstpipeline.
-export async function peekNextQueued(): Promise<Topic | undefined> {
+// Claimt het eerstvolgende werkstuk over beide pipelines heen. De UPDATE met
+// statusvoorwaarde maakt dit veilig bij twee tabs, cron-runs of retries.
+export async function claimNextQueued(): Promise<Topic | null> {
+  return claimNext();
+}
+
+// Een lijstartikel blijft tussen stappen op `writing` staan. Claim ook die
+// stap atomisch, zodat dubbelklikken of twee open borden niet dezelfde fase
+// parallel uitvoeren.
+export async function claimActiveListTopic(): Promise<Topic | null> {
   const db = await getDb();
-  return db.get(`SELECT * FROM topics WHERE status = 'queued' ORDER BY sort ASC LIMIT 1`);
+  const claimedAt = now();
+  const owner = `process-${crypto.randomUUID()}`;
+  return db.get(
+    `UPDATE topics SET locked_at = $1, lock_owner = $2
+     WHERE id = (
+       SELECT id FROM topics
+       WHERE type = 'lijst' AND status = 'writing' AND lock_owner IS NULL
+       ORDER BY sort ASC LIMIT 1
+     ) AND lock_owner IS NULL
+       AND NOT EXISTS (SELECT 1 FROM topics WHERE status = 'writing' AND lock_owner IS NOT NULL)
+     RETURNING *`,
+    [claimedAt, owner]
+  );
+}
+
+export async function releaseTopicLock(id: number) {
+  const db = await getDb();
+  await db.run(`UPDATE topics SET lock_owner = NULL WHERE id = $1 AND status = 'writing'`, [id]);
 }
 
 export async function completeTopic(id: number, postId: number) {
   const db = await getDb();
-  await db.run(`UPDATE topics SET status = 'done', post_id = $1 WHERE id = $2`, [postId, id]);
+  await db.run(`UPDATE topics SET status = 'done', post_id = $1, locked_at = NULL, lock_owner = NULL WHERE id = $2`, [postId, id]);
+}
+
+export async function recoverStaleTopics(): Promise<{ requeued: number; failed: number }> {
+  const db = await getDb();
+  const cutoff = new Date(Date.now() - JOB_LEASE_MS).toISOString();
+  const stale = await db.all(`SELECT id, attempts FROM topics WHERE status = 'writing' AND COALESCE(locked_at, started_at) < $1`, [cutoff]);
+  let requeued = 0;
+  let failed = 0;
+  for (const topic of stale) {
+    if (Number(topic.attempts) >= MAX_JOB_ATTEMPTS) {
+      await db.run(
+        `UPDATE topics SET status = 'failed', error = $1, error_step = 'wachtrijherstel', locked_at = NULL, lock_owner = NULL WHERE id = $2 AND status = 'writing'`,
+        ['Taak is na meerdere verlopen leases gestopt. Zet hem opnieuw in de wachtrij om opnieuw te proberen.', topic.id]
+      );
+      failed += 1;
+    } else {
+      await db.run(
+        `UPDATE topics SET status = 'queued', error = $1, error_step = 'wachtrijherstel', locked_at = NULL, lock_owner = NULL WHERE id = $2 AND status = 'writing'`,
+        ['Vorige verwerking is verlopen; automatisch opnieuw ingepland.', topic.id]
+      );
+      requeued += 1;
+    }
+  }
+  return { requeued, failed };
 }
 
 // ---------- lijstpipeline ----------
@@ -346,6 +416,7 @@ export async function saveListProgress(
   if (upd.status) add('status', upd.status);
   if (upd.phase !== undefined) add('phase', upd.phase);
   if (upd.state) add('list_state', JSON.stringify(upd.state));
+  if (upd.status === 'writing' || upd.state) add('locked_at', now());
   if (upd.errorClear) { sets.push('error = NULL'); sets.push('error_step = NULL'); }
   if (!sets.length) return;
   params.push(id);
@@ -389,7 +460,7 @@ export async function listStructures(): Promise<Record<number, ListArticleStruct
 
 export async function failTopic(id: number, error: string, step: string) {
   const db = await getDb();
-  await db.run(`UPDATE topics SET status = 'failed', error = $1, error_step = $2 WHERE id = $3`, [error, step, id]);
+  await db.run(`UPDATE topics SET status = 'failed', error = $1, error_step = $2, locked_at = NULL, lock_owner = NULL WHERE id = $3`, [error, step, id]);
 }
 
 // ---------- prompts ----------
