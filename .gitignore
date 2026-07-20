@@ -6,7 +6,6 @@ app/.next/
 .DS_Store
 .vscode/
 data/
-seeds/
 .env
 .env.*
 public/*.log
