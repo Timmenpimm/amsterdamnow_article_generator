@@ -1,10 +1,13 @@
 import { claimNextQueued, recoverStaleTopics } from './db';
 import { processListStep } from './listWriter';
-import { writeTopic } from './writer';
+import { processStandaardStep } from './writer';
 
-// Verwerkt hooguit één atomisch geclaimde taak. Zowel het bord als de cron
-// worker gebruiken deze functie, zodat browserinteractie niet meer bepalend
-// is voor het voortzetten van de wachtrij.
+// Verwerkt hooguit één atomisch geclaimde fase-stap. Zowel het bord als de
+// cron worker gebruiken deze functie, zodat browserinteractie niet meer
+// bepalend is voor het voortzetten van de wachtrij. Beide pipelines (lijst en
+// standaard) zijn fase-gebaseerd: elke stap blijft op zichzelf staand binnen
+// de 60s-serverless-limiet, en zet het topic tussen stappen terug op
+// 'queued' zodat de volgende aanroep 'm via claimNextQueued() weer oppakt.
 export async function processNextQueueJob() {
   const recovered = await recoverStaleTopics();
   const next = await claimNextQueued();
@@ -13,5 +16,6 @@ export async function processNextQueueJob() {
     const step = await processListStep(next.id);
     return { list: step, topic: step?.topic ?? null, article: step?.article ?? null, recovered };
   }
-  return { ...(await writeTopic(next)), recovered };
+  const step = await processStandaardStep(next);
+  return { standaard: step, topic: step.topic, article: step.article ?? null, recovered };
 }

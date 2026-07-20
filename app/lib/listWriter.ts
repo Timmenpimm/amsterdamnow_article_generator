@@ -1,6 +1,6 @@
 import {
   activeConstraints, activeListTopic, activePrompt, claimNextListTopic, completeTopic, failTopic,
-  getTopic, saveListProgress, saveListStructure,
+  getTopic, saveTopicProgress, saveListStructure,
 } from './db';
 import { askClaudeJson, FAST_WRITE_MODEL } from './claude';
 import { researchWithTavily } from './tavily';
@@ -87,7 +87,7 @@ async function stepSelect(topic: Topic): Promise<ListStepResult> {
     .filter((k: ListItemState) => k.naam);
   if (items.length < 3) throw new Error('De selectiefase leverde minder dan 3 kandidaat-items op.');
   s.items = items;
-  await saveListProgress(topic.id, { status: 'queued', phase: 'verify', state: s });
+  await saveTopicProgress(topic.id, { status: 'queued', phase: 'verify', state: s });
   return {
     topic, phase: 'verify', done: false,
     progress: `${items.length} kandidaten gevonden · verificatie start`,
@@ -99,7 +99,7 @@ async function stepVerify(topic: Topic): Promise<ListStepResult> {
   const constraints = await activeConstraints('lijst');
   const pending = s.items.filter(i => i.status === 'pending').slice(0, VERIFY_PER_TICK);
   if (!pending.length) {
-    await saveListProgress(topic.id, { status: 'review', phase: 'review', state: s });
+    await saveTopicProgress(topic.id, { status: 'review', phase: 'review', state: s });
     return { topic, phase: 'review', done: true, progress: `Verificatie klaar: ${s.verified} opgenomen, ${s.rejected} afgevallen · wacht op controle` };
   }
   const prompt = await activePrompt('lijst-research');
@@ -138,10 +138,10 @@ async function stepVerify(topic: Topic): Promise<ListStepResult> {
   recount(s);
   const remaining = s.items.filter(i => i.status === 'pending').length;
   if (!remaining) {
-    await saveListProgress(topic.id, { status: 'review', phase: 'review', state: s });
+    await saveTopicProgress(topic.id, { status: 'review', phase: 'review', state: s });
     return { topic, phase: 'review', done: true, progress: `Verificatie klaar: ${s.verified} opgenomen, ${s.rejected} afgevallen · wacht op controle` };
   }
-  await saveListProgress(topic.id, { status: 'queued', state: s });
+  await saveTopicProgress(topic.id, { status: 'queued', state: s });
   return {
     topic, phase: 'verify', done: false,
     progress: `Item ${s.items.length - remaining}/${s.items.length} geverifieerd · ${s.rejected} afgevallen`,
@@ -167,7 +167,7 @@ export async function approveItems(topicId: number, includeNames: string[]): Pro
   if (s.items.filter(i => i.status === 'verified').length < 3) {
     throw new Error('Een lijstartikel heeft minimaal 3 goedgekeurde items nodig.');
   }
-  await saveListProgress(topicId, { status: 'queued', phase: 'compose', state: s, errorClear: true });
+  await saveTopicProgress(topicId, { status: 'queued', phase: 'compose', state: s, errorClear: true });
   return (await getTopic(topicId))!;
 }
 
@@ -340,7 +340,7 @@ async function stepCompose(topic: Topic): Promise<ListStepResult> {
     s.composeChunks = chunks;
     const newDoneCount = doneCount + nextBatch.length;
     if (newDoneCount < verified.length) {
-      await saveListProgress(topic.id, { status: 'queued', state: s });
+      await saveTopicProgress(topic.id, { status: 'queued', state: s });
       return { topic, phase: 'compose', done: false, progress: `Artikel wordt geschreven · ${newDoneCount}/${verified.length} items` };
     }
   }
@@ -366,12 +366,12 @@ async function stepCompose(topic: Topic): Promise<ListStepResult> {
     if (attempts >= MAX_COMPOSE_ATTEMPTS) {
       s.composeFeedback = undefined;
       s.composeAttempts = undefined;
-      await saveListProgress(topic.id, { state: s });
+      await saveTopicProgress(topic.id, { state: s });
       throw new Error(`${err?.message || err} (na ${attempts} schrijfpogingen)`);
     }
     s.composeFeedback = String(err?.message || err);
     s.composeAttempts = attempts;
-    await saveListProgress(topic.id, { status: 'queued', state: s });
+    await saveTopicProgress(topic.id, { status: 'queued', state: s });
     return {
       topic, phase: 'compose', done: false,
       progress: `Afgekeurd (${s.composeFeedback.slice(0, 60)}…) · herkansing ${attempts + 1}/${MAX_COMPOSE_ATTEMPTS} start`,
@@ -382,7 +382,7 @@ async function stepCompose(topic: Topic): Promise<ListStepResult> {
   s.composeChunks = undefined;
   s.composeFeedback = undefined;
   s.composeAttempts = undefined;
-  await saveListProgress(topic.id, { status: 'queued', phase: 'finalize', state: s });
+  await saveTopicProgress(topic.id, { status: 'queued', phase: 'finalize', state: s });
   return { topic, phase: 'finalize', done: false, progress: 'Artikel geschreven en gevalideerd · afronden' };
 }
 
