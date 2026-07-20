@@ -8,10 +8,10 @@ import { imageCount, REQUIRED_IMAGES } from '@/lib/types';
 import { toast } from './toast';
 
 function allMedia(a: Article): MediaRef[] {
-  return [...(a.featured ? [a.featured] : []), ...a.slider];
+  return [...(a.featured ? [a.featured] : []), ...a.slider, ...(a.inline ? [a.inline] : [])];
 }
 
-type UploadTarget = 'featured' | 'slider' | number; // number = item-index van een lijstartikel
+type UploadTarget = 'featured' | 'slider' | 'inline' | number; // number = item-index van een lijstartikel
 
 export default function ArticleDetail({ id }: { id: number }) {
   const router = useRouter();
@@ -160,7 +160,8 @@ export default function ArticleDetail({ id }: { id: number }) {
         }).catch(() => { /* credit staat in elk geval in het veld */ });
       }
       await patchCandidate(c.id, 'used');
-      toast(typeof target === 'number' ? 'Kandidaat als itemfoto gezet' : `Kandidaat naar ${target === 'featured' ? 'featured' : 'slider'}`);
+      const slotLabel = target === 'featured' ? 'featured' : target === 'inline' ? 'inline in tekst' : 'slider';
+      toast(typeof target === 'number' ? 'Kandidaat als itemfoto gezet' : `Kandidaat naar ${slotLabel}`);
     } catch (e: any) {
       toast(e.message, { kind: 'error' });
     } finally {
@@ -337,7 +338,7 @@ export default function ArticleDetail({ id }: { id: number }) {
   const next = idx >= 0 && idx < worklist.length - 1 ? worklist[idx + 1] : null;
   const needList = worklist.filter(a => (worklistCounts[a.id] ?? 0) < REQUIRED_IMAGES);
   const readyList = worklist.filter(a => (worklistCounts[a.id] ?? 0) >= REQUIRED_IMAGES);
-  const sliderMissing = Math.max(0, 2 - article.slider.length);
+  const sliderMissing = Math.max(0, 1 - article.slider.length);
   // Gebruikte en afgewezen kandidaten verdwijnen uit de grid; gescoorde staan
   // op volgorde van score (de db-query sorteert al).
   const visibleCandidates = candidates.filter(c => c.status === 'new' || c.status === 'scored');
@@ -544,7 +545,7 @@ export default function ArticleDetail({ id }: { id: number }) {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase' }}>2 · Slider</span>
-                <span style={{ fontSize: 11, color: 'var(--gray)' }}>minimaal 2 foto&apos;s · volgorde = slider-volgorde</span>
+                <span style={{ fontSize: 11, color: 'var(--gray)' }}>1 foto · meer mag, volgorde = slider-volgorde</span>
                 <span style={{ marginLeft: 'auto', fontSize: 11.5, fontWeight: 700, color: sliderMissing ? 'var(--amber-dark)' : 'var(--green-dark)' }}>
                   {sliderMissing ? `nog ${sliderMissing} nodig` : `✓ ${article.slider.length} foto's`}
                 </span>
@@ -577,6 +578,14 @@ export default function ArticleDetail({ id }: { id: number }) {
                       >
                         ★
                       </OverlayBtn>
+                      {!list && (
+                        <OverlayBtn
+                          title="Naar inline in tekst"
+                          onClick={() => patch({ sliderIds: article.slider.filter(x => x.id !== m.id).map(x => x.id), inlineId: m.id })}
+                        >
+                          ▸ inline
+                        </OverlayBtn>
+                      )}
                       <OverlayBtn
                         title="Verwijderen uit slider"
                         onClick={() => patch({ sliderIds: article.slider.filter(x => x.id !== m.id).map(x => x.id) })}
@@ -596,21 +605,53 @@ export default function ArticleDetail({ id }: { id: number }) {
                   onFiles={files => uploadFiles(files, 'slider')}
                   onClick={() => pickFiles('slider')}
                   onUrl={() => uploadUrl('slider')}
-                  label="Sleep foto's hierheen"
+                  label="Sleep de sliderfoto hierheen"
                 />
-                {article.slider.length === 0 && (
-                  <div
-                    style={{
-                      height: 190, border: '1.5px dashed var(--border)', borderRadius: 10,
-                      background: 'rgba(255,255,255,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    }}
-                  >
-                    <span style={{ fontSize: 12, color: 'var(--muted)' }}>slider-beeld 2</span>
-                  </div>
-                )}
               </div>
               <div style={{ fontSize: 11.5, color: 'var(--gray)' }}>Uploads gaan direct naar de WordPress-mediabibliotheek.</div>
             </div>
+
+            {/* inline in tekst (alleen standaardartikelen) */}
+            {!list && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase' }}>3 · Inline in tekst</span>
+                  <span style={{ fontSize: 11, color: 'var(--gray)' }}>verschijnt tussen alinea 2 en 3</span>
+                  <span style={{ marginLeft: 'auto', fontSize: 11.5, fontWeight: 700, color: article.inline ? 'var(--green-dark)' : 'var(--amber-dark)' }}>
+                    {article.inline ? '✓ gevuld' : 'nog leeg'}
+                  </span>
+                </div>
+                {article.inline ? (
+                  <div style={{ position: 'relative', borderRadius: 10, overflow: 'hidden', border: '1px solid var(--border)' }}>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={article.inline.url} alt="Inline-beeld" style={{ width: '100%', height: 220, objectFit: 'cover', display: 'block' }} />
+                    <div style={{ position: 'absolute', right: 10, top: 10, display: 'flex', gap: 6 }}>
+                      <OverlayBtn onClick={() => pickFiles('inline')}>Vervangen</OverlayBtn>
+                      <OverlayBtn
+                        onClick={() => patch({ inlineId: null, sliderIds: [...article.slider.map(m => m.id), article.inline!.id] })}
+                      >
+                        ↓ naar slider
+                      </OverlayBtn>
+                      <OverlayBtn title="Verwijderen" onClick={() => patch({ inlineId: null })}>✕</OverlayBtn>
+                    </div>
+                    <div style={{ position: 'absolute', left: 10, bottom: 10, fontSize: 10.5, fontWeight: 800, letterSpacing: '0.08em', background: '#fff', padding: '4px 8px', borderRadius: 5 }}>
+                      INLINE
+                    </div>
+                  </div>
+                ) : (
+                  <DropSlot
+                    height={200}
+                    active={dragOver === 'inline'}
+                    onDragState={s => setDragOver(s ? 'inline' : null)}
+                    onFiles={files => uploadFiles(files, 'inline')}
+                    onClick={() => pickFiles('inline')}
+                    onUrl={() => uploadUrl('inline')}
+                    label="Sleep het inline-beeld hierheen"
+                  />
+                )}
+                <div style={{ fontSize: 11.5, color: 'var(--gray)' }}>Komt als losse afbeelding tussen de 2e en 3e alinea van het artikel.</div>
+              </div>
+            )}
 
             {/* itemfoto's (lijstartikelen) */}
             {list && (
@@ -686,7 +727,7 @@ export default function ArticleDetail({ id }: { id: number }) {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-                  {list ? '4' : '3'} · Voorgestelde beelden
+                  4 · Voorgestelde beelden
                 </span>
                 <span style={{ fontSize: 11, color: 'var(--gray)' }}>rechtenvrij · minimaal 1000×1000</span>
                 <button
@@ -886,6 +927,9 @@ function CandidateCard({
         <div style={{ display: 'flex', gap: 5, marginTop: 'auto', flexWrap: 'wrap' }}>
           <button className="btn-small" disabled={busy} style={{ fontSize: 11, padding: '4px 8px' }} onClick={() => onUse('featured')}>★ Featured</button>
           <button className="btn-small" disabled={busy} style={{ fontSize: 11, padding: '4px 8px' }} onClick={() => onUse('slider')}>+ Slider</button>
+          {!items && (
+            <button className="btn-small" disabled={busy} style={{ fontSize: 11, padding: '4px 8px' }} onClick={() => onUse('inline')}>+ Inline</button>
+          )}
           {items && (
             <button className="btn-small" disabled={busy} style={{ fontSize: 11, padding: '4px 8px' }} onClick={() => setShowItems(v => !v)}>item ▾</button>
           )}

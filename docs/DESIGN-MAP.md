@@ -4,7 +4,7 @@
 uitpluizen. Lees eerst dít bestand, importeer het verse design, diff de
 schermlabels tegen de tabel hieronder, en bouw alléén de delta.
 
-_Laatst bijgewerkt: 20 juli 2026 (avond, na tokenoptimalisatie). Klopt er iets niet meer? Werk deze tabel bij
+_Laatst bijgewerkt: 20 juli 2026 (inline-artikelbeeld + slider naar 1). Klopt er iets niet meer? Werk deze tabel bij
 in dezelfde PR als de codewijziging._
 
 ---
@@ -35,7 +35,7 @@ in dezelfde PR als de codewijziging._
 | topbar (overal) | Navigatie, snelle invoer, modus-indicator | `app/components/TopBar.tsx` |
 | **1a** | Statusboard (kanban) | `app/components/Pipeline.tsx` (7 kolommen, poll `/api/board`, `listProgress`); gerenderd door `app/app/page.tsx` |
 | **1b** | Bulk toevoegen (modal) | `app/components/BulkModal.tsx` |
-| **1c** | Artikel-detail / beeldwerk | `app/components/ArticleDetail.tsx`; route `app/app/artikel/[id]/page.tsx` |
+| **1c** | Artikel-detail / beeldwerk | `app/components/ArticleDetail.tsx`; route `app/app/artikel/[id]/page.tsx`. **Beeld-slots (standaard):** 1 featured, 2 slider (streefwaarde **1**), 3 **inline in tekst**, 4 kandidaten. Het inline-beeld leeft ín de content-HTML als `<figure class="an-inline">` (splice/parse in `lib/wp.ts` — `spliceInlineImage`/`parseInline`, tussen alinea 2/3 of achteraan); `Article.inline` + `imageCount` in `types.ts`; `inlineId` door `updateImages`, PATCH `/api/articles/[id]`, media `?role=inline`, autofill. **Alleen standaard-artikelen** (lijst houdt itemfoto-flow). Backfill bestaande concepten: `POST /api/admin/backfill-inline` (Bearer `CRON_SECRET`, laatste slider → inline). |
 | **1c** (sectie) | Voorgestelde beelden (beeldselectie + autofill top-3) | sectie + `CandidateCard` in `ArticleDetail.tsx`; autofill-driver ook in `Pipeline.tsx`; backend `lib/imageSearch.ts` + `lib/imageScore.ts` + `api/articles/[id]/candidates{,/search,/score,/autofill}`; briefing `BRIEFING-claude-design-addendum-beeldselectie.md`; spec `docs/superpowers/specs/2026-07-20-beeldselectie-design.md` |
 | **3d** | Voorgestelde beelden — states (leeg/bezig/lijstartikel item-kiezer) | losse states-doc van dezelfde sectie/component als 1c hierboven — geen eigen scherm, geen eigen bestand |
 | **1d** | Lege & fout-states wachtrij | onderdeel van `app/components/Pipeline.tsx` |

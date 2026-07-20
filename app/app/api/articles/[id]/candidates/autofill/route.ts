@@ -15,8 +15,10 @@ export const dynamic = 'force-dynamic';
 // daaronder blijft alleen als kandidaat in de grid staan.
 const AUTO_MIN_SCORE = 55;
 
-// Vult de beste 3 beelden (featured + 2 slider) alvast in voor een vers
-// artikel. Eén stap per aanroep i.v.m. de 60s serverless-limiet:
+// Vult de beste 3 beelden (featured + 1 slider + 1 inline) alvast in voor een
+// vers artikel; voorrang Featured → Slider → Inline (bij 2 bruikbare beelden
+// dus featured + slider, geen inline). Eén stap per aanroep i.v.m. de 60s
+// serverless-limiet:
 //   1e tik  → kandidaten zoeken
 //   n tikken → per tik max 12 beelden scoren (één Claude-call)
 //   laatste  → top-3 uploaden en plaatsen
@@ -58,7 +60,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     }
 
     // Stap 3: plaatsen. Featured = het advies van de beoordelaar als dat er
-    // is, anders de hoogste score; daarna de twee beste voor de slider.
+    // is, anders de hoogste score; daarna 1 slider en 1 inline (in die volgorde).
     const eligibleCands = candidates
       .filter(c => c.status === 'scored' && (c.score ?? 0) >= AUTO_MIN_SCORE)
       .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
@@ -82,11 +84,17 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
     const best = uploaded[0].candidate;
     const credit = [best.author, best.source, best.license].filter(Boolean).join(' · ');
+    // Standaardartikel: featured + 1 slider + 1 inline. Lijstartikel heeft geen
+    // inline-beeld (eigen itemfoto-flow, content wordt her-geassembleerd) → de
+    // resterende beelden gaan naar de slider zoals voorheen.
+    const placement = list
+      ? { sliderIds: uploaded.slice(1).map(u => u.media.id) }
+      : { sliderIds: uploaded[1] ? [uploaded[1].media.id] : [], inlineId: uploaded[2] ? uploaded[2].media.id : undefined };
     const updated = await updateImages(
       article.id,
       {
         featuredId: uploaded[0].media.id,
-        sliderIds: uploaded.slice(1).map(u => u.media.id),
+        ...placement,
         ...(article.fotograaf ? {} : { fotograaf: credit }),
       },
       uploaded.map(u => u.media)

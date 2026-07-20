@@ -18,7 +18,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   try {
     const article = await updateImages(
       Number(id),
-      { featuredId: body.featuredId, sliderIds: body.sliderIds, fotograaf: body.fotograaf },
+      { featuredId: body.featuredId, sliderIds: body.sliderIds, inlineId: body.inlineId, fotograaf: body.fotograaf },
       body.knownMedia || []
     );
     if (!article) return NextResponse.json({ error: 'not found' }, { status: 404 });

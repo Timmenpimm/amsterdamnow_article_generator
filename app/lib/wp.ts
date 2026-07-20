@@ -39,6 +39,45 @@ async function wpFetch(pathname: string, init: RequestInit = {}): Promise<any> {
   return res.json();
 }
 
+// ---------- inline-artikelbeeld ----------
+// Het inline-beeld leeft ín de content-HTML als een gemarkeerde figure, net als
+// itemfoto's bij lijstartikelen (lib/listHtml.ts). Deze twee functies zijn de
+// enige plek die die markup schrijft/leest; de marker-strings
+// (`figure.an-inline` + `wp-image-<id>`) zijn het contract met de UI.
+const INLINE_FIGURE_RE = /\s*<figure class="an-inline">[\s\S]*?<\/figure>/i;
+
+// Top-level blok-elementen van de artikeltekst. We tellen blokken, niet alleen
+// </p>: de lede-alinea staat als <h2> in de content en de pull-quote als
+// <blockquote>, dus louter </p> tellen zou het beeld een blok te laat plaatsen.
+const BLOCK_RE = /<(p|h[1-6]|blockquote|ul|ol|figure|pre|table)\b[^>]*>[\s\S]*?<\/\1>/gi;
+
+export function spliceInlineImage(html: string, media: MediaRef | null): string {
+  const stripped = (html || '').replace(INLINE_FIGURE_RE, '');
+  if (!media) return stripped;
+  const fig = `<figure class="an-inline"><img class="wp-image-${media.id}" src="${media.url}" alt="" /></figure>`;
+  // Eind-posities van top-level blokken; plaats de figure na het 2e blok
+  // (= tussen de 2e en 3e alinea van de tekst).
+  const ends: number[] = [];
+  let m: RegExpExecArray | null;
+  BLOCK_RE.lastIndex = 0;
+  while ((m = BLOCK_RE.exec(stripped))) ends.push(m.index + m[0].length);
+  if (ends.length >= 3) {
+    const at = ends[1]; // na het 2e blok → tussen alinea 2 en 3
+    return stripped.slice(0, at) + '\n' + fig + stripped.slice(at);
+  }
+  // < 3 blokken → achteraan (gekozen gedrag).
+  return stripped.trimEnd() + (stripped.trim() ? '\n' : '') + fig;
+}
+
+function parseInline(contentHtml: string): MediaRef | null {
+  const fig = (contentHtml || '').match(INLINE_FIGURE_RE);
+  if (!fig) return null;
+  const idM = fig[0].match(/wp-image-(\d+)/);
+  const srcM = fig[0].match(/src="([^"]+)"/);
+  if (!idM || !srcM) return null;
+  return { id: Number(idM[1]), url: srcM[1] };
+}
+
 // ---------- taxonomy caches ----------
 
 let catCache: Record<number, string> | null = null;
@@ -127,6 +166,7 @@ async function mapPost(p: any, media: Record<number, MediaRef>): Promise<Article
     rubriek: acf.rubriek || '',
     featured: p.featured_media ? media[p.featured_media] || null : null,
     slider: sliderIds.map(id => media[id]).filter(Boolean),
+    inline: parseInline(p.content?.rendered || ''),
     fotograaf: acf.fotograaf || '',
     naam_locatie: acf.naam_locatie || '',
     adres: acf.adres || '',
@@ -210,6 +250,7 @@ export async function getArticle(id: number): Promise<Article | null> {
 export interface ImageUpdate {
   featuredId?: number | null;
   sliderIds?: number[];
+  inlineId?: number | null;
   fotograaf?: string;
 }
 
@@ -218,9 +259,13 @@ export async function updateImages(id: number, upd: ImageUpdate, known: MediaRef
     const a = (await demoArticles()).find(x => x.id === id);
     if (!a) return null;
     const pool = new Map<number, MediaRef>();
-    for (const m of [a.featured, ...a.slider, ...known]) if (m) pool.set(m.id, m);
+    for (const m of [a.featured, ...a.slider, a.inline, ...known]) if (m) pool.set(m.id, m);
     if (upd.featuredId !== undefined) a.featured = upd.featuredId == null ? null : pool.get(upd.featuredId) || null;
     if (upd.sliderIds) a.slider = upd.sliderIds.map(i => pool.get(i)).filter(Boolean) as MediaRef[];
+    if (upd.inlineId !== undefined) {
+      a.inline = upd.inlineId == null ? null : pool.get(upd.inlineId) || null;
+      a.contentHtml = spliceInlineImage(a.contentHtml, a.inline);
+    }
     if (upd.fotograaf !== undefined) a.fotograaf = upd.fotograaf;
     a.modified = new Date().toISOString();
     await demoSave(a);
@@ -230,6 +275,13 @@ export async function updateImages(id: number, upd: ImageUpdate, known: MediaRef
   if (upd.featuredId !== undefined) body.featured_media = upd.featuredId ?? 0;
   if (upd.sliderIds) body.acf.slider = upd.sliderIds;
   if (upd.fotograaf !== undefined) body.acf.fotograaf = upd.fotograaf;
+  if (upd.inlineId !== undefined) {
+    const cur = await wpFetch(`/wp/v2/posts/${id}?context=edit&_fields=content`);
+    const media = upd.inlineId == null ? null : (known.find(m => m.id === upd.inlineId) || null);
+    // Strip meteen het taxonomie-linkblok mee (consistent met de andere
+    // schrijf-paden), zodat we dat niet opnieuw vastleggen bij het inline-write.
+    body.content = stripTaxonomyFooter(spliceInlineImage(cur?.content?.raw ?? cur?.content?.rendered ?? '', media));
+  }
   await wpFetch(`/wp/v2/posts/${id}`, { method: 'POST', body: JSON.stringify(body) });
   return getArticle(id);
 }
@@ -315,7 +367,7 @@ export async function createDraft(draft: GeneratedDraft): Promise<Article> {
       link: `https://www.amsterdamnow.com/?p=${id}`,
       modified: new Date().toISOString(),
       date: new Date().toISOString(),
-      category: draft.categories.join(', '), district: draft.district, rubriek: draft.rubriek, featured: null, slider: [], fotograaf: '',
+      category: draft.categories.join(', '), district: draft.district, rubriek: draft.rubriek, featured: null, slider: [], inline: null, fotograaf: '',
       naam_locatie: draft.naamLocatie, adres: draft.adres, stad: draft.stad, website: draft.website, cordA: '', cordB: '', tags: draft.tags,
       focusKeyword: draft.focusKeyword, slug: draft.slug, seoTitle: draft.seoTitle,
       metaDescription: draft.metaDescription,
