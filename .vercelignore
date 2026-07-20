@@ -3,7 +3,6 @@ app/node_modules
 .next
 app/.next
 data
-seeds
 .env
 .env.*
 .vscode
