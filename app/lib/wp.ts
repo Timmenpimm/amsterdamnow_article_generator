@@ -102,21 +102,31 @@ function parseInline(contentHtml: string): MediaRef | null {
 let catCache: Record<number, string> | null = null;
 let districtCache: Record<number, string> | null = null;
 let tagCache: Record<number, string> = {};
+// Bestaande WP-tags waaruit de AI mag kiezen bij het classificeren van een
+// artikel (zie taxonomyChoices). Bewust op één pagina gehouden: max 30 tags,
+// geen paginering.
+let tagChoicesCache: string[] | null = null;
 
 async function loadTaxonomies() {
-  if (catCache && districtCache) return;
-  const [cats, districts] = await Promise.all([
+  if (catCache && districtCache && tagChoicesCache) return;
+  const [cats, districts, tags] = await Promise.all([
     fetch(`${WP_URL}/wp-json/wp/v2/categories?per_page=100`, { cache: 'no-store' }).then(r => r.json()),
     fetch(`${WP_URL}/wp-json/wp/v2/district?per_page=100`, { cache: 'no-store' }).then(r => r.json()),
+    fetch(`${WP_URL}/wp-json/wp/v2/tags?per_page=30`, { cache: 'no-store' }).then(r => r.json()),
   ]);
   catCache = Object.fromEntries(cats.map((c: any) => [c.id, c.name]));
   districtCache = Object.fromEntries(districts.map((d: any) => [d.id, d.name]));
+  tagChoicesCache = tags.map((t: any) => t.name);
 }
 
-export async function taxonomyChoices(): Promise<{ categories: string[]; districts: string[] }> {
-  if (!LIVE) return { categories: ['Cultuur', 'Uitgaan', 'Restaurants', 'Lifestyle'], districts: ['Amsterdam Centrum', 'Amsterdam Noord', 'Amsterdam Oost', 'Amsterdam Zuid'] };
+export async function taxonomyChoices(): Promise<{ categories: string[]; districts: string[]; tags: string[] }> {
+  if (!LIVE) return {
+    categories: ['Cultuur', 'Uitgaan', 'Restaurants', 'Lifestyle'],
+    districts: ['Amsterdam Centrum', 'Amsterdam Noord', 'Amsterdam Oost', 'Amsterdam Zuid'],
+    tags: ['Terras', 'Live muziek', 'Brunch', 'Hondvriendelijk'],
+  };
   await loadTaxonomies();
-  return { categories: Object.values(catCache || {}), districts: Object.values(districtCache || {}) };
+  return { categories: Object.values(catCache || {}), districts: Object.values(districtCache || {}), tags: tagChoicesCache || [] };
 }
 
 function normalized(value: string) {
@@ -129,16 +139,19 @@ function idForName(items: Record<number, string>, name: string, type: string): n
   return Number(id);
 }
 
+function matchExistingTagId(existing: { id: number; name: string }[], name: string): number | null {
+  const match = existing.find(tag => normalized(tag.name) === normalized(name));
+  return match ? match.id : null;
+}
+
 async function tagIdsForNames(names: string[]): Promise<number[]> {
   const ids: number[] = [];
   for (const name of [...new Set(names.map(n => n.trim()).filter(Boolean))]) {
     const existing = await wpFetch(`/wp/v2/tags?search=${encodeURIComponent(name)}&per_page=100`);
-    const match = existing.find((tag: any) => normalized(tag.name) === normalized(name));
-    if (match) ids.push(match.id);
-    else {
-      const created = await wpFetch('/wp/v2/tags', { method: 'POST', body: JSON.stringify({ name }) });
-      ids.push(created.id);
-    }
+    const id = matchExistingTagId(existing, name);
+    // Geen match → tag overslaan. Er wordt nooit meer automatisch een nieuwe
+    // WordPress-tag aangemaakt vanuit het aanmaak-pad.
+    if (id !== null) ids.push(id);
   }
   return ids;
 }
