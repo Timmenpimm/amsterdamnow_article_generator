@@ -110,6 +110,7 @@ export interface Article {
   rubriek: string;
   featured: MediaRef | null;
   slider: MediaRef[];
+  inline: MediaRef | null;
   fotograaf: string;
   naam_locatie: string;
   adres: string;
@@ -133,9 +134,9 @@ export interface Article {
 export const REQUIRED_IMAGES = 3;
 
 // Bij lijstartikelen tellen itemfoto's mee in de beeldenteller.
-export function imageCount(a: Pick<Article, 'featured' | 'slider'>, list?: ListArticleStructure | null): number {
+export function imageCount(a: Pick<Article, 'featured' | 'slider' | 'inline'>, list?: ListArticleStructure | null): number {
   const itemImages = list ? list.items.filter(i => i.media).length : 0;
-  return (a.featured ? 1 : 0) + a.slider.length + itemImages;
+  return (a.featured ? 1 : 0) + a.slider.length + (a.inline ? 1 : 0) + itemImages;
 }
 
 export type ArticlePhase = 'needImages' | 'ready' | 'published';
