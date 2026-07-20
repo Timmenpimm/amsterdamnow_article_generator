@@ -15,7 +15,15 @@ import { parseStandaardState, type StandaardConstraints, type StandaardPhase, ty
 // een ander legitiem iets langer antwoord af; 3000 geeft daar ruimte voor
 // terwijl een op hol geslagen generatie nog altijd ruim (~35-40s, gemeten
 // lineair) onder de 60s-limiet stopt in plaats van er tegenaan te lopen.
-const WRITE_MAX_TOKENS = 3000;
+// De schrijfcall denkt bewust NIET (zie lib/claude.ts): op productie getest
+// (2026-07-20) kapte adaptive thinking + structured outputs élk artikel af,
+// zelfs op 4500 tokens. Zonder thinking is een artikel ~1100 output-tokens;
+// 4500 geeft ruim marge voor lange legitieme artikelen terwijl een op hol
+// geslagen generatie (~50s bij ~90 tokens/s) nog net binnen de
+// 60s-functielimiet stopt. De max_tokens-throw in claude.ts is het vangnet.
+const WRITE_MAX_TOKENS = 4500;
+// Maximaal aantal herschrijfrondes na de eerste schrijfpoging.
+const MAX_SCHRIJF_HERKANSINGEN = 2;
 
 function html(content: string): string {
   return content.split(/\n\s*\n/).map(p => `<p>${p.trim().replace(/\n/g, '<br>')}</p>`).join('\n');
@@ -88,6 +96,19 @@ export async function processStandaardStep(topic: Topic): Promise<StandaardStepR
   }
 }
 
+// De "naam van het onderwerp" voor de titelcheck in validateArticle. De
+// bron-scanner maakt tegenwoordig hele zinstitels als wachtrijtitel ("Vermut
+// opent in Amsterdam: restaurant én aperitivobar ineen"); eisen dat de
+// artikeltitel die volledige zin bevat is onhaalbaar én botst frontaal met de
+// regel dat "Amsterdam" niet in de titel mag — elke scanner-titel met
+// "Amsterdam" faalde daardoor gegarandeerd. De research-fase extraheert al de
+// echte naam van de zaak of het evenement (naam_locatie); dáár hoort de
+// titelcheck op te toetsen, met de wachtrijtitel als vangnet.
+function subjectName(topic: Topic, s: StandaardState): string {
+  const naam = s.research?.naam_locatie;
+  return typeof naam === 'string' && naam.trim() ? naam.trim() : topic.title;
+}
+
 function buildCandidate(payload: Record<string, unknown>): GeneratedArticle {
   return {
     title: string(payload.title, 'title'),
@@ -133,7 +154,7 @@ async function stepSchrijf(topic: Topic, s: StandaardState): Promise<StandaardSt
   );
   try {
     const candidate = buildCandidate(payload);
-    validateArticle(candidate, topic.title, constraints);
+    validateArticle(candidate, subjectName(topic, s), constraints);
     s.article = candidate;
     await saveTopicProgress(topic.id, { status: 'queued', phase: 'seo', state: s });
     return { topic, phase: 'seo', done: false, progress: 'Artikel geschreven en gevalideerd · SEO en draft' };
@@ -163,15 +184,27 @@ async function stepSchrijfRetry(topic: Topic, s: StandaardState): Promise<Standa
   let checked: GeneratedArticle;
   try {
     checked = buildCandidate(payload);
-    validateArticle(checked, topic.title, constraints);
+    validateArticle(checked, subjectName(topic, s), constraints);
   } catch (e: any) {
-    // Eén herkansing — meer past niet zonder het risico op een derde
-    // sequentiële Claude-call binnen één aanroep.
-    throw new Error(`${e.message} (ook na een herschrijfronde)`);
+    // Elke herkansing is sinds de fase-opsplitsing een eigen serverless-tick,
+    // dus meerdere rondes kunnen veilig (zelfde patroon als composeAttempts in
+    // listWriter.ts). Afkeuringen zijn vaak randmissers (intro 38/40 woorden,
+    // quote 14/15); een extra ronde mét de nieuwe afkeurreden redt die bijna
+    // altijd, tegen de prijs van één extra call — alleen bij falen.
+    const attempts = (s.schrijfAttempts || 0) + 1;
+    if (attempts >= MAX_SCHRIJF_HERKANSINGEN) {
+      throw new Error(`${e.message} (ook na ${attempts} herschrijfrondes)`);
+    }
+    s.schrijfAttempts = attempts;
+    s.draftPayload = payload;
+    s.rejectReason = e.message;
+    await saveTopicProgress(topic.id, { status: 'queued', phase: 'schrijf-retry', state: s });
+    return { topic, phase: 'schrijf-retry', done: false, progress: `Afgekeurd (${String(e.message).slice(0, 60)}…) · herkansing ${attempts + 1} start` };
   }
   s.article = checked;
   s.draftPayload = undefined;
   s.rejectReason = undefined;
+  s.schrijfAttempts = undefined;
   await saveTopicProgress(topic.id, { status: 'queued', phase: 'seo', state: s });
   return { topic, phase: 'seo', done: false, progress: 'Artikel geschreven en gevalideerd · SEO en draft' };
 }
