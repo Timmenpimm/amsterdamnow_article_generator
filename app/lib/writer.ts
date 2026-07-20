@@ -9,9 +9,12 @@ import { parseStandaardState, type StandaardConstraints, type StandaardPhase, ty
 // titel/subregel/intro/quote-velden ≈ 800-1000 tokens als JSON), maar veel
 // krapper dan de standaard 6000: op productie liep de write-call een keer
 // tot 58s door voordat 'ie tegen de oude limiet van 6000 aanliep (afgekapt,
-// stop_reason=max_tokens) — gevaarlijk dicht bij de 60s-functielimiet. Een
-// lagere cap laat een op hol geslagen generatie veel eerder stoppen.
-const WRITE_MAX_TOKENS = 2000;
+// stop_reason=max_tokens) — gevaarlijk dicht bij de 60s-functielimiet. Bij
+// 2000 (gemeten: ~25s tot afkapping) sloeg de cap voor sommige onderwerpen
+// een ander legitiem iets langer antwoord af; 3000 geeft daar ruimte voor
+// terwijl een op hol geslagen generatie nog altijd ruim (~35-40s, gemeten
+// lineair) onder de 60s-limiet stopt in plaats van er tegenaan te lopen.
+const WRITE_MAX_TOKENS = 3000;
 
 function html(content: string): string {
   return content.split(/\n\s*\n/).map(p => `<p>${p.trim().replace(/\n/g, '<br>')}</p>`).join('\n');
