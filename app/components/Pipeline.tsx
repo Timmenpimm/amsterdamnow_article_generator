@@ -34,7 +34,8 @@ function listProgress(t: Topic): string {
   if (t.phase === 'compose') {
     const verifiedCount = s.items.filter(i => i.status === 'verified').length;
     const written = (s.composeChunks || []).reduce((n, c) => n + c.items.length, 0);
-    return written > 0 ? `Artikel wordt geschreven · ${written}/${verifiedCount} items` : 'Claude schrijft het lijstartikel…';
+    const retry = s.composeAttempts ? ` · herkansing ${s.composeAttempts + 1}` : '';
+    return written > 0 ? `Artikel wordt geschreven · ${written}/${verifiedCount} items${retry}` : `Claude schrijft het lijstartikel…${retry}`;
   }
   if (t.phase === 'finalize') return 'Valideren, interne links en SEO…';
   return '';

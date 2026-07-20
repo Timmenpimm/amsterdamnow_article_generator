@@ -39,6 +39,8 @@ export interface ListState {
   meldingen: string[];       // bv. "quote-norm niet gehaald"
   artikel?: ComposedList;    // resultaat van de compose-fase
   composeChunks?: ComposedList[]; // tussentijdse compose-blokken (elke tik schrijft er één, i.v.m. de 60s function-timeout)
+  composeFeedback?: string;  // afkeurreden van de vorige compose-poging; gaat als extra instructie mee in de herkansing
+  composeAttempts?: number;  // aantal volledig afgekeurde compose-pogingen (feedback-loop stopt na een maximum)
 }
 
 export interface Topic {
@@ -240,6 +242,53 @@ export const DEFAULT_STANDAARD_CONSTRAINTS: StandaardConstraints = {
   noDashInText: true,
   noAmsterdamRepeatInTitleSubregelIntro: true,
 };
+
+// ---------- bronnen (agenda-scanner) ----------
+
+// Een bron is een agenda-/programmapagina die periodiek wordt uitgelezen. Nieuwe
+// items belanden direct als topic in de wachtrij (zelfde `topics`-tabel).
+export interface Source {
+  id: number;
+  name: string;
+  url: string;                // canoniek, mét protocol
+  label: string;              // vrij badge-label, bv "poppodium"
+  active: 0 | 1;              // gepauzeerd = 0
+  created_at: string;
+  last_scan_at: string | null;
+  last_scan_status: 'ok' | 'error' | null;
+  last_scan_error: string | null;
+  last_new_count: number | null; // aantal nieuwe onderwerpen bij de laatste scan
+}
+
+// Weergavestatus van een vondst, afgeleid uit de topics-tabel bij het lezen:
+// - 'queued'  → topic staat nog in de wachtrij/pipeline
+// - 'written' → topic is 'done' (artikel geschreven)
+// - 'deleted' → de redactie heeft het topic verwijderd (finding-rij blijft,
+//                zodat het event niet opnieuw wordt opgepakt = dedup-historie)
+export type FindingState = 'queued' | 'written' | 'deleted';
+
+export interface SourceFinding {
+  id: number;
+  title: string;
+  found_at: string;
+  state: FindingState;
+}
+
+// Wat de Bronnen-pagina per bron nodig heeft: de bron zelf + afgeleide tellingen
+// en de recentste vondsten.
+export interface SourceSummary extends Source {
+  foundCount: number;         // totaal gevonden sinds toevoeging
+  recent: SourceFinding[];    // recentste vondsten (nieuwste eerst)
+}
+
+// Resultaat van één scan-actie, voor de UI en de "laatste run"-samenvatting.
+export interface ScanResult {
+  sourceId: number;
+  ok: boolean;
+  added: number;              // nieuwe onderwerpen in de wachtrij
+  skipped: number;            // al bekend (globaal of eerder gevonden)
+  error?: string;
+}
 
 export const DEFAULT_LIST_CONSTRAINTS: ListConstraints = {
   titleMaxChars: 75,

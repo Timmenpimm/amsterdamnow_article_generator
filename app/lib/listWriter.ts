@@ -227,6 +227,12 @@ Regels:
 Geef uitsluitend geldige JSON terug, zonder markdown:
 {"items":[{"naam":"exacte naam uit de research","beschrijving":"3-5 zinnen","plaats_quote":true}]}`;
 
+// Maximaal aantal volledig afgekeurde compose-pogingen dat automatisch wordt
+// herkanst (met de afkeurreden als extra instructie) voordat de run echt
+// faalt. Voorkomt dat een structureel onhaalbare regel eindeloos tokens
+// verbrandt.
+const MAX_COMPOSE_ATTEMPTS = 3;
+
 async function stepCompose(topic: Topic): Promise<ListStepResult> {
   const s = state(topic);
   const verified = s.items.filter(i => i.status === 'verified');
@@ -237,6 +243,13 @@ async function stepCompose(topic: Topic): Promise<ListStepResult> {
   const firstBatch = chunks.length === 0;
   const batchSize = firstBatch ? COMPOSE_FIRST_BATCH_SIZE : COMPOSE_ITEMS_PER_TICK;
   const nextBatch = verified.slice(doneCount, doneCount + batchSize);
+
+  // Feedback-loop: werd een eerdere volledige poging afgekeurd door de
+  // validatie, dan gaat de afkeurreden als expliciete instructie mee in élke
+  // schrijfcall van de herkansing.
+  const feedbackHint = s.composeFeedback
+    ? `\n\nLET OP — de vorige versie van dit artikel werd afgekeurd om deze reden: "${s.composeFeedback}". Voorkom deze fout in wat je nu schrijft.`
+    : '';
 
   if (nextBatch.length > 0) {
     const input = {
@@ -253,7 +266,7 @@ async function stepCompose(topic: Topic): Promise<ListStepResult> {
       const [prompt, taxonomies] = await Promise.all([activePrompt('lijst-schrijf'), taxonomyChoices()]);
       result = await askClaudeJson(
         prompt.content,
-        `Schrijf het lijstartikel. Kies "categories" (1-2) en "district" uit de beschikbare lijsten en voeg 3-6 "tags" en een "rubriek" (Locatie of Evenement) toe aan je JSON-output, naast de velden uit je instructie.\n\n${JSON.stringify({
+        `Schrijf het lijstartikel. Kies "categories" (1-2) en "district" uit de beschikbare lijsten en voeg 3-6 "tags" en een "rubriek" (Locatie of Evenement) toe aan je JSON-output, naast de velden uit je instructie.${feedbackHint}\n\n${JSON.stringify({
           ...input,
           beschikbare_categorieen: taxonomies.categories,
           beschikbare_districten: taxonomies.districts,
@@ -274,7 +287,7 @@ async function stepCompose(topic: Topic): Promise<ListStepResult> {
         : '';
       result = await askClaudeJson(
         ITEM_COMPOSE_PROMPT,
-        `Thema van het lijstartikel: ${topic.title}\n\nSchrijf precies ${nextBatch.length} volgende items, in exact deze volgorde: ${nextBatch.map(item => item.naam).join(', ')}.${naadHint}\n\n${JSON.stringify(input)}`,
+        `Thema van het lijstartikel: ${topic.title}\n\nSchrijf precies ${nextBatch.length} volgende items, in exact deze volgorde: ${nextBatch.map(item => item.naam).join(', ')}.${naadHint}${feedbackHint}\n\n${JSON.stringify(input)}`,
         false, FAST_WRITE_MODEL
       );
     }
@@ -310,17 +323,32 @@ async function stepCompose(topic: Topic): Promise<ListStepResult> {
   let meldingen: string[];
   try {
     meldingen = validateListArticle(validated, constraints);
-  } catch (err) {
-    // Bij afkeuring opnieuw laten schrijven i.p.v. dezelfde afgekeurde tekst
-    // te blijven valideren: wis de opgebouwde blokken zodat de volgende
-    // poging vers begint.
+  } catch (err: any) {
+    // Feedback-loop: wis de afgekeurde blokken en laat de volgende tikken het
+    // artikel automatisch opnieuw schrijven, met de afkeurreden als expliciete
+    // instructie in de prompt. Pas na MAX_COMPOSE_ATTEMPTS volledig afgekeurde
+    // pogingen faalt de run echt.
+    const attempts = (s.composeAttempts || 0) + 1;
     s.composeChunks = undefined;
-    await saveListProgress(topic.id, { state: s });
-    throw err;
+    if (attempts >= MAX_COMPOSE_ATTEMPTS) {
+      s.composeFeedback = undefined;
+      s.composeAttempts = undefined;
+      await saveListProgress(topic.id, { state: s });
+      throw new Error(`${err?.message || err} (na ${attempts} schrijfpogingen)`);
+    }
+    s.composeFeedback = String(err?.message || err);
+    s.composeAttempts = attempts;
+    await saveListProgress(topic.id, { status: 'queued', state: s });
+    return {
+      topic, phase: 'compose', done: false,
+      progress: `Afgekeurd (${s.composeFeedback.slice(0, 60)}…) · herkansing ${attempts + 1}/${MAX_COMPOSE_ATTEMPTS} start`,
+    };
   }
   s.artikel = composed;
   s.meldingen = meldingen;
   s.composeChunks = undefined;
+  s.composeFeedback = undefined;
+  s.composeAttempts = undefined;
   await saveListProgress(topic.id, { status: 'queued', phase: 'finalize', state: s });
   return { topic, phase: 'finalize', done: false, progress: 'Artikel geschreven en gevalideerd · afronden' };
 }
