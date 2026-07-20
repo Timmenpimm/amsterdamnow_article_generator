@@ -21,7 +21,14 @@ const LEGACY_MISSING_SEED_PLACEHOLDER = '(Seed-bestand ontbreekt in deze deploym
 // - Postgres (Supabase) zodra DATABASE_URL is gezet — persistent, voor Vercel
 // - SQLite lokaal (op Vercel zonder DATABASE_URL: /tmp, níet persistent)
 const PG_URL = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || process.env.POSTGRES_URL || '';
-const JOB_LEASE_MS = 5 * 60 * 1000;
+// Elke fase-stap is één Claude-call en past ruim binnen de 60s-serverless-
+// limiet (gemeten op productie: 15-36s per stap) — Vercel killt een nog
+// legitiem lopende stap dus sowieso uiterlijk na 60s. Een lease van 5 minuten
+// betekende dat één weggevallen tik (afgesloten tabblad, netwerkhikje) de
+// hele wachtrij tot 5 minuten blokkeerde, want er mag maar 1 taak tegelijk
+// 'writing' zijn. 90s laat ruim marge over de 60s-limiet zonder dat gebruikers
+// het gevoel krijgen dat de wachtrij "hangt".
+const JOB_LEASE_MS = 90 * 1000;
 const MAX_JOB_ATTEMPTS = 3;
 
 export const STORAGE: 'postgres' | 'sqlite' = PG_URL ? 'postgres' : 'sqlite';
@@ -427,6 +434,16 @@ export async function claimNextListTopic(): Promise<Topic | null> {
 // statusvoorwaarde maakt dit veilig bij twee tabs, cron-runs of retries.
 export async function claimNextQueued(): Promise<Topic | null> {
   return claimNext();
+}
+
+// Onderscheidt "de wachtrij is echt leeg" van "er ligt werk, maar er is al
+// een taak actief" — claimNextQueued() geeft in beide gevallen null terug,
+// en dat las de redactie ten onrechte als "niets te doen" terwijl er
+// gewoon al iets liep.
+export async function hasQueuedTopics(): Promise<boolean> {
+  const db = await getDb();
+  const row = await db.get(`SELECT 1 AS x FROM topics WHERE status = 'queued' LIMIT 1`);
+  return !!row;
 }
 
 // Een lijstartikel blijft tussen stappen op `writing` staan. Claim ook die

@@ -1,4 +1,4 @@
-import { claimNextQueued, recoverStaleTopics } from './db';
+import { claimNextQueued, hasQueuedTopics, recoverStaleTopics } from './db';
 import { processListStep } from './listWriter';
 import { processStandaardStep } from './writer';
 
@@ -11,7 +11,12 @@ import { processStandaardStep } from './writer';
 export async function processNextQueueJob() {
   const recovered = await recoverStaleTopics();
   const next = await claimNextQueued();
-  if (!next) return { topic: null, article: null, recovered };
+  if (!next) {
+    // null betekent hier ook "er ligt werk maar er is al iets actief" — dat
+    // is geen lege wachtrij, dus de frontend moet dat kunnen onderscheiden.
+    const blocked = await hasQueuedTopics();
+    return { topic: null, article: null, recovered, blocked };
+  }
   if (next.type === 'lijst') {
     const step = await processListStep(next.id);
     return { list: step, topic: step?.topic ?? null, article: step?.article ?? null, recovered };
