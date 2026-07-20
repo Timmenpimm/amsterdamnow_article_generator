@@ -1,5 +1,6 @@
 import { demoDelete, demoGetAll, demoUpsert, ensureDemoSeed, STORAGE } from './db';
 import { DEMO_ARTICLES, DEMO_TOPICS } from './demo-seed';
+import { decodeHtmlEntities } from './htmlEntities';
 import type { Article, MediaRef } from './types';
 
 export const WP_URL = process.env.WP_URL || 'https://www.amsterdamnow.com';
@@ -153,7 +154,7 @@ async function mapPost(p: any, media: Record<number, MediaRef>): Promise<Article
   const sliderIds: number[] = Array.isArray(acf.slider) ? acf.slider : [];
   return {
     id: p.id,
-    title: p.title?.rendered || '',
+    title: decodeHtmlEntities(p.title?.rendered || ''),
     subregel: acf.subregel || '',
     intro: acf.introductie_tekst || '',
     contentHtml: stripTaxonomyFooter(p.content?.rendered || ''),
@@ -214,7 +215,7 @@ export async function findArticleLink(name: string): Promise<string | null> {
     const hits = await wpFetch(`/wp/v2/posts?search=${encodeURIComponent(name)}&per_page=3&_fields=title,link`);
     const needle = name.toLocaleLowerCase('nl-NL');
     for (const hit of hits) {
-      const title = String(hit.title?.rendered || '').toLocaleLowerCase('nl-NL');
+      const title = decodeHtmlEntities(String(hit.title?.rendered || '')).toLocaleLowerCase('nl-NL');
       if (title.includes(needle)) return hit.link as string;
     }
   } catch { /* interne link is nice-to-have; nooit de run op laten falen */ }
