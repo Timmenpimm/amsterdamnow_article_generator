@@ -41,6 +41,23 @@ async function wpFetch(pathname: string, init: RequestInit = {}): Promise<any> {
   return res.json();
 }
 
+// Eén per_page-pagina volstond zolang het bord klein was, maar liet elke
+// draft voorbij de 50 meest recent bewerkte stilzwijgend uit het bord en de
+// backfill-scan vallen — geen fout, gewoon onzichtbaar. Loopt door tot een
+// pagina korter is dan perPage (WordPress' eigen signaal voor "laatste
+// pagina"); de iteratiecap is een vangnet tegen een onverwacht altijd-vol
+// antwoord, niet een normale grens.
+async function wpFetchAllPages(pathname: string, perPage = 50): Promise<any[]> {
+  const sep = pathname.includes('?') ? '&' : '?';
+  const out: any[] = [];
+  for (let page = 1; page <= 40; page++) {
+    const batch = await wpFetch(`${pathname}${sep}per_page=${perPage}&page=${page}`);
+    out.push(...batch);
+    if (batch.length < perPage) return out;
+  }
+  throw new Error(`Meer dan ${40 * perPage} draft-posts gevonden — paginering-cap geraakt, controleer wpFetchAllPages.`);
+}
+
 // ---------- inline-artikelbeeld ----------
 // Het inline-beeld leeft ín de content-HTML als een gemarkeerde figure, net als
 // itemfoto's bij lijstartikelen (lib/listHtml.ts). Deze twee functies zijn de
@@ -227,7 +244,7 @@ export async function listArticles(): Promise<Article[]> {
   if (!LIVE) return demoArticles();
   await loadTaxonomies();
   const [drafts, published] = await Promise.all([
-    wpFetch(`/wp/v2/posts?status=draft&per_page=50&orderby=modified&context=edit`),
+    wpFetchAllPages(`/wp/v2/posts?status=draft&orderby=modified&context=edit`),
     wpFetch(`/wp/v2/posts?status=publish&per_page=15&orderby=date`),
   ]);
   const posts = [...drafts, ...published];
