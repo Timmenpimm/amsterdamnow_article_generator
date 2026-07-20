@@ -9,7 +9,10 @@ export type ListPhase = 'select' | 'verify' | 'review' | 'compose' | 'finalize';
 // hierboven: research, schrijven en SEO+draft waren ooit één aaneengesloten
 // aanroep met 3-4 Claude-calls, wat regelmatig over de 60s-serverless-limiet
 // heen liep (FUNCTION_INVOCATION_TIMEOUT). Nu één fase per process-aanroep.
-export type StandaardPhase = 'research' | 'schrijf' | 'seo';
+// 'schrijf-retry' is losgetrokken van 'schrijf': de validatie-herkansing was
+// zelf ook een 2e Claude-call binnen dezelfde aanroep en kon daardoor alsnog
+// over de 60s heen lopen (gezien op productie na de eerste fase-opsplitsing).
+export type StandaardPhase = 'research' | 'schrijf' | 'schrijf-retry' | 'seo';
 
 export interface ListItemState {
   naam: string;
@@ -76,6 +79,8 @@ export function parseListState(topic: Topic): ListState | null {
 export interface StandaardState {
   research?: Record<string, unknown>; // ruwe research-JSON van Claude
   article?: { title: string; subregel: string; introductie_tekst: string; content: string; quote: string };
+  draftPayload?: Record<string, unknown>; // afgekeurde Claude-JSON, input voor de herkansing
+  rejectReason?: string;                  // afkeurreden van de vorige poging
 }
 
 export function parseStandaardState(topic: Topic): StandaardState | null {
