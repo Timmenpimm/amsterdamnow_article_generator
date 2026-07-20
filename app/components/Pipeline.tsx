@@ -265,11 +265,24 @@ export default function Pipeline() {
     try {
       // Beide pipelines bestaan uit meerdere fase-stappen: blijf aanroepen tot
       // de run klaar is, op itemcontrole wacht, of de wachtrij leeg is.
+      let toldBlocked = false;
       for (let tick = 0; tick < 40; tick++) {
         const res = await fetch('/api/topics/process', { method: 'POST' });
         const body = await res.json();
         if (!res.ok) throw new Error(body.error || 'Schrijven mislukt');
-        if (!body.topic) { toast('De wachtrij is leeg'); return; }
+        if (!body.topic) {
+          // blocked = er ligt werk, maar er is al een taak actief (bv. een
+          // ander tabblad, of een net weggevallen tik die nog moet herstellen)
+          // — geen lege wachtrij, dus even opnieuw proberen in plaats van
+          // meteen opgeven.
+          if (body.blocked) {
+            if (!toldBlocked) { toast('Er wordt al aan een ander artikel gewerkt — heel even geduld…'); toldBlocked = true; }
+            await new Promise(r => setTimeout(r, 3000));
+            continue;
+          }
+          toast('De wachtrij is leeg');
+          return;
+        }
         const step = body.list || body.standaard;
         if (step) {
           load();
