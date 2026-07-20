@@ -278,7 +278,9 @@ export async function updateImages(id: number, upd: ImageUpdate, known: MediaRef
   if (upd.inlineId !== undefined) {
     const cur = await wpFetch(`/wp/v2/posts/${id}?context=edit&_fields=content`);
     const media = upd.inlineId == null ? null : (known.find(m => m.id === upd.inlineId) || null);
-    body.content = spliceInlineImage(cur?.content?.raw ?? cur?.content?.rendered ?? '', media);
+    // Strip meteen het taxonomie-linkblok mee (consistent met de andere
+    // schrijf-paden), zodat we dat niet opnieuw vastleggen bij het inline-write.
+    body.content = stripTaxonomyFooter(spliceInlineImage(cur?.content?.raw ?? cur?.content?.rendered ?? '', media));
   }
   await wpFetch(`/wp/v2/posts/${id}`, { method: 'POST', body: JSON.stringify(body) });
   return getArticle(id);
