@@ -42,14 +42,21 @@ export async function askClaudeJson(
   system: string, prompt: string, withResearch = false, model = MODEL
 ): Promise<Record<string, unknown>> {
   const tools = withResearch ? [{ type: 'web_search_20260209', name: 'web_search', max_uses: 3 }] : undefined;
+  // Prompt caching op de systeem-prompt. Dezelfde prompt wordt binnen één
+  // artikel vaak herhaald (bv. de verificatie-prompt bij elk item, de
+  // lijst-schrijf-prompt bij elk compose-blok) én tussen opeenvolgende
+  // artikelen. Door de systeem-prompt als cacheerbaar blok te sturen betaal je
+  // 'm één keer vol; volgende calls binnen ~5 minuten lezen 'm ~90% goedkoper.
+  // Zonder gedragsverandering: de inhoud die het model ziet is identiek.
+  const systemBlocks = [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }];
   const messages: Array<{ role: 'user' | 'assistant'; content: unknown }> = [{ role: 'user', content: prompt }];
-  let response = await request({ model, max_tokens: 6000, system, messages, ...(tools ? { tools } : {}) });
+  let response = await request({ model, max_tokens: 6000, system: systemBlocks, messages, ...(tools ? { tools } : {}) });
 
   // Server-side web search can pause a long-running turn. Continue it with the
   // returned content, as prescribed by the Messages API, up to two times.
   for (let attempt = 0; response.stop_reason === 'pause_turn' && attempt < 2; attempt++) {
     messages.push({ role: 'assistant', content: response.content || [] });
-    response = await request({ model, max_tokens: 6000, system, messages, ...(tools ? { tools } : {}) });
+    response = await request({ model, max_tokens: 6000, system: systemBlocks, messages, ...(tools ? { tools } : {}) });
   }
   if (response.stop_reason === 'pause_turn') throw new Error('Claude kon het bronnenonderzoek niet binnen de beschikbare tijd afronden.');
   const raw = textFrom(response).replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
