@@ -420,7 +420,7 @@ export default function ArticleDetail({ id }: { id: number }) {
             </div>
             <h1 style={{ fontSize: 30, fontWeight: 800, lineHeight: 1.12, letterSpacing: '-0.015em', margin: 0 }}>{article.title}</h1>
             {article.subregel && (
-              <div style={{ fontSize: 14.5, fontWeight: 600, color: 'var(--text-soft)' }}>Subregel — {article.subregel}</div>
+              <div style={{ fontSize: 14.5, fontWeight: 600, color: 'var(--text-soft)' }}>{article.subregel}</div>
             )}
             {article.intro && <div style={{ fontSize: 15, fontWeight: 700, lineHeight: 1.55 }}>{article.intro}</div>}
             <div
