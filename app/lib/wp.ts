@@ -34,20 +34,26 @@ async function wpFetch(pathname: string, init: RequestInit = {}): Promise<any> {
 // (`figure.an-inline` + `wp-image-<id>`) zijn het contract met de UI.
 const INLINE_FIGURE_RE = /\s*<figure class="an-inline">[\s\S]*?<\/figure>/i;
 
+// Top-level blok-elementen van de artikeltekst. We tellen blokken, niet alleen
+// </p>: de lede-alinea staat als <h2> in de content en de pull-quote als
+// <blockquote>, dus louter </p> tellen zou het beeld een blok te laat plaatsen.
+const BLOCK_RE = /<(p|h[1-6]|blockquote|ul|ol|figure|pre|table)\b[^>]*>[\s\S]*?<\/\1>/gi;
+
 export function spliceInlineImage(html: string, media: MediaRef | null): string {
   const stripped = (html || '').replace(INLINE_FIGURE_RE, '');
   if (!media) return stripped;
   const fig = `<figure class="an-inline"><img class="wp-image-${media.id}" src="${media.url}" alt="" /></figure>`;
-  // Sluit-tags van top-level alinea's; plaats de figure na de 2e.
-  const closes: number[] = [];
-  const re = /<\/p>/gi;
+  // Eind-posities van top-level blokken; plaats de figure na het 2e blok
+  // (= tussen de 2e en 3e alinea van de tekst).
+  const ends: number[] = [];
   let m: RegExpExecArray | null;
-  while ((m = re.exec(stripped))) closes.push(m.index + m[0].length);
-  if (closes.length >= 3) {
-    const at = closes[1]; // na de 2e </p> → tussen alinea 2 en 3
+  BLOCK_RE.lastIndex = 0;
+  while ((m = BLOCK_RE.exec(stripped))) ends.push(m.index + m[0].length);
+  if (ends.length >= 3) {
+    const at = ends[1]; // na het 2e blok → tussen alinea 2 en 3
     return stripped.slice(0, at) + '\n' + fig + stripped.slice(at);
   }
-  // < 3 alinea's → achteraan (gekozen gedrag).
+  // < 3 blokken → achteraan (gekozen gedrag).
   return stripped.trimEnd() + (stripped.trim() ? '\n' : '') + fig;
 }
 

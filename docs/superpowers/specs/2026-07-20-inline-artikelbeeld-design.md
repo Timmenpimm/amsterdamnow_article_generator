@@ -52,8 +52,11 @@ spliceInlineImage(contentHtml: string, media: MediaRef | null): string
 ```
 
 - Verwijdert eerst een eventuele bestaande `<figure class="an-inline">`.
-- Met `media`: voegt de figure toe **na de 2e top-level `<p>…</p>`**. Heeft het
-  artikel < 3 alinea's, dan **achter de laatste alinea** (gekozen gedrag).
+- Met `media`: voegt de figure toe **na het 2e top-level blok**. Blokken zijn
+  `<p>`, `<h1-6>`, `<blockquote>`, `<ul>`, `<ol>`, `<figure>`, … — niet alleen
+  `<p>`: de lede-alinea staat als `<h2>` in de content en de pull-quote als
+  `<blockquote>`, dus louter `</p>` tellen plaatst het beeld een blok te laat.
+  Heeft het artikel < 3 blokken, dan **achter het laatste blok** (gekozen gedrag).
 - Met `null`: laat de content zonder inline-figure achter (verwijderen).
 
 Uitbreiding van `updateImages()`:
