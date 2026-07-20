@@ -296,8 +296,12 @@ export async function reorderTopics(ids: number[]) {
 export async function retryTopic(id: number) {
   const db = await getDb();
   const min = await db.get('SELECT COALESCE(MIN(sort), 1) AS m FROM topics');
+  // Een bewuste retry door de redactie is een verse start: zonder attempts-
+  // reset zou een topic dat ooit MAX_JOB_ATTEMPTS haalde bij de eerstvolgende
+  // verlopen lease direct weer op 'failed' klappen, hoe vaak je ook opnieuw
+  // probeert.
   await db.run(
-    `UPDATE topics SET status = 'queued', error = NULL, error_step = NULL, locked_at = NULL, lock_owner = NULL, sort = $1 WHERE id = $2`,
+    `UPDATE topics SET status = 'queued', error = NULL, error_step = NULL, locked_at = NULL, lock_owner = NULL, attempts = 0, sort = $1 WHERE id = $2`,
     [Number(min.m) - 1, id]
   );
 }
