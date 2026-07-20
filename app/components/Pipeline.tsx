@@ -584,6 +584,7 @@ export default function Pipeline() {
                     <Link href={`/artikel/${a.id}`}>
                       <button className="btn-small" title="Beeldwerk bekijken">✎</button>
                     </Link>
+                    <button className="btn-small" title="Verwijderen" onClick={() => deleteArticle(a)}>✕</button>
                   </div>
                 </div>
               </div>
