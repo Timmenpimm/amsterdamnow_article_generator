@@ -79,7 +79,8 @@ async function stepSelect(topic: Topic): Promise<ListStepResult> {
   const sources = await researchWithTavily(topic.title);
   const result = await askClaudeJson(
     prompt.content,
-    `Thema van het lijstartikel: ${topic.title}${weekendContext(s.weekendgids)}\n\nTavily-bronnen:\n${sources.map((x, i) => `\n[${i + 1}] ${x.title}\n${x.url}\n${x.content.slice(0, 6000)}`).join('\n')}`
+    `Thema van het lijstartikel: ${topic.title}${weekendContext(s.weekendgids)}\n\nTavily-bronnen:\n${sources.map((x, i) => `\n[${i + 1}] ${x.title}\n${x.url}\n${x.content.slice(0, 6000)}`).join('\n')}`,
+    false, FAST_WRITE_MODEL,
   );
   const kandidaten = Array.isArray(result.kandidaten) ? result.kandidaten : [];
   const items: ListItemState[] = kandidaten
@@ -115,9 +116,13 @@ async function stepVerify(topic: Topic): Promise<ListStepResult> {
       item.reden = 'Geen bruikbare bronnen gevonden';
       continue;
     }
+    // Grootste kostenpost van de hele pipeline (±12 items × ~6k input-tokens):
+    // verificatie is extractiewerk ("staat het adres in deze bronnen"),
+    // Sonnet 5 volstaat.
     const result = await askClaudeJson(
       prompt.content,
-      `Thema van het lijstartikel: ${topic.title}\nTe verifiëren item: ${item.naam}${weekendContext(s.weekendgids)}\n\nTavily-bronnen:\n${sources.map((x, i) => `\n[${i + 1}] ${x.title}\n${x.url}\n${x.content.slice(0, VERIFY_SOURCE_CHARS)}`).join('\n')}`
+      `Thema van het lijstartikel: ${topic.title}\nTe verifiëren item: ${item.naam}${weekendContext(s.weekendgids)}\n\nTavily-bronnen:\n${sources.map((x, i) => `\n[${i + 1}] ${x.title}\n${x.url}\n${x.content.slice(0, VERIFY_SOURCE_CHARS)}`).join('\n')}`,
+      false, FAST_WRITE_MODEL,
     );
     if (str(result.status) === 'verified' && str(result.adres) && str(result.buurt)) {
       item.status = 'verified';
@@ -456,7 +461,8 @@ async function stepFinalize(topic: Topic): Promise<ListStepResult> {
   const seoPrompt = await activePrompt('lijst-seo');
   const seo = await askClaudeJson(
     seoPrompt.content,
-    `Onderwerp: ${topic.title}\nTitel: ${composed.title}\nIntro: ${composed.introcontent}\nItems: ${structure.items.map(i => i.naam).join(', ')}`
+    `Onderwerp: ${topic.title}\nTitel: ${composed.title}\nIntro: ${composed.introcontent}\nItems: ${structure.items.map(i => i.naam).join(', ')}`,
+    false, FAST_WRITE_MODEL,
   );
 
   const draft = await createDraft({
