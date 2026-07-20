@@ -10,6 +10,12 @@ import { quoteSourceAllowed, validateListArticle, type GeneratedListArticle } fr
 import type { ComposedList, ListArticleStructure, ListItemState, ListState, Topic } from './types';
 
 const VERIFY_PER_TICK = 2; // items per aanroep, zodat elke stap binnen de serverless-limiet blijft
+// Tekens per Tavily-bron die naar de verificatie-call gaan. Tavily levert tot
+// 5 bronnen; op 8000 tekens elk was dit veruit de grootste token-post van de
+// pijplijn. Adres/openingstijden staan doorgaans vooraan in de geëxtraheerde
+// content, dus 4000 tekens per bron houdt de verificatie betrouwbaar terwijl
+// het de invoer ongeveer halveert.
+const VERIFY_SOURCE_CHARS = 4000;
 
 function state(topic: Topic): ListState {
   if (!topic.list_state) throw new Error('Lijst-topic heeft geen state.');
@@ -111,7 +117,7 @@ async function stepVerify(topic: Topic): Promise<ListStepResult> {
     }
     const result = await askClaudeJson(
       prompt.content,
-      `Thema van het lijstartikel: ${topic.title}\nTe verifiëren item: ${item.naam}${weekendContext(s.weekendgids)}\n\nTavily-bronnen:\n${sources.map((x, i) => `\n[${i + 1}] ${x.title}\n${x.url}\n${x.content.slice(0, 8000)}`).join('\n')}`
+      `Thema van het lijstartikel: ${topic.title}\nTe verifiëren item: ${item.naam}${weekendContext(s.weekendgids)}\n\nTavily-bronnen:\n${sources.map((x, i) => `\n[${i + 1}] ${x.title}\n${x.url}\n${x.content.slice(0, VERIFY_SOURCE_CHARS)}`).join('\n')}`
     );
     if (str(result.status) === 'verified' && str(result.adres) && str(result.buurt)) {
       item.status = 'verified';
@@ -195,11 +201,19 @@ function assertBatchComplete(items: any[], batch: ListItemState[]) {
 // veel items. De eerste schrijfstap maakt daarom de artikelstructuur en drie
 // items. Vervolgstappen schrijven uitsluitend itemteksten: zij hoeven geen
 // titel, intro, afsluiting, taxonomieën of de volledige lange schrijfprompt
-// opnieuw te genereren. Daarmee gaat een lijst van 11 items van zes naar drie
-// Claude-calls, terwijl de zwaarste call kleiner blijft dan de eerder geteste
-// vier-item-call die te weinig marge binnen de 60s had.
+// opnieuw te genereren.
+//
+// De zware eerste call (structuur + WP-taxonomie-fetch + 3 items) blijft op 3:
+// een 4-item-versie hiervan zat live al op ~43s. De lichte vervolgcall mist die
+// hele overhead (geen taxonomie-fetch, geen structuur-regeneratie, korte
+// prompt, op 500 tekens getrimde research per item), dus die 43s-grens geldt
+// er niet. 8 lichte items blijven ruim binnen de 60s (~2000 output-tokens, ver
+// onder max_tokens 6000). Daarmee gaat een lijst van 11 items van drie
+// (3+4+4) naar twee calls (3+8), met ook minder bloknaden (zie de quote-naad-
+// afhandeling hieronder). Verlaag naar 6 als een lichte call ooit tegen de 60s
+// aanloopt; bij een mislukte tik wordt alleen dat blok opnieuw geschreven.
 const COMPOSE_FIRST_BATCH_SIZE = 3;
-const COMPOSE_ITEMS_PER_TICK = 4;
+const COMPOSE_ITEMS_PER_TICK = 8;
 
 const ITEM_COMPOSE_PROMPT = `Je bent journalist voor amsterdamnow.com. Schrijf uitsluitend de itemteksten voor een bestaand lijstartikel op basis van de aangeleverde, geverifieerde research.
 
@@ -247,9 +261,20 @@ async function stepCompose(topic: Topic): Promise<ListStepResult> {
         false, FAST_WRITE_MODEL
       );
     } else {
+      // Elk blok kiest quote-plaatsing zonder de andere blokken te kennen.
+      // Twee quotes op opeenvolgende items zou de validatie doen falen (en dan
+      // alle blokken opnieuw laten schrijven). toValidated() is het harde
+      // vangnet; deze hint houdt de plaatsing redactioneel netjes door het
+      // eerste item van dit blok geen quote te laten openen als het vorige item
+      // er al een kreeg.
+      const prevItems = chunks[chunks.length - 1]?.items;
+      const prevEndedWithQuote = Boolean(prevItems?.[prevItems.length - 1]?.plaats_quote);
+      const naadHint = prevEndedWithQuote
+        ? '\n\nHet vorige item eindigde met een quote; zet daarom géén quote op het eerste item van dit blok.'
+        : '';
       result = await askClaudeJson(
         ITEM_COMPOSE_PROMPT,
-        `Thema van het lijstartikel: ${topic.title}\n\nSchrijf precies ${nextBatch.length} volgende items, in exact deze volgorde: ${nextBatch.map(item => item.naam).join(', ')}.\n\n${JSON.stringify(input)}`,
+        `Thema van het lijstartikel: ${topic.title}\n\nSchrijf precies ${nextBatch.length} volgende items, in exact deze volgorde: ${nextBatch.map(item => item.naam).join(', ')}.${naadHint}\n\n${JSON.stringify(input)}`,
         false, FAST_WRITE_MODEL
       );
     }
@@ -281,7 +306,7 @@ async function stepCompose(topic: Topic): Promise<ListStepResult> {
   // Koppel de compositie terug aan de geverifieerde research en dwing de
   // redactionele regels af in code (quotes letterlijk, spreiding, verboden woorden).
   const constraints = await activeConstraints('lijst');
-  const validated = toValidated(composed, verified);
+  const validated = toValidated(composed, verified, constraints.noConsecutiveQuotes);
   let meldingen: string[];
   try {
     meldingen = validateListArticle(validated, constraints);
@@ -308,23 +333,35 @@ function findResearch(verified: ListItemState[], naam: string): ListItemState {
   return hit;
 }
 
-function toValidated(composed: ComposedList, verified: ListItemState[]): GeneratedListArticle {
+function toValidated(composed: ComposedList, verified: ListItemState[], noConsecutiveQuotes: boolean): GeneratedListArticle {
+  // Compose kiest quote-plaatsing per blok, zonder de andere blokken te kennen.
+  // Wanneer de regel "geen twee quotes op opeenvolgende items" actief is, dwingt
+  // deze lus dat hard af: een quote die direct op een vorige quote zou volgen
+  // (typisch over een bloknaad) wordt onderdrukt. Zonder dit vangnet zou de
+  // validatie falen en zouden álle compose-blokken opnieuw geschreven worden.
+  let prevHadQuote = false;
+  const items = composed.items.map(item => {
+    const research = findResearch(verified, item.naam);
+    const wantsQuote = Boolean(item.plaats_quote && research.quote);
+    const quote = wantsQuote && !(noConsecutiveQuotes && prevHadQuote) && research.quote
+      ? { tekst: research.quote.tekst, bron: research.quote.bron }
+      : null;
+    prevHadQuote = quote !== null;
+    return {
+      naam: item.naam,
+      beschrijving: item.beschrijving,
+      adres: research.adres || '',
+      buurt: research.buurt || '',
+      quote,
+    };
+  });
   return {
     title: composed.title,
     subregel: composed.subregel,
     introcontent: composed.introcontent,
     inleiding: composed.inleiding,
     afsluiting: composed.afsluiting,
-    items: composed.items.map(item => {
-      const research = findResearch(verified, item.naam);
-      return {
-        naam: item.naam,
-        beschrijving: item.beschrijving,
-        adres: research.adres || '',
-        buurt: research.buurt || '',
-        quote: item.plaats_quote && research.quote ? { tekst: research.quote.tekst, bron: research.quote.bron } : null,
-      };
-    }),
+    items,
   };
 }
 
