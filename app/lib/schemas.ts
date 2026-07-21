@@ -211,6 +211,19 @@ export const SCAN_SCHEMA: Record<string, unknown> = {
   },
 };
 
+// DEDUP_SYSTEM (dedup.ts) → judgeDuplicate. "wp_id" is nullable: het wp_id van
+// het bestaande artikel als "duplicate" true is, anders null.
+export const DEDUP_JUDGE_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['duplicate', 'wp_id', 'reason'],
+  properties: {
+    duplicate: { type: 'boolean' },
+    wp_id: { anyOf: [{ type: 'integer' }, { type: 'null' }] },
+    reason: { type: 'string' },
+  },
+};
+
 // buildPrompt (imageScore.ts) → scoreOneBatch via askClaudeJsonWithImages.
 export const IMAGE_SCORES_SCHEMA: Record<string, unknown> = {
   type: 'object',

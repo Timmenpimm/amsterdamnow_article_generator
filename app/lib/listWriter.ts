@@ -9,6 +9,7 @@ import {
 } from './schemas';
 import { researchWithTavily } from './tavily';
 import { createDraft, findArticleLink, taxonomyChoices } from './wp';
+import { checkTopicAgainstWp } from './dedup';
 import { assembleListHtml } from './listHtml';
 import { quoteSourceAllowed, validateListArticle, type GeneratedListArticle } from './validation';
 import type { ComposedList, ListArticleStructure, ListConstraints, ListItemState, ListState, Topic } from './types';
@@ -441,6 +442,17 @@ async function stepFinalize(topic: Topic): Promise<ListStepResult> {
   const composed = s.artikel;
   if (!composed) throw new Error('Geen gecomponeerd artikel in de state.');
   const verified = s.items.filter(i => i.status === 'verified');
+
+  // Herkans-check vlak vóór de draft: topics kunnen lang in de wachtrij staan,
+  // dus de bij-invoer-check (POST /api/topics) kan intussen verouderd zijn.
+  // Force-toegevoegde topics (dedup_override) slaan deze over. Zie
+  // docs/superpowers/specs/2026-07-21-wp-dedup-index-design.md §4.
+  if (!topic.dedup_override) {
+    const dedup = await checkTopicAgainstWp(topic.title);
+    if (dedup.verdict === 'duplicate' && dedup.existing) {
+      throw new Error(`Duplicaat van bestaand artikel: ${dedup.existing.link}`);
+    }
+  }
 
   const structure: ListArticleStructure = {
     postId: 0,
