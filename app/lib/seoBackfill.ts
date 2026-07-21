@@ -9,11 +9,18 @@
 // publicatie, dat zijn samen alle drafts) én alle gepubliceerde artikelen.
 // Slug blijft bewust onaangeroerd, zie updateArticleSeo in wp.ts.
 //
+// Twee stappen, bewust gescheiden: eerst listSeoStubs() (lichtgewicht,
+// _fields=id,title,meta over ALLE artikelen) om kandidaten te vinden, dan
+// pas getArticle(id) (volle content) voor alléén de paar artikelen die deze
+// aanroep verwerkt. Een eerdere versie haalde de volle content van ALLE
+// gepubliceerde artikelen in één keer op en liep daarmee vast op
+// FUNCTION_INVOCATION_TIMEOUT nog vóór er iets verwerkt was.
+//
 // Zelfde patroon als backfillDraftEditorialFormatting in wp.ts: dryRun,
 // kleine batches per aanroep (hier een Claude-call per artikel, dus trager
 // dan een pure WP-PATCH), done/remaining zodat de aanroeper gewoon net zo
 // vaak opnieuw post totdat done: true.
-import { listArticles, listAllPublishedArticles, updateArticleSeo, LIVE } from './wp';
+import { listSeoStubs, getArticle, updateArticleSeo, LIVE } from './wp';
 import { getListStructure, activePrompt } from './db';
 import { askClaudeJson, FAST_WRITE_MODEL } from './claude';
 import { SEO_SCHEMA } from './schemas';
@@ -31,8 +38,9 @@ export interface SeoBackfillResult {
   remaining: number;
 }
 
-// Eén Claude-call per artikel; klein genoeg om ruim binnen de 60s-
-// serverless-limiet te blijven, ook als de laatste call trager is dan gemiddeld.
+// Eén Claude-call per artikel (ná een losse getArticle-fetch); klein genoeg
+// om ruim binnen de 60s-serverless-limiet te blijven, ook als de laatste
+// call trager is dan gemiddeld.
 const BATCH_SIZE = 5;
 
 async function generateStandardSeo(article: Article) {
@@ -65,27 +73,23 @@ async function generateListSeo(article: Article, items: string[]) {
 
 export async function backfillSeo(dryRun = false): Promise<SeoBackfillResult> {
   if (!LIVE) throw new Error('Backfill is alleen beschikbaar in live-modus.');
-  const [drafts, published] = await Promise.all([
-    listArticles().then(list => list.filter(a => a.status === 'draft')),
-    listAllPublishedArticles(),
-  ]);
-  const all = [...drafts, ...published];
-  // seoTitle leeg ⇒ de SEO-stap heeft voor dit artikel nooit succesvol
-  // meta weggeschreven (of kon dat niet, vóór de REST-registratie).
-  const candidates = all.filter(a => !a.seoTitle);
+  const stubs = await listSeoStubs();
+  const candidates = stubs.filter(s => !s.hasSeo);
 
-  const result: SeoBackfillResult = { scanned: all.length, updated: [], skipped: [], done: true, remaining: 0 };
+  const result: SeoBackfillResult = { scanned: stubs.length, updated: [], skipped: [], done: true, remaining: 0 };
   if (!candidates.length) return result;
 
   if (dryRun) {
-    result.updated = candidates.map(a => ({ id: a.id, title: a.title }));
+    result.updated = candidates.map(s => ({ id: s.id, title: s.title }));
     result.remaining = candidates.length;
     return result;
   }
 
   const batch = candidates.slice(0, BATCH_SIZE);
-  for (const article of batch) {
+  for (const stub of batch) {
     try {
+      const article = await getArticle(stub.id);
+      if (!article) throw new Error('artikel niet gevonden (verwijderd?)');
       const structure = await getListStructure(article.id);
       const seo = structure
         ? await generateListSeo(article, structure.items.map(i => i.naam))
@@ -94,7 +98,7 @@ export async function backfillSeo(dryRun = false): Promise<SeoBackfillResult> {
       await updateArticleSeo(article.id, seo);
       result.updated.push({ id: article.id, title: article.title });
     } catch (err: any) {
-      result.skipped.push({ id: article.id, title: article.title, reason: err.message || 'onbekende fout' });
+      result.skipped.push({ id: stub.id, title: stub.title, reason: err.message || 'onbekende fout' });
     }
   }
   result.remaining = Math.max(0, candidates.length - batch.length);
