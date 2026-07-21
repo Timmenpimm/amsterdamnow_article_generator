@@ -24,6 +24,23 @@ function stripTaxonomyFooter(html: string): string {
   return html.replace(TAXONOMY_FOOTER, '');
 }
 
+// Eenmalige opschoning voor drafts die het linkblok al in hun opgeslagen
+// WordPress-content hadden staan van vóór deze fix (zie PR #35). Werkt op de
+// ruwe, ongefilterde content (niet via mapPost, die het blok al wegfiltert
+// voor weergave) zodat we alléén écht aangetaste posts overschrijven.
+export async function cleanTaxonomyFootersFromDrafts(): Promise<{ id: number; title: string }[]> {
+  const drafts: any[] = await wpFetch('/wp/v2/posts?status=draft&per_page=100&context=edit&_fields=id,title,content');
+  const cleaned: { id: number; title: string }[] = [];
+  for (const post of drafts) {
+    const raw: string = post.content?.raw ?? post.content?.rendered ?? '';
+    const stripped = stripTaxonomyFooter(raw);
+    if (stripped === raw) continue;
+    await wpFetch(`/wp/v2/posts/${post.id}`, { method: 'POST', body: JSON.stringify({ content: stripped }) });
+    cleaned.push({ id: post.id, title: post.title?.raw || post.title?.rendered || '' });
+  }
+  return cleaned;
+}
+
 async function wpFetch(pathname: string, init: RequestInit = {}): Promise<any> {
   const res = await fetch(`${WP_URL}/wp-json${pathname}`, {
     ...init,
