@@ -48,16 +48,37 @@ export const RESEARCH_SCHEMA: Record<string, unknown> = {
 };
 
 // schrijf-seed → writer.ts stepSchrijf/stepSchrijfRetry (buildCandidate).
+// De veld-descriptions doen er hier toe: structured outputs (constrained
+// decoding) laat het model sterk op het schema leunen, dus zonder deze
+// beschrijvingen viel juist het creatiefste veld (de titel) plat. Ze zijn
+// overgenomen uit de oorspronkelijke n8n-workflow, waar de titels punchier
+// waren. De titel wordt daarnaast nog eens los, vrij (ongeconstrained)
+// gegenereerd in writer.ts (polishTitle) — dit schema is het vangnet.
 export const ARTICLE_SCHEMA: Record<string, unknown> = {
   type: 'object',
   additionalProperties: false,
   required: ['title', 'subregel', 'introductie_tekst', 'content', 'quote'],
   properties: {
-    title: { type: 'string' },
-    subregel: { type: 'string' },
-    introductie_tekst: { type: 'string' },
-    content: { type: 'string' },
-    quote: { type: 'string' },
+    title: {
+      type: 'string',
+      description: 'Prikkelende, pakkende kop van 8-12 woorden. De naam van het onderwerp staat erin, bij voorkeur in de eerste helft (essentieel voor SEO). Gebruik een dubbele punt voor spanning. Vermijd saaie constructies als "Nieuw restaurant X opent zijn deuren". Geen em dash of en dash. Het woord "Amsterdam" mag er niet in.',
+    },
+    subregel: {
+      type: 'string',
+      description: 'Uitbreiding op de titel met NIEUWE informatie, 10-15 woorden. Geen herhaling van wat al in de titel staat. Het woord "Amsterdam" mag er niet in.',
+    },
+    introductie_tekst: {
+      type: 'string',
+      description: 'De essentie in drie zinnen, 40-60 woorden. Geen herhaling van titel of subregel. Niet openen met een jaartal. Het woord "Amsterdam" mag er niet in.',
+    },
+    content: {
+      type: 'string',
+      description: 'Hoofdtekst van 400-450 woorden (minimaal 400), verdeeld over minimaal vijf alinea\'s gescheiden door dubbele newlines. Concreet, informeel, Amsterdamse nuchterheid, geen corporate speak en geen em dashes. De quote-zin moet hier letterlijk in voorkomen.',
+    },
+    quote: {
+      type: 'string',
+      description: 'Pull-quote van 15-25 woorden die LETTERLIJK in de content voorkomt. Een krachtige zin met een concreet feit, geen vraag en geen meta-taal.',
+    },
   },
 };
 
