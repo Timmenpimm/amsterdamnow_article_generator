@@ -1136,6 +1136,29 @@ export async function setSetting(key: string, value: string) {
   );
 }
 
+// Optimistische compare-and-set: schrijft newValue voor `key` alleen weg als
+// de opgeslagen waarde nog exact oldValue is (of, als er nog geen rij
+// bestaat, alleen als er nog steeds geen rij bestaat). Gebruikt door de
+// auto-publish-tik om te voorkomen dat twee gelijktijdige tikken allebei
+// menen de tik te mogen claimen (zie lib/publisher.ts). Geeft terug of déze
+// aanroep de rij daadwerkelijk heeft bijgewerkt/aangemaakt.
+export async function claimSetting(key: string, oldValue: string | null, newValue: string): Promise<boolean> {
+  const db = await getDb();
+  if (oldValue === null) {
+    const rows = await db.all(
+      `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, $3)
+       ON CONFLICT (key) DO NOTHING RETURNING key`,
+      [key, newValue, now()]
+    );
+    return rows.length > 0;
+  }
+  const rows = await db.all(
+    `UPDATE app_settings SET value = $1, updated_at = $2 WHERE key = $3 AND value = $4 RETURNING key`,
+    [newValue, now(), key, oldValue]
+  );
+  return rows.length > 0;
+}
+
 // ---------- publish_meta (autopublisher-classificatie) ----------
 
 export interface PublishMetaRow {

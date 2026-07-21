@@ -3,7 +3,8 @@ import { listStructures } from '@/lib/db';
 import { listArticles, publishArticle } from '@/lib/wp';
 import { articlePhase } from '@/lib/types';
 import {
-  getAutoPublishSettings, saveAutoPublishSettings, classifyArticles, pickNextForPublish, nextRunAt,
+  getAutoPublishSettingsRaw, getAutoPublishSettings, saveAutoPublishSettings,
+  claimAutoPublishTick, classifyArticles, pickNextForPublish, nextRunAt,
 } from '@/lib/publisher';
 
 export const dynamic = 'force-dynamic';
@@ -20,7 +21,7 @@ function authorized(req: NextRequest): boolean {
 }
 
 async function tick() {
-  const settings = await getAutoPublishSettings();
+  const { settings, raw } = await getAutoPublishSettingsRaw();
   if (!settings.enabled) return { enabled: false };
 
   const now = new Date();
@@ -29,6 +30,25 @@ async function tick() {
     if (nextAt && now.getTime() < new Date(nextAt).getTime()) {
       return { enabled: true, due: false, nextAt };
     }
+  }
+
+  // Optimistische claim VÓÓR classificeren/publiceren: schrijft lastPublishedAt
+  // = nu, maar alleen als de instellingen sinds het lezen hierboven niet zijn
+  // gewijzigd. Twee gelijktijdige polls kunnen allebei de due-check hierboven
+  // doorkomen; zonder deze claim zouden ze dan ook allebei classifyArticles()
+  // (een Haiku-call) én publishArticle() aanroepen. De verliezer stopt hier
+  // meteen — geen classificatie, geen publicatie.
+  const nowIso = now.toISOString();
+  const claimed = await claimAutoPublishTick(raw, settings, nowIso);
+  if (!claimed) {
+    return { enabled: true, due: false, raced: true };
+  }
+
+  // Draait de claim terug: lastPublishedAt weer op de vorige waarde, zodat de
+  // volgende tik het gewoon opnieuw probeert. Gebruikt bij een lege
+  // wachtrij (niets te publiceren) of een mislukte publicatie.
+  async function rollbackClaim() {
+    await saveAutoPublishSettings({ lastPublishedAt: settings.lastPublishedAt });
   }
 
   // Zelfde bron als /api/board: alle artikelen + lijststructuren, om exact
@@ -41,18 +61,20 @@ async function tick() {
   const metaById = await classifyArticles(ready);
 
   if (!ready.length) {
+    await rollbackClaim();
     return { enabled: true, due: true, published: null, reason: 'empty' };
   }
 
   const published = articles.filter(a => a.status === 'publish');
   const pick = pickNextForPublish(ready, metaById, published, now);
   if (!pick) {
+    await rollbackClaim();
     return { enabled: true, due: true, published: null, reason: 'empty' };
   }
 
   try {
     const article = await publishArticle(pick.id);
-    const updated = await saveAutoPublishSettings({ lastPublishedAt: now.toISOString() });
+    const updated = await getAutoPublishSettings();
     return {
       enabled: true,
       due: true,
@@ -60,7 +82,8 @@ async function tick() {
       nextAt: nextRunAt(updated),
     };
   } catch (error: any) {
-    // lastPublishedAt bewust niet bijwerken — de volgende tik probeert opnieuw.
+    // lastPublishedAt terugdraaien — de volgende tik probeert opnieuw.
+    await rollbackClaim();
     return { enabled: true, due: true, published: null, error: error.message || 'Publiceren mislukt' };
   }
 }

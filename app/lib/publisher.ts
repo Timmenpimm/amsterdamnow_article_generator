@@ -4,7 +4,7 @@
 // classificatie (evergreen/event_date per artikel, publish_meta) en selectie
 // (pickNextForPublish — een pure functie, los te testen/redeneren).
 import type { Article } from './types';
-import { getSetting, setSetting, getPublishMetaByIds, upsertPublishMeta, type PublishMetaRow } from './db';
+import { getSetting, setSetting, claimSetting, getPublishMetaByIds, upsertPublishMeta, type PublishMetaRow } from './db';
 import { askClaudeJson } from './claude';
 import { AUTOPUBLISH_CLASSIFY_SCHEMA } from './schemas';
 
@@ -22,14 +22,21 @@ const DEFAULT_SETTINGS: AutoPublishSettings = {
   lastPublishedAt: null,
 };
 
-export async function getAutoPublishSettings(): Promise<AutoPublishSettings> {
+// Zelfde ruwe JSON-string als opgeslagen onder app_settings.autopublish,
+// zodat de tick-route 'm kan gebruiken als CAS-basiswaarde (claimAutoPublishTick
+// hieronder) — getAutoPublishSettings() geeft alleen de geparste instellingen.
+export async function getAutoPublishSettingsRaw(): Promise<{ settings: AutoPublishSettings; raw: string | null }> {
   const raw = await getSetting(SETTINGS_KEY);
-  if (!raw) return { ...DEFAULT_SETTINGS };
+  if (!raw) return { settings: { ...DEFAULT_SETTINGS }, raw: null };
   try {
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+    return { settings: { ...DEFAULT_SETTINGS, ...JSON.parse(raw) }, raw };
   } catch {
-    return { ...DEFAULT_SETTINGS };
+    return { settings: { ...DEFAULT_SETTINGS }, raw };
   }
+}
+
+export async function getAutoPublishSettings(): Promise<AutoPublishSettings> {
+  return (await getAutoPublishSettingsRaw()).settings;
 }
 
 export async function saveAutoPublishSettings(partial: Partial<AutoPublishSettings>): Promise<AutoPublishSettings> {
@@ -37,6 +44,28 @@ export async function saveAutoPublishSettings(partial: Partial<AutoPublishSettin
   const next = { ...current, ...partial };
   await setSetting(SETTINGS_KEY, JSON.stringify(next));
   return next;
+}
+
+// Optimistische claim tegen gelijktijdige tikken: zet lastPublishedAt = nu,
+// maar alleen als de opgeslagen instellingen sinds het lezen (getAutoPublish-
+// SettingsRaw, vóór deze aanroep) niet zijn gewijzigd. Wint maar één van twee
+// gelijktijdige polls de rest van de tik (classificeren kost een Haiku-call,
+// zie classifyArticles) — de verliezer stopt meteen. Mislukt het publiceren
+// alsnog, of blijkt er niets te publiceren, dan draait de tick-route de claim
+// terug via saveAutoPublishSettings({ lastPublishedAt: <oude waarde> }).
+export async function claimAutoPublishTick(
+  raw: string | null, settings: AutoPublishSettings, nowIso: string
+): Promise<boolean> {
+  const next = JSON.stringify({ ...settings, lastPublishedAt: nowIso });
+  return claimSetting(SETTINGS_KEY, raw, next);
+}
+
+// "Vandaag" in Europe/Amsterdam (niet UTC): new Date().toISOString() loopt
+// tussen middernacht UTC en middernacht lokale tijd een dag achter/voor,
+// wat zowel de classificatieprompt als het event-tijdvenster op de verkeerde
+// dag zou laten rekenen. sv-SE formatteert standaard als "JJJJ-MM-DD".
+export function todayInAmsterdam(date: Date = new Date()): string {
+  return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Amsterdam' }).format(date);
 }
 
 // Volgende geplande tik, uitsluitend informatief (voor de UI) — de tick-route
@@ -89,7 +118,7 @@ export async function classifyArticles(articles: Article[]): Promise<Map<number,
   if (!unclassified.length) return known;
 
   try {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayInAmsterdam();
     const prompt = buildClassifyPrompt(unclassified, today);
     const result = await askClaudeJson(
       CLASSIFY_SYSTEM, prompt, false, CLASSIFY_MODEL, CLASSIFY_MAX_TOKENS, AUTOPUBLISH_CLASSIFY_SCHEMA
@@ -122,7 +151,7 @@ const CATEGORY_BONUS_CAP_HOURS = 72;
 
 function daysUntil(dateStr: string, today: Date): number {
   const target = new Date(`${dateStr}T00:00:00Z`).getTime();
-  const todayMidnight = new Date(`${today.toISOString().slice(0, 10)}T00:00:00Z`).getTime();
+  const todayMidnight = new Date(`${todayInAmsterdam(today)}T00:00:00Z`).getTime();
   return Math.round((target - todayMidnight) / 86_400_000);
 }
 
