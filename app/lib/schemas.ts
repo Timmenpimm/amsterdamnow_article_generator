@@ -211,6 +211,30 @@ export const SCAN_SCHEMA: Record<string, unknown> = {
   },
 };
 
+// EDITORIALIZE_SYSTEM (scanner.ts) → editorializeTitles. Eén object per
+// gescande bronkop, in dezelfde volgorde als de invoer: "bron" echoot de
+// aangeleverde titel (ter controle van de koppeling), "topic" is het eigen
+// input-topic dat de wachtrij ingaat.
+export const SCAN_EDITORIALIZE_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['topics'],
+  properties: {
+    topics: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['bron', 'topic'],
+        properties: {
+          bron: { type: 'string' },
+          topic: { type: 'string' },
+        },
+      },
+    },
+  },
+};
+
 // DEDUP_SYSTEM (dedup.ts) → judgeDuplicate. "wp_id" is nullable: het wp_id van
 // het bestaande artikel als "duplicate" true is, anders null.
 export const DEDUP_JUDGE_SCHEMA: Record<string, unknown> = {

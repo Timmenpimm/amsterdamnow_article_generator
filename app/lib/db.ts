@@ -876,6 +876,30 @@ export async function recordFindings(sourceId: number, entries: { title: string;
   }
 }
 
+// Queued topics die door de scanner zijn aangemaakt én nog hun letterlijke
+// bronkop als titel dragen: de findingKey van de topictitel matcht dan nog de
+// dedup_key van de gekoppelde vondst. Al-herschreven titels matchen niet meer
+// en vallen vanzelf uit de selectie — dat maakt de backfill idempotent.
+export async function queuedScannerTopics(): Promise<{ id: number; title: string }[]> {
+  const db = await getDb();
+  const rows = await db.all(
+    `SELECT DISTINCT t.id, t.title, f.dedup_key
+     FROM topics t JOIN source_findings f ON f.topic_id = t.id
+     WHERE t.status = 'queued'
+     ORDER BY t.id ASC`
+  );
+  const seen = new Set<number>();
+  const out: { id: number; title: string }[] = [];
+  for (const r of rows) {
+    const id = Number(r.id);
+    if (seen.has(id)) continue;
+    if (findingKey(r.title as string) !== r.dedup_key) continue;
+    seen.add(id);
+    out.push({ id, title: r.title as string });
+  }
+  return out;
+}
+
 // Zoek topic-id's terug op titel (lower+trim, zoals addTopics dedupt), zodat een
 // vondst aan het juiste topic gekoppeld kan worden — ook als addTopics 'm als
 // "al bekend" oversloeg (dan wijst de vondst naar het bestaande topic).
