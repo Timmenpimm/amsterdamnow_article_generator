@@ -509,6 +509,7 @@ async function stepFinalize(topic: Topic): Promise<ListStepResult> {
     adres: '',
     stad: 'Amsterdam',
     website: '',
+    isList: true,
   });
   structure.postId = draft.id;
   await saveListStructure(draft.id, topic.id, structure);

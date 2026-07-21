@@ -520,6 +520,10 @@ export interface GeneratedDraft {
   adres: string;
   stad: string;
   website: string;
+  // Lijstartikelen krijgen bij aanmaak automatisch de flag "Beste van
+  // Amsterdam" aan (redactionele afspraak: elk lijstje is per definitie
+  // zo'n overzicht) — anders staat 'm elke keer weer aan te vinken in WP.
+  isList?: boolean;
 }
 
 export async function createDraft(draft: GeneratedDraft): Promise<Article> {
@@ -541,7 +545,7 @@ export async function createDraft(draft: GeneratedDraft): Promise<Article> {
       naam_locatie: draft.naamLocatie, adres: draft.adres, stad: draft.stad, website: draft.website, cordA: '', cordB: '', tags: draft.tags,
       focusKeyword: draft.focusKeyword, slug: draft.slug, seoTitle: draft.seoTitle,
       metaDescription: draft.metaDescription,
-      flags: { new_in_town: false, featured_item: false, beste_van_amsterdam: false, homepage_carousel: false },
+      flags: { new_in_town: false, featured_item: false, beste_van_amsterdam: Boolean(draft.isList), homepage_carousel: false },
     };
     await demoSave(article);
     return article;
@@ -579,6 +583,7 @@ export async function createDraft(draft: GeneratedDraft): Promise<Article> {
         adres: draft.adres,
         stad: draft.stad,
         website: draft.website,
+        ...(draft.isList ? { beste_van_amsterdam: true } : {}),
       },
     }),
   });
