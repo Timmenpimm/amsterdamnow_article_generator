@@ -318,6 +318,24 @@ export async function updateImages(id: number, upd: ImageUpdate, known: MediaRef
   return getArticle(id);
 }
 
+// Vervangt de volledige tag-set van een post. Gaat via tagIdsForNames, dus
+// hetzelfde vangnet als bij het aanmaken van een artikel: namen die niet
+// matchen op een bestaande WordPress-tag worden overgeslagen, nooit
+// aangemaakt.
+export async function updateArticleTags(id: number, tags: string[]): Promise<Article | null> {
+  if (!LIVE) {
+    const a = (await demoArticles()).find(x => x.id === id);
+    if (!a) return null;
+    a.tags = [...tags];
+    a.modified = new Date().toISOString();
+    await demoSave(a);
+    return a;
+  }
+  const tagIds = await tagIdsForNames(tags);
+  await wpFetch(`/wp/v2/posts/${id}`, { method: 'POST', body: JSON.stringify({ tags: tagIds }) });
+  return getArticle(id);
+}
+
 // Vervangt de volledige content-HTML van een post; gebruikt door het
 // per-item-beeldwerk van lijstartikelen (content wordt opnieuw geassembleerd).
 export async function updateArticleContent(id: number, html: string): Promise<void> {

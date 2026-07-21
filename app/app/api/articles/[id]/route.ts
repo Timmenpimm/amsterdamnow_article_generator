@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { deleteArticle, getArticle, updateImages } from '@/lib/wp';
+import { deleteArticle, getArticle, updateArticleTags, updateImages } from '@/lib/wp';
 import { deleteListStructure, getListStructure } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
@@ -16,12 +16,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const { id } = await params;
   const body = await req.json();
   try {
-    const article = await updateImages(
+    let article = await updateImages(
       Number(id),
       { featuredId: body.featuredId, sliderIds: body.sliderIds, inlineId: body.inlineId, fotograaf: body.fotograaf },
       body.knownMedia || []
     );
     if (!article) return NextResponse.json({ error: 'not found' }, { status: 404 });
+    if (Array.isArray(body.tags)) {
+      article = await updateArticleTags(Number(id), body.tags);
+    }
     const list = await getListStructure(Number(id));
     return NextResponse.json({ article, list });
   } catch (e: any) {
