@@ -503,6 +503,9 @@ export interface GeneratedDraft {
   seoTitle: string;
   metaDescription: string;
   categories: string[];
+  // Altijd verplicht, behalve bij lijstartikelen: die kunnen over meerdere
+  // stadsdelen tegelijk gaan, dus '' (geen district-toewijzing) is daar
+  // legitiem. createDraft slaat de WordPress-districttoewijzing dan over.
   district: string;
   tags: string[];
   rubriek: string;
@@ -539,7 +542,10 @@ export async function createDraft(draft: GeneratedDraft): Promise<Article> {
 
   await loadTaxonomies();
   const categoryIds = draft.categories.map(name => idForName(catCache || {}, name, 'Categorie'));
-  const districtId = idForName(districtCache || {}, draft.district, 'District');
+  // district is niet verplicht (zie GeneratedDraft): een lege waarde
+  // (lijstartikelen die over meerdere stadsdelen gaan) slaat de WordPress-
+  // districttoewijzing gewoon over, in plaats van te gokken.
+  const districtId = draft.district ? idForName(districtCache || {}, draft.district, 'District') : null;
   const tagIds = await tagIdsForNames(draft.tags);
   const post = await wpFetch('/wp/v2/posts', {
     method: 'POST',
@@ -551,7 +557,7 @@ export async function createDraft(draft: GeneratedDraft): Promise<Article> {
       slug: draft.slug,
       categories: categoryIds,
       tags: tagIds,
-      district: [districtId],
+      ...(districtId !== null ? { district: [districtId] } : {}),
       meta: {
         rank_math_focus_keyword: draft.focusKeyword,
         rank_math_title: draft.seoTitle,
