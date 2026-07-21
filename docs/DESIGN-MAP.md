@@ -4,10 +4,11 @@
 uitpluizen. Lees eerst dít bestand, importeer het verse design, diff de
 schermlabels tegen de tabel hieronder, en bouw alléén de delta.
 
-_Laatst bijgewerkt: 21 juli 2026 (scanner-redactionaliseren — gescande
-bronkoppen worden vóór de wachtrij omgezet naar eigen input-topics; daarvoor:
-auto-publisher). Klopt er iets niet meer? Werk deze tabel bij in dezelfde PR
-als de codewijziging._
+_Laatst bijgewerkt: 21 juli 2026 (TURN 4 — Instagram Carousel-pagina, nieuw
+scherm 4a-4d; daarvoor: scanner-redactionaliseren — gescande bronkoppen worden
+vóór de wachtrij omgezet naar eigen input-topics; daarvoor: auto-publisher).
+Klopt er iets niet meer? Werk deze tabel bij in dezelfde PR als de
+codewijziging._
 
 ---
 
@@ -50,6 +51,11 @@ als de codewijziging._
 | — | Archief | `app/app/archief/page.tsx` |
 | **3a/3b/3c** | Bronnen (agenda-scanner) | `app/app/bronnen/page.tsx`; nav in `TopBar.tsx`; backend §4 |
 | toast | Meldingen | `app/components/toast.tsx` (`toast(...)` + `<ToastHost>` in `layout.tsx`) |
+| **4a** | Carousel-overzicht (welke artikelen zijn Instagram-klaar) | `app/components/CarouselOverview.tsx`; route `app/app/carousel/page.tsx`; nav in `TopBar.tsx` (na Archief) |
+| **4b** | Carousel-generator / editor (template kiezen, preview, slide-editor, caption/hashtags, klaarzetten/publiceren) | `app/components/CarouselGenerator.tsx` (orchestratie) + `CarouselSlidePreview.tsx` (swipebare preview/thumbstrip) + `CarouselSlideEditor.tsx` (rechterpaneel) + `CarouselPanels.tsx` (subcontext/template-strip/bottombar/modal, presentationeel); route `app/app/carousel/[articleId]/page.tsx`; instap-knop "Maak Instagram-carousel" in `ArticleDetail.tsx` (header, bij `status==='publish'` of `articlePhase===ready`) |
+| **4c** | Laadstaat (genereren) en publiceren-bevestigingsmodal | `CarouselPanels.tsx` (`LoadingPanel`, `PublishModal`), aangestuurd door `CarouselGenerator.tsx` |
+| **4d** | Lege staat (overzicht) & mislukte generatie (editor, met retry + toast) | leeg: `CarouselOverview.tsx`; fout: `CarouselPanels.tsx` (`GenerateErrorPanel`) |
+| — | Mock-contract socials-engine (nog niet gebouwd, zie briefing `docs/briefings/2026-07-21-instagram-carousel-pagina-briefing.md` §5/§6) | `app/lib/carousel-mock.ts` — `CarouselContent`/`CarouselMeta`, in-memory (reset bij page-reload); vervang deze file zodra de echte socials-service er is, componenten blijven ongewijzigd |
 
 ## 3. Design-tokens & stijl
 

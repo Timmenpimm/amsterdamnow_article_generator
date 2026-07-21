@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Article, BoardData, ImageCandidate, ListArticleStructure, MediaRef } from '@/lib/types';
-import { imageCount, listImagesReady, REQUIRED_IMAGES } from '@/lib/types';
+import { articlePhase, imageCount, listImagesReady, REQUIRED_IMAGES } from '@/lib/types';
 import { toast } from './toast';
 
 function allMedia(a: Article): MediaRef[] {
@@ -410,6 +410,11 @@ export default function ArticleDetail({ id }: { id: number }) {
           {idx >= 0 ? `artikel ${idx + 1} van ${worklist.length} in de werkvoorraad` : ''}
         </span>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+          {(article.status === 'publish' || articlePhase(article, list) === 'ready') && (
+            <Link href={`/carousel/${article.id}`} className="btn-small">
+              Maak Instagram-carousel
+            </Link>
+          )}
           <button className="btn-small" disabled={!prev} style={{ opacity: prev ? 1 : 0.45 }} onClick={() => prev && router.push(`/artikel/${prev.id}`)}>
             ↑ vorige
           </button>
