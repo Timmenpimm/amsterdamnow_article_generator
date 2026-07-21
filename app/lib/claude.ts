@@ -8,13 +8,13 @@ const MODEL = process.env.ANTHROPIC_MODEL || 'claude-opus-4-8';
 // is ruim snel genoeg voor "zet deze al-geverifieerde feiten om in lopende
 // tekst" en voorkomt zo FUNCTION_INVOCATION_TIMEOUT.
 export const FAST_WRITE_MODEL = process.env.ANTHROPIC_FAST_MODEL || 'claude-sonnet-5';
-// Alleen voor de losse titel-generatie (writer.ts polishTitle). Bewust een
-// goedkoop, klein model: de titelkwaliteit komt daar niet van het modeltier
-// maar van het feit dat de call VRIJ genereert (geen structured-output /
-// constrained decoding), zoals de oude n8n-workflow. Een titel is maar een
-// paar honderd tokens, dus dit kost bijna niets. Wil je toch meer punch:
-// zet ANTHROPIC_TITLE_MODEL op bv. claude-sonnet-5.
-export const TITLE_MODEL = process.env.ANTHROPIC_TITLE_MODEL || 'claude-haiku-4-5-20251001';
+// Alleen voor de losse titel-generatie (writer.ts polishTitle). Deze call
+// genereert VRIJ (geen structured-output / constrained decoding), zoals de
+// oude n8n-workflow — dáár zit de titelwinst. Een titel is maar een paar
+// honderd tokens, dus zelfs Sonnet 5 kost hier vrijwel niets; we kiezen het
+// bewust voor maximale punch. Goedkoper kan met bv.
+// ANTHROPIC_TITLE_MODEL=claude-haiku-4-5-20251001.
+export const TITLE_MODEL = process.env.ANTHROPIC_TITLE_MODEL || 'claude-sonnet-5';
 
 type ClaudeBlock = { type: string; text?: string };
 type ClaudeResponse = { content?: ClaudeBlock[]; stop_reason?: string; error?: { message?: string } };

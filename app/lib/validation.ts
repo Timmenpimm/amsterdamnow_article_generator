@@ -19,11 +19,14 @@ function range(label: string, value: string, min: number, max: number) {
 
 // De "kern" van een onderwerpnaam: de merknaam vóór een kwalificatie. De
 // research levert vaak een volledige naam als "AMAZE by ID&T", "Bar Basquiat x
-// Mistral" of "Vondelpark Openluchttheater: zomerseizoen"; eisen dat die hele
-// string létterlijk in de titel staat perste het model in klungelige koppen.
-// We accepteren daarom ook de kernnaam (het deel vóór by/x/:/|/feat/presenteert).
+// Mistral", "Vondelpark Openluchttheater: zomerseizoen" of "Modelstad
+// Haven-Stad — Arcam"; eisen dat die hele string létterlijk in de titel staat
+// perste het model in klungelige koppen. We accepteren daarom ook de kernnaam:
+// het deel vóór by/x/:/|/feat/presenteert óf vóór een gespatieerde streep
+// (" — ", " – ", " - "), waarmee de research vaak de locatie of ondertitel
+// aanplakt. De niet-gespatieerde koppelstreep (Haven-Stad) blijft intact.
 function coreName(topic: string): string {
-  const core = topic.split(/\s+by\s+|\s+x\s+|:|\||\s+feat\.?\s+|\s+presenteert\s+/i)[0]?.trim();
+  const core = topic.split(/\s+by\s+|\s+x\s+|:|\||\s+feat\.?\s+|\s+presenteert\s+|\s+[—–-]\s+/i)[0]?.trim();
   return core || topic;
 }
 
