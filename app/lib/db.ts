@@ -955,23 +955,49 @@ export interface WpSyncState {
   lastSyncedAt: string | null;
 }
 
+// Kolommen per rij in de multi-row INSERT hieronder — bepaalt hoeveel
+// $n-placeholders elke rij in de VALUES-lijst inneemt.
+const WP_POST_COLUMNS = 9;
+// Rijen per multi-row statement. Op 1.097 posts geeft dit 11 statements i.p.v.
+// 1.097 (was: één INSERT per rij — de RTT naar Supabase Postgres, 40-80ms/stuk,
+// duwde een volledige backfill over de 60s-serverless-limiet heen, zie
+// productie-incident 2026-07-21 in het spec-document). 100 rijen × 9 kolommen
+// = 900 parameters per statement, ruim onder de SQLite-limiet van 999
+// bind-parameters (oudere better-sqlite3/SQLite-builds) — geldt dus voor
+// beide drivers.
+const UPSERT_CHUNK_SIZE = 100;
+
 // Upsert op wp_id: een bestaande post wordt overschreven met de nieuwste
 // WP-velden, een nieuwe wordt ingevoegd. `synced_at` wordt hier eenmalig
 // bepaald zodat alle rijen van dezelfde sync-run exact dezelfde timestamp
-// krijgen (handig voor staleness-checks).
+// krijgen (handig voor staleness-checks). Rijen gaan in chunks van
+// UPSERT_CHUNK_SIZE als één multi-row INSERT ... VALUES (...),(...) de deur
+// uit — dezelfde $n-placeholder-vertaling (toSqlite) werkt hier ongewijzigd
+// voor de SQLite-driver, zolang de $n's in de query in dezelfde volgorde
+// staan als de bijbehorende waarden in `params`.
 export async function upsertWpPosts(rows: WpPostRow[]): Promise<number> {
   if (!rows.length) return 0;
   const db = await getDb();
   const ts = now();
-  for (const r of rows) {
+  for (let i = 0; i < rows.length; i += UPSERT_CHUNK_SIZE) {
+    const chunk = rows.slice(i, i + UPSERT_CHUNK_SIZE);
+    const valueGroups: string[] = [];
+    const params: unknown[] = [];
+    chunk.forEach((r, idx) => {
+      const base = idx * WP_POST_COLUMNS;
+      valueGroups.push(
+        `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9})`
+      );
+      params.push(r.wp_id, r.title, r.slug, r.excerpt, r.link, r.status, r.categories, r.wp_modified, ts);
+    });
     await db.run(
       `INSERT INTO wp_posts (wp_id, title, slug, excerpt, link, status, categories, wp_modified, synced_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       VALUES ${valueGroups.join(', ')}
        ON CONFLICT (wp_id) DO UPDATE SET
          title = EXCLUDED.title, slug = EXCLUDED.slug, excerpt = EXCLUDED.excerpt,
          link = EXCLUDED.link, status = EXCLUDED.status, categories = EXCLUDED.categories,
          wp_modified = EXCLUDED.wp_modified, synced_at = EXCLUDED.synced_at`,
-      [r.wp_id, r.title, r.slug, r.excerpt, r.link, r.status, r.categories, r.wp_modified, ts]
+      params
     );
   }
   return rows.length;
