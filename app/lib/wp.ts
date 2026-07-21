@@ -536,10 +536,34 @@ export interface GeneratedDraft {
   adres: string;
   stad: string;
   website: string;
+  // Event-datums als JJJJ-MM-DD (of '' als het geen event met concrete datum
+  // is). createDraft schrijft ze naar de ACF-velden start_datum/eind_datum in
+  // het ACF-formaat Ymd. Optioneel: lijstartikelen leveren ze niet aan.
+  startDatum?: string;
+  eindDatum?: string;
   // Lijstartikelen krijgen bij aanmaak automatisch de flag "Beste van
   // Amsterdam" aan (redactionele afspraak: elk lijstje is per definitie
   // zo'n overzicht) — anders staat 'm elke keer weer aan te vinken in WP.
   isList?: boolean;
+}
+
+// Zet JJJJ-MM-DD om naar het ACF-date_picker-opslagformaat Ymd (JJJJMMDD),
+// zoals WordPress de velden start_datum/eind_datum bewaart en teruggeeft.
+// Ongeldige/lege invoer → null (veld wordt dan niet geschreven).
+function toAcfDate(iso: string | undefined): string | null {
+  const s = (iso || '').trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s.replace(/-/g, '') : null;
+}
+
+// Bouwt het ACF-datumdeel voor createDraft. Alleen bij een geldige start_datum;
+// een ontbrekende eind_datum valt terug op start_datum (eendaags event). Geen
+// start → leeg object, dus de velden blijven onaangeroerd (geen regressie voor
+// niet-events of lijstartikelen).
+function eventDateAcf(draft: GeneratedDraft): Record<string, string> {
+  const start = toAcfDate(draft.startDatum);
+  if (!start) return {};
+  const eind = toAcfDate(draft.eindDatum) || start;
+  return { start_datum: start, eind_datum: eind };
 }
 
 export async function createDraft(draft: GeneratedDraft): Promise<Article> {
@@ -599,6 +623,7 @@ export async function createDraft(draft: GeneratedDraft): Promise<Article> {
         adres: draft.adres,
         stad: draft.stad,
         website: draft.website,
+        ...eventDateAcf(draft),
         ...(draft.isList ? { beste_van_amsterdam: true } : {}),
       },
     }),
