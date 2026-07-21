@@ -3,6 +3,7 @@ import { addTopics, listTopics } from '@/lib/db';
 import { checkTopicAgainstWp, type DedupExisting } from '@/lib/dedup';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
 
 export async function GET() {
   return NextResponse.json({ topics: await listTopics() });

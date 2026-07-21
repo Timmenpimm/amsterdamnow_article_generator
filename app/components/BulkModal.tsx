@@ -9,6 +9,22 @@ interface Row {
   removed: boolean;
 }
 
+// Zie POST /api/topics (app/app/api/topics/route.ts) en
+// docs/superpowers/specs/2026-07-21-wp-dedup-index-design.md §4 — vorm van
+// de `duplicates`-array in de response.
+interface WpDuplicate {
+  title: string;
+  existing: { wp_id: number; title: string; link: string; status: string };
+  reason: string;
+}
+
+function statusLabel(status: string): string {
+  if (status === 'draft' || status === 'pending') return 'concept';
+  if (status === 'future') return 'gepland';
+  if (status === 'publish') return 'gepubliceerd';
+  return status;
+}
+
 export default function BulkModal({
   existing,
   onClose,
@@ -21,6 +37,8 @@ export default function BulkModal({
   const [text, setText] = useState('');
   const [removed, setRemoved] = useState<Set<number>>(new Set());
   const [busy, setBusy] = useState(false);
+  const [wpDuplicates, setWpDuplicates] = useState<WpDuplicate[]>([]);
+  const [forcing, setForcing] = useState<Set<string>>(new Set());
 
   const rows: Row[] = useMemo(() => {
     const seen = new Set(existing.map(t => t.trim().toLowerCase()));
@@ -44,16 +62,66 @@ export default function BulkModal({
     if (!toAdd.length || busy) return;
     setBusy(true);
     try {
-      await fetch('/api/topics', {
+      const res = await fetch('/api/topics', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ titles: toAdd.map(r => r.title) }),
       });
-      toast(`${toAdd.length} onderwerpen toegevoegd aan de wachtrij`);
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        throw new Error(errBody.error || 'Toevoegen mislukt');
+      }
+      const body = await res.json();
+      const added: unknown[] = Array.isArray(body.added) ? body.added : [];
+      const duplicates: WpDuplicate[] = Array.isArray(body.duplicates) ? body.duplicates : [];
+
+      if (added.length) {
+        toast(`${added.length} onderwerp${added.length > 1 ? 'en' : ''} toegevoegd aan de wachtrij`);
+      }
       onAdded();
-      onClose();
+
+      if (duplicates.length) {
+        // Blijf open zodat de redactie per titel kan besluiten om 'm alsnog
+        // toe te voegen ("Toch toevoegen") — zie spec §4/§5.
+        setWpDuplicates(duplicates);
+        setText('');
+        setRemoved(new Set());
+      } else {
+        onClose();
+      }
+    } catch (e: any) {
+      // Niet-OK response of netwerkfout: modal blijft open (geen onClose/
+      // onAdded) zodat de redactie het niet ongemerkt als "gelukt" leest.
+      toast(e.message || 'Toevoegen mislukt', { kind: 'error' });
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function forceAdd(dup: WpDuplicate) {
+    if (forcing.has(dup.title)) return;
+    setForcing(prev => new Set(prev).add(dup.title));
+    try {
+      const res = await fetch('/api/topics', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ titles: [dup.title], forceTitles: [dup.title] }),
+      });
+      const body = await res.json();
+      if (!res.ok || !body.added?.length) {
+        throw new Error(body.error || 'Toevoegen mislukt');
+      }
+      toast(`"${dup.title}" toegevoegd aan de wachtrij`);
+      setWpDuplicates(prev => prev.filter(d => d.title !== dup.title));
+      onAdded();
+    } catch (e: any) {
+      toast(e.message || 'Toevoegen mislukt', { kind: 'error' });
+    } finally {
+      setForcing(prev => {
+        const next = new Set(prev);
+        next.delete(dup.title);
+        return next;
+      });
     }
   }
 
@@ -154,6 +222,46 @@ export default function BulkModal({
             </div>
           </div>
         </div>
+        {wpDuplicates.length > 0 && (
+          <div
+            style={{
+              padding: '14px 22px', borderTop: '1px solid var(--amber-border)', background: 'var(--amber-col)',
+              display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 220, overflowY: 'auto',
+            }}
+          >
+            <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--amber-dark)' }}>
+              Bestaat al op de site · {wpDuplicates.length}
+            </div>
+            {wpDuplicates.map(dup => (
+              <div
+                key={dup.title}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 10, border: '1px solid var(--amber-border)',
+                  background: 'var(--card)', borderRadius: 7, padding: '8px 11px',
+                }}
+              >
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 600 }}>{dup.title}</div>
+                  <div style={{ fontSize: 11.5, color: 'var(--gray)', marginTop: 2 }}>
+                    al op de site als{' '}
+                    <a href={dup.existing.link} target="_blank" rel="noreferrer" style={{ color: 'var(--amber-dark)', textDecoration: 'underline' }}>
+                      {dup.existing.title}
+                    </a>
+                    {' '}<span className="chip-amber">{statusLabel(dup.existing.status)}</span>
+                    {dup.reason && <span> — {dup.reason}</span>}
+                  </div>
+                </div>
+                <button
+                  className="btn-small"
+                  disabled={forcing.has(dup.title)}
+                  onClick={() => forceAdd(dup)}
+                >
+                  {forcing.has(dup.title) ? 'Bezig…' : 'Toch toevoegen'}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         <div
           style={{
             display: 'flex', alignItems: 'center', gap: 12, padding: '14px 22px',
@@ -163,7 +271,7 @@ export default function BulkModal({
           <span style={{ fontSize: 12.5, color: 'var(--gray)' }}>
             Nieuwe onderwerpen komen onderaan de wachtrij; versleep ze daarna om prioriteit te geven.
           </span>
-          <button className="btn" style={{ marginLeft: 'auto' }} onClick={onClose}>Annuleren</button>
+          <button className="btn" style={{ marginLeft: 'auto' }} onClick={onClose}>{wpDuplicates.length > 0 ? 'Sluiten' : 'Annuleren'}</button>
           <button className="btn-primary" disabled={!toAdd.length || busy} onClick={submit}>
             {toAdd.length ? `${toAdd.length} onderwerp${toAdd.length > 1 ? 'en' : ''} toevoegen` : 'Niets toe te voegen'}
           </button>

@@ -46,6 +46,9 @@ async function fetchPostsPage(pathname: string): Promise<WpApiPost[]> {
     // werkt en publish-only teruggeeft.
     headers: LIVE ? { Authorization: authHeader() } : {},
     cache: 'no-store',
+    // Voorkomt dat een hangende WP-respons de hele requestpath (incl. de
+    // staleness-guard in dedup.ts, die dit synchroon awaited) onbeperkt blokkeert.
+    signal: AbortSignal.timeout(20000),
   });
   if (!res.ok) {
     const body = await res.text();
@@ -121,7 +124,12 @@ export async function syncWpPosts({ full = false }: { full?: boolean } = {}): Pr
 
   let deleted = 0;
   if (full) {
-    if (LIVE) {
+    if (posts.length === 0) {
+      // Een 200-respons met een lege body (of een lege pagina) mag de hele
+      // wp_posts-index nooit leegtrekken — deleteWpPostsNotIn([]) verwijdert
+      // dan namelijk gewoon alles. Zie ook de lege-ids-guard in db.ts.
+      console.warn('[wpSync] Full sync leverde nul posts op — verwijderpas overgeslagen (zou de hele wp_posts-index wissen).');
+    } else if (LIVE) {
       deleted = await deleteWpPostsNotIn(rows.map(r => r.wp_id));
     } else {
       // Een full sync zonder credentials ziet alleen publish-posts. Zou de

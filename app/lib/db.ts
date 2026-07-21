@@ -55,9 +55,15 @@ function toSqlite(q: string, p: unknown[]): [string, unknown[]] {
 
 async function initSqlite(): Promise<DB> {
   const Database = (await import('better-sqlite3')).default;
-  const dir = process.env.VERCEL ? '/tmp/artikel-tool' : path.join(process.cwd(), 'data');
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  const db = new Database(path.join(dir, 'tool.db'));
+  // SQLITE_DB_FILE: alleen voor de hermetische db-tests (scripts/wpsync.db.test.mjs)
+  // — die zetten 'm op een throwaway temp-bestand zodat tests nooit de
+  // echte lokale data/tool.db aanraken. In productie/dev blijft dit ongezet.
+  const dbFile = process.env.SQLITE_DB_FILE || (() => {
+    const dir = process.env.VERCEL ? '/tmp/artikel-tool' : path.join(process.cwd(), 'data');
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    return path.join(dir, 'tool.db');
+  })();
+  const db = new Database(dbFile);
   db.pragma('journal_mode = WAL');
   db.exec(`
     CREATE TABLE IF NOT EXISTS topics (

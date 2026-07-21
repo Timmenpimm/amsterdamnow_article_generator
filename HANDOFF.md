@@ -5,6 +5,45 @@
 **Live:** https://amsterdamnow-article-generator.vercel.app/
 **Stack:** Next.js (legacy `@vercel/next` builder in `vercel.json`), Postgres (Supabase) op productie / SQLite lokaal, Anthropic Claude API, WordPress REST API, Vercel Hobby-plan.
 
+## Nieuw (21 juli): WP-dedup-index
+
+Voorkomt dat de tool onderwerpen genereert die al op amsterdamnow.com staan
+(incl. drafts/pending/future). Ontwerp/status: zie
+`docs/superpowers/specs/2026-07-21-wp-dedup-index-design.md` en
+`docs/DESIGN-MAP.md` §4. Gebouwd op branch `feat/wp-dedup-index` in de
+`amsterdamnow-wt-dedup`-worktree, in drie fases (backend-tabel+sync,
+dedup-logica+hooks, UI — deze sessie deed fase 3/UI + verificatie).
+
+- **Nieuw/gewijzigd deze fase:** `app/components/BulkModal.tsx` — sectie
+  "Bestaat al op de site" na een submit met afgewezen titels, met per titel
+  de bestaande WP-titel als link, status-chip en reden, plus knop "Toch
+  toevoegen" (herpost met `forceTitles`, verplaatst de rij weg uit de
+  dupe-lijst bij succes, triggert dezelfde `onAdded()`/`load()`-refresh als
+  een normale toevoeging zodat het bord meteen bijwerkt). `docs/DESIGN-MAP.md`
+  bijgewerkt met de wp_posts-tabel, `/api/wp-sync`, `lib/dedup.ts`-flow,
+  `forceTitles`/`dedup_override` en het fail-open-gedrag.
+- **Verificatie:** `tsc --noEmit` + `next build` schoon. End-to-end via curl
+  op lokale SQLite (poort 3400, gestart uit de worktree — **niet** via
+  `.claude/launch.json`/`preview_start`, dat resolvede naar de verkeerde
+  checkout, zie waarschuwing hieronder): `POST /api/topics` met een titel die
+  exact overeenkomt met een gepubliceerd artikel ("Beleef de wereld van
+  Diptyque in stijlvolle boutique") kwam terug in `duplicates` met
+  `reason: "Exacte titelmatch (genormaliseerd)."`; dezelfde POST met
+  `forceTitles` gaf 'm terug in `added` met `dedup_override: 1` en hij
+  verscheen op `/api/board`. Testtopic (id 9) daarna direct uit
+  `app/data/tool.db` verwijderd (`DELETE FROM topics WHERE id=9`) — de
+  overige, al langer wachtende topics (id's 1–8, van eerdere fase-testing)
+  ongemoeid gelaten.
+- **Concurrency-waarschuwing (herhaling van de les uit 20 juli):** `preview_start
+  {name:"artikel-tool"}` startte in deze sessie ondanks een cwd in de
+  worktree een `next dev`-proces met working directory
+  `/Users/martijn/Claude/amsterdamnow-artikel-tool/app` (de **primaire**
+  checkout), niet de worktree. Direct gestopt zodra dat bleek (`lsof`/`ps` op
+  poort 3400 controleren vóórdat je 'm vertrouwt) en vervangen door een
+  handmatige `npm run dev -p 3400` met cwd expliciet in de worktree. Volgende
+  sessie: controleer bij twijfel altijd `lsof -i :3400` → cwd van de PID,
+  vóór je tegen "localhost:3400" test.
+
 ## Nieuw (20 juli, 2e sessie): Bronnen — agenda-scanner
 
 Vierde kernscherm **Bronnen** gebouwd naar het verse Claude-design (schermen

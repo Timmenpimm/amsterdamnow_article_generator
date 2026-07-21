@@ -4,7 +4,8 @@
 uitpluizen. Lees eerst dít bestand, importeer het verse design, diff de
 schermlabels tegen de tabel hieronder, en bouw alléén de delta.
 
-_Laatst bijgewerkt: 20 juli 2026 (inline-artikelbeeld + slider naar 1). Klopt er iets niet meer? Werk deze tabel bij
+_Laatst bijgewerkt: 21 juli 2026 (WP-dedup-index — voorkomt topics over
+onderwerpen die al op de site staan). Klopt er iets niet meer? Werk deze tabel bij
 in dezelfde PR als de codewijziging._
 
 ---
@@ -34,7 +35,7 @@ in dezelfde PR als de codewijziging._
 |---|---|---|
 | topbar (overal) | Navigatie, snelle invoer, modus-indicator | `app/components/TopBar.tsx` |
 | **1a** | Statusboard (kanban) | `app/components/Pipeline.tsx` (7 kolommen, poll `/api/board`, `listProgress`); gerenderd door `app/app/page.tsx` |
-| **1b** | Bulk toevoegen (modal) | `app/components/BulkModal.tsx` |
+| **1b** | Bulk toevoegen (modal) | `app/components/BulkModal.tsx`. Sectie **"Bestaat al op de site"** na submit: per titel die de WP-dedup-check afwijst (§4) een rij met de bestaande WP-titel als link, status-chip en reden, plus knop "Toch toevoegen" (herhaalt `POST /api/topics` met `forceTitles`). Zie §4 (WP-dedup-index). |
 | **1c** | Artikel-detail / beeldwerk | `app/components/ArticleDetail.tsx`; route `app/app/artikel/[id]/page.tsx`. **Beeld-slots (standaard):** 1 featured, 2 slider (streefwaarde **1**), 3 **inline in tekst**, 4 kandidaten. Het inline-beeld leeft ín de content-HTML als `<figure class="an-inline">` (splice/parse in `lib/wp.ts` — `spliceInlineImage`/`parseInline`, tussen alinea 2/3 of achteraan); `Article.inline` + `imageCount` in `types.ts`; `inlineId` door `updateImages`, PATCH `/api/articles/[id]`, media `?role=inline`, autofill. **Alleen standaard-artikelen** (lijst houdt itemfoto-flow). Backfill bestaande concepten: `POST /api/admin/backfill-inline` (Bearer `CRON_SECRET`, laatste slider → inline). |
 | **1c** (sectie) | Voorgestelde beelden (beeldselectie + autofill top-3) | sectie + `CandidateCard` in `ArticleDetail.tsx`; autofill-driver ook in `Pipeline.tsx`; backend `lib/imageSearch.ts` + `lib/imageScore.ts` + `api/articles/[id]/candidates{,/search,/score,/autofill}`; briefing `BRIEFING-claude-design-addendum-beeldselectie.md`; spec `docs/superpowers/specs/2026-07-20-beeldselectie-design.md` |
 | **3d** | Voorgestelde beelden — states (leeg/bezig/lijstartikel item-kiezer) | losse states-doc van dezelfde sectie/component als 1c hierboven — geen eigen scherm, geen eigen bestand |
@@ -99,6 +100,46 @@ in dezelfde PR als de codewijziging._
     slaat de Claude-call over bij een ongewijzigde pagina.
   - Beeldselectie: max 48 kandidaten (`MAX_CANDIDATES` in `imageSearch.ts`),
     scoren alleen op thumbnails (bewust géén full-size fallback).
+- **WP-dedup-index (juli 2026)** — voorkomt dat de tool onderwerpen genereert
+  die al op amsterdamnow.com staan (incl. drafts/pending/future). Spec:
+  `docs/superpowers/specs/2026-07-21-wp-dedup-index-design.md`.
+  - **Tabel `wp_posts`** (beide drivers, schema-init in `db.ts`): `wp_id` (PK),
+    `title`, `slug`, `excerpt`, `link`, `status`, `categories` (JSON-array),
+    `wp_modified`, `synced_at`. Extra kolom `dedup_override INTEGER DEFAULT 0`
+    op `topics` — 1 = force-toegevoegd, slaat de herkans-check vóór
+    `createDraft()` over.
+  - **Sync**: `app/lib/wpSync.ts` (`syncWpPosts({ full? })`) haalt posts op met
+    status `publish,draft,pending,future` via bestaande `WP_USER`/
+    `WP_APP_PASSWORD` basic auth. Incrementeel (default) = `modified_after`
+    met 10-min buffer, upsert; `?full=1` = alles ophalen + rijen verwijderen
+    die niet terugkwamen. Route `GET/POST /api/wp-sync`: `Bearer CRON_SECRET`
+    (zelfde patroon als `queue/worker`/`sources/scan`); collectie-route, dus
+    geen `[id]`-valkuil, maar staat toch expliciet in `vercel.json` (geen
+    cron-entry — alleen handmatig/on-demand, de staleness-guard hieronder
+    triggert 'm ook automatisch).
+  - **Dedup-logica**: `app/lib/dedup.ts`. `normalizeTitle()` (lowercase,
+    diacritics/entities weg, NL+EN-stopwoorden eruit, tokenize) →
+    `lexicalCandidates()` (top-10 uit alle wp_posts, Dice-score op tokens +
+    substring-/excerpt-boost; exacte genormaliseerde titelmatch = direct
+    duplicaat, geen LLM-call) → bij kandidaten `judgeDuplicate()`: één
+    Haiku-call (`claude-haiku-4-5-20251001`, schema in `schemas.ts`) die
+    beoordeelt of het écht hetzelfde onderwerp/venue is (niet slechts
+    hetzelfde thema). `checkTopicAgainstWp(title)` bundelt dit tot
+    `{ verdict: 'duplicate'|'ok'|'unknown', existing?, reason? }`.
+    **Staleness-guard**: als de laatste sync > 6 uur oud is (of de tabel
+    leeg is) triggert `checkTopicAgainstWp` zelf een incrementele sync.
+    **Fail-open**: WP onbereikbaar of de Haiku-call faalt → `unknown`, topic
+    mag door (wel gelogd); een exacte titelmatch blokkeert altijd, ook dan.
+  - **Hooks**: `POST /api/topics` (`app/app/api/topics/route.ts`) checkt elke
+    titel (met een concurrency-cap van 3 gelijktijdige Haiku-calls) en geeft
+    naast `added`/`skipped` ook `duplicates: [{ title, existing: { wp_id,
+    title, link, status }, reason }]` terug. Body `force: true` slaat de
+    check voor alle titels over; `forceTitles: string[]` alleen voor die
+    titels — beide zetten `dedup_override=1` via `addTopics()`. Vlak vóór
+    `createDraft()` in de writer hercheckt dezelfde functie (topics kunnen
+    lang in de wachtrij staan); zonder override gaat de topic naar `failed`
+    met "Duplicaat van {link}", mét override gaat 'm gewoon door.
+  - **UI**: zie tabel hierboven (§2, rij **1b**) voor `BulkModal.tsx`.
 - **API-routes**: `app/app/api/*` — altijd `export const dynamic =
   'force-dynamic'`, `NextResponse.json`, dynamische `[id]` uit `params`.
   Cron/worker-routes: `GET` met `Bearer CRON_SECRET` (zie `queue/worker` &

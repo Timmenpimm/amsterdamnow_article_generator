@@ -6,7 +6,8 @@
     "dev": "next dev -p 3400",
     "build": "next build",
     "start": "next start -p 3400",
-    "test:dedup": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/dedup.test.mjs"
+    "test:dedup": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/dedup.test.mjs",
+    "test:wpsync": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/wpsync.db.test.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",

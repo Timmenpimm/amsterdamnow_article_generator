@@ -8,7 +8,7 @@ import { decodeHtmlEntities } from './htmlEntities';
 import { askClaudeJson } from './claude';
 import { DEDUP_JUDGE_SCHEMA } from './schemas';
 import { getAllWpPosts, getWpSyncState, type WpDedupCandidate } from './db';
-import { syncWpPosts } from './wpSync';
+import { syncWpPosts, type WpSyncResult } from './wpSync';
 
 // Klein en bewust NL+EN: alleen woorden die vrijwel elke titel kunnen bevatten
 // zonder onderscheidend te zijn. Een langere lijst risicoert dat inhoudelijke
@@ -163,6 +163,21 @@ export interface DedupResult {
 // Sync wordt als verouderd beschouwd na 6 uur — zie spec §2 (staleness-guard).
 const STALE_MS = 6 * 60 * 60 * 1000;
 
+// In-flight-memoization voor de staleness-getriggerde sync: zonder dit
+// triggert elke gelijktijdige checkTopicAgainstWp-aanroep (bv. een bulk-
+// submit met meerdere titels, zie POST /api/topics) zijn eigen syncWpPosts()
+// zodra de index verouderd blijkt — dezelfde WP-fetch en dezelfde upserts,
+// meerdere keren parallel. Een module-scope variabele volstaat hier: binnen
+// één serverless-invocation/runtime delen alle gelijktijdige requests hem.
+let staleSyncInFlight: Promise<WpSyncResult> | null = null;
+
+function triggerStalenessSync(): Promise<WpSyncResult> {
+  if (!staleSyncInFlight) {
+    staleSyncInFlight = syncWpPosts({}).finally(() => { staleSyncInFlight = null; });
+  }
+  return staleSyncInFlight;
+}
+
 function toExisting(c: LexicalCandidate): DedupExisting {
   return { wp_id: c.wp_id, title: c.title, link: c.link, status: c.status };
 }
@@ -176,7 +191,7 @@ export async function checkTopicAgainstWp(title: string): Promise<DedupResult> {
     const stale = state.count === 0 || !state.lastSyncedAt || (Date.now() - new Date(state.lastSyncedAt).getTime()) > STALE_MS;
     if (stale) {
       try {
-        await syncWpPosts({});
+        await triggerStalenessSync();
       } catch (err) {
         console.warn('[dedup] staleness-sync mislukt, ga door met beschikbare data', err);
       }
@@ -200,7 +215,11 @@ export async function checkTopicAgainstWp(title: string): Promise<DedupResult> {
     // zeker (fail-open) — ofwel er is gewoon niets vergelijkbaars, dan is dit
     // gerust een nieuw onderwerp.
     const state = await getWpSyncState().catch(() => null);
-    return { verdict: !state || state.count === 0 ? 'unknown' : 'ok' };
+    if (!state || state.count === 0) {
+      console.warn('[dedup] wp_posts index leeg, kan niet checken');
+      return { verdict: 'unknown' };
+    }
+    return { verdict: 'ok' };
   }
 
   try {
