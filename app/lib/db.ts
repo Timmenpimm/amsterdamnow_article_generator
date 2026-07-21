@@ -150,6 +150,17 @@ async function initSqlite(): Promise<DB> {
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_candidates_post ON image_candidates (post_id);
+    CREATE TABLE IF NOT EXISTS wp_posts (
+      wp_id INTEGER PRIMARY KEY,
+      title TEXT NOT NULL DEFAULT '',
+      slug TEXT NOT NULL DEFAULT '',
+      excerpt TEXT NOT NULL DEFAULT '',
+      link TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT '',
+      categories TEXT NOT NULL DEFAULT '[]',
+      wp_modified TEXT NOT NULL DEFAULT '',
+      synced_at TEXT NOT NULL DEFAULT ''
+    );
   `);
   // Migratie voor databases van vóór de lijstpipeline.
   for (const col of ["type TEXT NOT NULL DEFAULT 'standaard'", 'phase TEXT', 'list_state TEXT', 'locked_at TEXT', 'lock_owner TEXT']) {
@@ -160,6 +171,11 @@ async function initSqlite(): Promise<DB> {
   // Claude-call kan overslaan.
   for (const col of ['content_hash TEXT']) {
     try { db.exec(`ALTER TABLE sources ADD COLUMN ${col}`); } catch { /* kolom bestaat al */ }
+  }
+  // Migratie voor databases van vóór de WP-dedup-index: force-toegevoegde
+  // topics slaan de tweede (her)check tegen wp_posts over.
+  for (const col of ['dedup_override INTEGER NOT NULL DEFAULT 0']) {
+    try { db.exec(`ALTER TABLE topics ADD COLUMN ${col}`); } catch { /* kolom bestaat al */ }
   }
   return {
     async all(q, p = []) { const [s, sp] = toSqlite(q, p); return db.prepare(s).all(...sp); },
@@ -278,6 +294,19 @@ async function initPostgres(): Promise<DB> {
     );
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_candidates_post ON image_candidates (post_id)`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS wp_posts (
+      wp_id BIGINT PRIMARY KEY,
+      title TEXT NOT NULL DEFAULT '',
+      slug TEXT NOT NULL DEFAULT '',
+      excerpt TEXT NOT NULL DEFAULT '',
+      link TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT '',
+      categories TEXT NOT NULL DEFAULT '[]',
+      wp_modified TEXT NOT NULL DEFAULT '',
+      synced_at TEXT NOT NULL DEFAULT ''
+    );
+  `);
   // Migratie voor databases van vóór de lijstpipeline.
   await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'standaard'`);
   await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS phase TEXT`);
@@ -288,6 +317,9 @@ async function initPostgres(): Promise<DB> {
   // de laatst gescande paginatekst op, zodat een ongewijzigde pagina de
   // Claude-call kan overslaan.
   await pool.query(`ALTER TABLE sources ADD COLUMN IF NOT EXISTS content_hash TEXT`);
+  // Migratie voor databases van vóór de WP-dedup-index: force-toegevoegde
+  // topics slaan de tweede (her)check tegen wp_posts over.
+  await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS dedup_override INTEGER NOT NULL DEFAULT 0`);
   return {
     async all(q, p = []) { return (await pool.query(q, p)).rows; },
     async get(q, p = []) { return (await pool.query(q, p)).rows[0]; },
@@ -883,6 +915,95 @@ export async function setImageCandidateStatus(postId: number, id: number, status
 export async function getImageCandidate(postId: number, id: number): Promise<ImageCandidate | undefined> {
   const db = await getDb();
   return db.get('SELECT * FROM image_candidates WHERE id = $1 AND post_id = $2', [id, postId]);
+}
+
+// ---------- wp-posts (dedup-index) ----------
+
+export interface WpPostRow {
+  wp_id: number;
+  title: string;
+  slug: string;
+  excerpt: string;
+  link: string;
+  status: string;
+  categories: string; // JSON-array van category-ids, als tekst
+  wp_modified: string; // ISO, uit WP `modified`
+}
+
+export interface WpDedupCandidate {
+  id: number;
+  title: string;
+  excerpt: string;
+  link: string;
+  status: string;
+}
+
+export interface WpSyncState {
+  count: number;
+  maxModified: string | null;
+  lastSyncedAt: string | null;
+}
+
+// Upsert op wp_id: een bestaande post wordt overschreven met de nieuwste
+// WP-velden, een nieuwe wordt ingevoegd. `synced_at` wordt hier eenmalig
+// bepaald zodat alle rijen van dezelfde sync-run exact dezelfde timestamp
+// krijgen (handig voor staleness-checks).
+export async function upsertWpPosts(rows: WpPostRow[]): Promise<number> {
+  if (!rows.length) return 0;
+  const db = await getDb();
+  const ts = now();
+  for (const r of rows) {
+    await db.run(
+      `INSERT INTO wp_posts (wp_id, title, slug, excerpt, link, status, categories, wp_modified, synced_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       ON CONFLICT (wp_id) DO UPDATE SET
+         title = EXCLUDED.title, slug = EXCLUDED.slug, excerpt = EXCLUDED.excerpt,
+         link = EXCLUDED.link, status = EXCLUDED.status, categories = EXCLUDED.categories,
+         wp_modified = EXCLUDED.wp_modified, synced_at = EXCLUDED.synced_at`,
+      [r.wp_id, r.title, r.slug, r.excerpt, r.link, r.status, r.categories, r.wp_modified, ts]
+    );
+  }
+  return rows.length;
+}
+
+// Voor de dedup-check (fase 2): lexicale kandidaten hebben alleen titel,
+// excerpt, link en status nodig — categorieën/wp_modified blijven hier weg.
+export async function getAllWpPosts(): Promise<WpDedupCandidate[]> {
+  const db = await getDb();
+  const rows = await db.all('SELECT wp_id, title, excerpt, link, status FROM wp_posts');
+  return rows.map(r => ({
+    id: Number(r.wp_id),
+    title: r.title,
+    excerpt: r.excerpt,
+    link: r.link,
+    status: r.status,
+  }));
+}
+
+export async function getWpSyncState(): Promise<WpSyncState> {
+  const db = await getDb();
+  const row = await db.get('SELECT COUNT(*) AS c, MAX(wp_modified) AS mm, MAX(synced_at) AS ls FROM wp_posts');
+  return {
+    count: Number(row?.c || 0),
+    maxModified: row?.mm || null,
+    lastSyncedAt: row?.ls || null,
+  };
+}
+
+// Gebruikt door de volledige sync om verwijderde WP-posts (niet meer terug-
+// gekomen in de laatste full fetch) ook lokaal op te ruimen. `RETURNING`
+// geeft de verwijderde id's terug, zodat het aantal zonder aparte COUNT-query
+// bekend is — werkt zowel op Postgres als op de SQLite-versie die
+// better-sqlite3 bundelt (>= 3.35).
+export async function deleteWpPostsNotIn(ids: number[]): Promise<number> {
+  const db = await getDb();
+  if (!ids.length) {
+    const deleted = await db.all('DELETE FROM wp_posts RETURNING wp_id');
+    return deleted.length;
+  }
+  const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
+  const deleted = await db.all(`DELETE FROM wp_posts WHERE wp_id NOT IN (${placeholders}) RETURNING wp_id`, ids);
+  return deleted.length;
 }
 
 // ---------- demo store ----------
