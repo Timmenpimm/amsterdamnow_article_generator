@@ -367,21 +367,36 @@ export async function updateArticleSeo(id: number, seo: SeoFields): Promise<void
   });
 }
 
-// Zelfde als listArticles(), maar zonder de per_page=15-cap op gepubliceerde
-// artikelen — die cap is bewust voor het bord (recente publicaties tonen),
-// maar de SEO-backfill (lib/seoBackfill.ts) moet ALLE gepubliceerde
-// artikelen kunnen scannen, ook oudere.
-export async function listAllPublishedArticles(): Promise<Article[]> {
-  if (!LIVE) return (await demoArticles()).filter(a => a.status === 'publish');
-  await loadTaxonomies();
-  const posts = await wpFetchAllPages(`/wp/v2/posts?status=publish&orderby=date&context=edit`);
-  const mediaIds = new Set<number>();
-  for (const p of posts) {
-    if (p.featured_media) mediaIds.add(p.featured_media);
-    for (const id of p.acf?.slider || []) mediaIds.add(id);
+export interface SeoStub { id: number; title: string; hasSeo: boolean }
+
+// Lichtgewicht scan (_fields=id,title,meta, geen content/acf/media) over ALLE
+// artikelen met deze status — nodig omdat de SEO-backfill (lib/seoBackfill.ts)
+// door de volle geschiedenis van gepubliceerde artikelen moet om kandidaten
+// te vinden, niet alleen de laatste 15 zoals listArticles() voor het bord.
+// Een eerdere versie hiervan haalde de VOLLE post op (zoals mapPost dat doet)
+// voor elk artikel in elke pagina — bij honderden gepubliceerde artikelen
+// liep dat ruim over de 60s-serverless-limiet (FUNCTION_INVOCATION_TIMEOUT),
+// nog vóór er ook maar één SEO-call was gedaan. Met _fields blijft elke
+// pagina klein; de volle content wordt pas per kandidaat opgehaald, via
+// getArticle(id), en dan ook alleen voor de paar artikelen in de batch die
+// deze aanroep daadwerkelijk verwerkt.
+async function seoStubsForStatus(status: 'draft' | 'publish'): Promise<SeoStub[]> {
+  const orderby = status === 'draft' ? 'modified' : 'date';
+  const posts = await wpFetchAllPages(`/wp/v2/posts?status=${status}&orderby=${orderby}&context=edit&_fields=id,title,meta`);
+  return posts.map((p: any) => ({
+    id: p.id,
+    title: decodeHtmlEntities(String(p.title?.raw ?? p.title?.rendered ?? `Artikel ${p.id}`)),
+    hasSeo: Boolean(p.meta?.rank_math_title),
+  }));
+}
+
+export async function listSeoStubs(): Promise<SeoStub[]> {
+  if (!LIVE) {
+    const arts = await demoArticles();
+    return arts.map(a => ({ id: a.id, title: a.title, hasSeo: Boolean(a.seoTitle) }));
   }
-  const media = await mediaRefs([...mediaIds]);
-  return Promise.all(posts.map((p: any) => mapPost(p, media)));
+  const [drafts, published] = await Promise.all([seoStubsForStatus('draft'), seoStubsForStatus('publish')]);
+  return [...drafts, ...published];
 }
 
 // Vervangt de volledige content-HTML van een post; gebruikt door het
