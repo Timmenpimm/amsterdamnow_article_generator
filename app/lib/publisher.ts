@@ -114,17 +114,30 @@ function isValidEventDate(v: unknown): v is string {
 export async function classifyArticles(articles: Article[]): Promise<Map<number, PublishMetaRow>> {
   const ids = articles.map(a => a.id);
   const known = await getPublishMetaByIds(ids);
-  const unclassified = articles.filter(a => !known.has(a.id)).slice(0, MAX_CLASSIFY_PER_TICK);
+  const unclassified = articles.filter(a => !known.has(a.id));
   if (!unclassified.length) return known;
+
+  // Artikelen met een echte ACF-event-datum (start_datum) hoeven geen LLM: een
+  // artikel met een datum is per definitie een gedateerd event (niet evergreen)
+  // en de datum kennen we exact. Scheelt een Haiku-call per event (token-winst)
+  // en is betrouwbaarder dan de datum uit titel+intro afleiden.
+  for (const a of unclassified.filter(a => isValidEventDate(a.eventStart))) {
+    await upsertPublishMeta(a.id, false, a.eventStart as string);
+    known.set(a.id, { evergreen: false, event_date: a.eventStart as string });
+  }
+
+  // Alleen artikelen zónder bekende datum gaan (gelimiteerd) langs de classifier.
+  const needLlm = unclassified.filter(a => !isValidEventDate(a.eventStart)).slice(0, MAX_CLASSIFY_PER_TICK);
+  if (!needLlm.length) return known;
 
   try {
     const today = todayInAmsterdam();
-    const prompt = buildClassifyPrompt(unclassified, today);
+    const prompt = buildClassifyPrompt(needLlm, today);
     const result = await askClaudeJson(
       CLASSIFY_SYSTEM, prompt, false, CLASSIFY_MODEL, CLASSIFY_MAX_TOKENS, AUTOPUBLISH_CLASSIFY_SCHEMA
     );
     const list = Array.isArray(result.classifications) ? result.classifications : [];
-    const askedIds = new Set(unclassified.map(a => a.id));
+    const askedIds = new Set(needLlm.map(a => a.id));
     for (const raw of list as Record<string, unknown>[]) {
       const id = Number(raw.id);
       if (!askedIds.has(id)) continue; // defensief: alleen ids verwerken die we ook vroegen

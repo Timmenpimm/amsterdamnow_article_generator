@@ -216,10 +216,12 @@ export const LIST_COMPOSE_ITEMS_SCHEMA: Record<string, unknown> = {
   },
 };
 
-// SCAN_SYSTEM (scanner.ts) → runScan. "datum" is nullable: JJJJ-MM-DD als de
-// brontekst een concrete eventdatum noemt, anders null (opening, doorlopende
-// expositie, geen vaste datum) — runScan gebruikt 'm om al voorbije events
-// eruit te filteren vóór ze de wachtrij bereiken.
+// SCAN_SYSTEM (scanner.ts) → runScan. "startdatum"/"einddatum" zijn nullable:
+// JJJJ-MM-DD als de brontekst een concrete eventdatum noemt, anders null
+// (opening, doorlopende expositie, geen vaste datum). runScan gebruikt de
+// einddatum om al voorbije events eruit te filteren vóór ze de wachtrij
+// bereiken, én seedt ze op het topic zodat ze in WordPress terechtkomen
+// (ACF start_datum/eind_datum) — de bronpagina is de betrouwbaarste datumbron.
 export const SCAN_SCHEMA: Record<string, unknown> = {
   type: 'object',
   additionalProperties: false,
@@ -230,10 +232,11 @@ export const SCAN_SCHEMA: Record<string, unknown> = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['titel', 'datum'],
+        required: ['titel', 'startdatum', 'einddatum'],
         properties: {
           titel: { type: 'string' },
-          datum: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+          startdatum: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+          einddatum: { anyOf: [{ type: 'string' }, { type: 'null' }] },
         },
       },
     },
