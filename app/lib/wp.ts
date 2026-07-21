@@ -24,7 +24,7 @@ function stripTaxonomyFooter(html: string): string {
   return html.replace(TAXONOMY_FOOTER, '');
 }
 
-async function wpFetch(pathname: string, init: RequestInit = {}): Promise<any> {
+async function wpFetchRaw(pathname: string, init: RequestInit = {}): Promise<Response> {
   const res = await fetch(`${WP_URL}/wp-json${pathname}`, {
     ...init,
     headers: {
@@ -38,24 +38,40 @@ async function wpFetch(pathname: string, init: RequestInit = {}): Promise<any> {
     const body = await res.text();
     throw new Error(`WordPress ${res.status} bij ${pathname}: ${body.slice(0, 300)}`);
   }
+  return res;
+}
+
+async function wpFetch(pathname: string, init: RequestInit = {}): Promise<any> {
+  const res = await wpFetchRaw(pathname, init);
   return res.json();
 }
 
 // Eén per_page-pagina volstond zolang het bord klein was, maar liet elke
 // draft voorbij de 50 meest recent bewerkte stilzwijgend uit het bord en de
-// backfill-scan vallen — geen fout, gewoon onzichtbaar. Loopt door tot een
-// pagina korter is dan perPage (WordPress' eigen signaal voor "laatste
-// pagina"); de iteratiecap is een vangnet tegen een onverwacht altijd-vol
-// antwoord, niet een normale grens.
+// backfill-scan vallen — geen fout, gewoon onzichtbaar. Stopt op WordPress'
+// eigen X-WP-TotalPages-header zodra die bekend is, zodat nooit een pagina
+// voorbij het einde wordt opgevraagd — dat geeft WP niet een lege lijst
+// terug maar een harde 400 (rest_post_invalid_page_number), bijvoorbeeld
+// precies wanneer het aantal drafts een veelvoud van perPage is. De
+// batch.length-check blijft als fallback voor het geval de header ontbreekt;
+// de iteratiecap is een vangnet tegen een onverwacht altijd-vol antwoord,
+// niet een normale grens.
 async function wpFetchAllPages(pathname: string, perPage = 50): Promise<any[]> {
   const sep = pathname.includes('?') ? '&' : '?';
   const out: any[] = [];
-  for (let page = 1; page <= 40; page++) {
-    const batch = await wpFetch(`${pathname}${sep}per_page=${perPage}&page=${page}`);
+  let totalPages = Infinity;
+  for (let page = 1; page <= 40 && page <= totalPages; page++) {
+    const res = await wpFetchRaw(`${pathname}${sep}per_page=${perPage}&page=${page}`);
+    const headerTotal = Number(res.headers.get('X-WP-TotalPages'));
+    if (headerTotal) totalPages = headerTotal;
+    const batch = await res.json();
     out.push(...batch);
     if (batch.length < perPage) return out;
   }
-  throw new Error(`Meer dan ${40 * perPage} draft-posts gevonden — paginering-cap geraakt, controleer wpFetchAllPages.`);
+  if (totalPages > 40) {
+    throw new Error(`Meer dan ${40 * perPage} draft-posts gevonden — paginering-cap geraakt, controleer wpFetchAllPages.`);
+  }
+  return out;
 }
 
 // ---------- inline-artikelbeeld ----------
