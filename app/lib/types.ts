@@ -141,11 +141,30 @@ export function imageCount(a: Pick<Article, 'featured' | 'slider' | 'inline'>, l
   return (a.featured ? 1 : 0) + a.slider.length + (a.inline ? 1 : 0) + itemImages;
 }
 
+// Compacte tellingen per lijstartikel — zelfde vorm als BoardData.lists, zodat
+// zowel de server (volledige structuur) als het bord (compacte tellingen)
+// dezelfde klaar-regel kan toepassen.
+export interface ListImageCounts { items: number; withMedia: number }
+
+export function listImageCounts(list: ListArticleStructure): ListImageCounts {
+  return { items: list.items.length, withMedia: list.items.filter(i => i.media).length };
+}
+
+// Klaar-regel voor lijstartikelen: featured gezet, minstens 1 sliderfoto én
+// élk item een eigen foto. Zonder itemfoto's zou een lijstartikel met alleen
+// featured + slider als 'ready' gelden en dus zonder één beeld in de lopende
+// tekst gepubliceerd (of auto-gepubliceerd) worden. Standaardartikelen houden
+// de REQUIRED_IMAGES-telling.
+export function listImagesReady(a: Pick<Article, 'featured' | 'slider'>, counts: ListImageCounts): boolean {
+  return Boolean(a.featured) && a.slider.length >= 1 && counts.withMedia >= counts.items;
+}
+
 export type ArticlePhase = 'needImages' | 'ready' | 'published';
 
 export function articlePhase(a: Article, list?: ListArticleStructure | null): ArticlePhase {
   if (a.status === 'publish') return 'published';
-  return imageCount(a, list) >= REQUIRED_IMAGES ? 'ready' : 'needImages';
+  if (list) return listImagesReady(a, listImageCounts(list)) ? 'ready' : 'needImages';
+  return imageCount(a) >= REQUIRED_IMAGES ? 'ready' : 'needImages';
 }
 
 export type PromptKind =

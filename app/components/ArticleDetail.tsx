@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Article, BoardData, ImageCandidate, ListArticleStructure, MediaRef } from '@/lib/types';
-import { imageCount, REQUIRED_IMAGES } from '@/lib/types';
+import { imageCount, listImagesReady, REQUIRED_IMAGES } from '@/lib/types';
 import { toast } from './toast';
 
 function allMedia(a: Article): MediaRef[] {
@@ -18,7 +18,9 @@ export default function ArticleDetail({ id }: { id: number }) {
   const [article, setArticle] = useState<Article | null>(null);
   const [list, setList] = useState<ListArticleStructure | null>(null);
   const [worklist, setWorklist] = useState<Article[]>([]);
-  const [worklistCounts, setWorklistCounts] = useState<Record<number, number>>({});
+  // Per artikel in de werkvoorraad: klaar-status + voortgangslabel. Lijst-
+  // artikelen volgen de itemfoto-regel, standaardartikelen de x/3-telling.
+  const [worklistMeta, setWorklistMeta] = useState<Record<number, { ready: boolean; label: string }>>({});
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [dragOver, setDragOver] = useState<UploadTarget | null>(null);
@@ -38,14 +40,18 @@ export default function ArticleDetail({ id }: { id: number }) {
       setList((payload.list as ListArticleStructure) || null);
       setFotograaf(a.fotograaf);
       const board = (await bRes.json()) as BoardData;
-      const counts: Record<number, number> = {};
-      const countOf = (x: Article) => imageCount(x) + (board.lists?.[x.id]?.withMedia || 0);
+      const meta: Record<number, { ready: boolean; label: string }> = {};
       const drafts = board.articles.filter(x => x.status === 'draft');
-      for (const d of drafts) counts[d.id] = countOf(d);
-      setWorklistCounts(counts);
+      for (const d of drafts) {
+        const lc = board.lists?.[d.id];
+        meta[d.id] = lc
+          ? { ready: listImagesReady(d, lc), label: `${lc.withMedia}/${lc.items} itemfoto's` }
+          : { ready: imageCount(d) >= REQUIRED_IMAGES, label: `${imageCount(d)}/${REQUIRED_IMAGES} beelden` };
+      }
+      setWorklistMeta(meta);
       setWorklist([
-        ...drafts.filter(x => countOf(x) < REQUIRED_IMAGES),
-        ...drafts.filter(x => countOf(x) >= REQUIRED_IMAGES),
+        ...drafts.filter(x => !meta[x.id].ready),
+        ...drafts.filter(x => meta[x.id].ready),
       ]);
       setError('');
     } catch (e: any) {
@@ -67,25 +73,41 @@ export default function ArticleDetail({ id }: { id: number }) {
 
   // Vers artikel zonder beelden? Dan vult Claude alvast de beste 3 in
   // (zelfde autofill als het bord op de achtergrond draait; de server
-  // bewaakt dat al-aangeraakt werk wordt overgeslagen).
+  // bewaakt dat al-aangeraakt werk wordt overgeslagen). Bij lijstartikelen
+  // gaat de loop daarna door met de itemfoto's: per aanroep vult de server
+  // maximaal één item (60s-limiet), dus we blijven aanroepen tot done.
   const autofillTried = useRef(false);
   useEffect(() => {
     if (!article || autofillTried.current) return;
-    if (article.status !== 'draft' || imageCount(article, list) > 0) return;
+    if (article.status !== 'draft') return;
+    const itemsMissing = Boolean(list && list.items.some(i => !i.media));
+    if (imageCount(article, list) > 0 && !itemsMissing) return;
     autofillTried.current = true;
     (async () => {
       try {
-        for (let tick = 0; tick < 10; tick++) {
-          setSuggestPhase(tick === 0
-            ? 'Claude vult alvast de beste 3 beelden in… (zoeken)'
-            : 'Claude vult alvast de beste 3 beelden in… (beoordelen)');
+        // Zoeken + scorebatches + plaatsen (±6 tikken) plus bij een lijst
+        // één tik per itemfoto.
+        const maxTicks = 10 + (list ? list.items.length + 2 : 0);
+        let placedTotal = 0;
+        let itemsFilled = 0;
+        let label = 'Claude vult alvast beelden in… (zoeken)';
+        for (let tick = 0; tick < maxTicks; tick++) {
+          setSuggestPhase(label);
           const res = await fetch(`/api/articles/${article.id}/candidates/autofill`, { method: 'POST' });
           const body = await res.json();
           if (!res.ok) throw new Error(body.error);
+          if (body.placed > 0) placedTotal += body.placed;
+          if (body.filledItem) itemsFilled += 1;
+          if (body.filledItem || body.skippedItem || body.step === 'place') await load();
+          label = body.step === 'place' || body.step === 'item'
+            ? `Claude zoekt itemfoto's… nog ${body.remainingItems ?? '?'} item${body.remainingItems === 1 ? '' : 's'}`
+            : 'Claude vult alvast beelden in… (beoordelen)';
           if (body.done) {
             if (body.eligible === false) return; // redactie was hier al — niets doen
-            if (body.placed > 0) {
-              toast(`${body.placed} beelden alvast ingevuld — vervang of vul aan waar nodig`);
+            if (placedTotal > 0) {
+              toast(itemsFilled > 0
+                ? `Beelden ingevuld — waarvan ${itemsFilled} itemfoto${itemsFilled > 1 ? "'s" : ''}. Vervang of vul aan waar nodig`
+                : `${placedTotal} beelden alvast ingevuld — vervang of vul aan waar nodig`);
               await load();
             }
             const cRes = await fetch(`/api/articles/${article.id}/candidates`);
@@ -332,12 +354,34 @@ export default function ArticleDetail({ id }: { id: number }) {
   }
 
   const count = imageCount(article, list);
-  const complete = count >= REQUIRED_IMAGES;
+  // Klaar-regel: standaard = 3 beelden; lijst = featured + ≥1 slider + élk
+  // item een foto (zelfde regel als articlePhase/listImagesReady).
+  const listCounts = list
+    ? { items: list.items.length, withMedia: list.items.filter(i => i.media).length }
+    : null;
+  const complete = listCounts
+    ? listImagesReady(article, listCounts)
+    : count >= REQUIRED_IMAGES;
+  // Voortgang voor de teller/balk: bij een lijst tellen de "slots" featured,
+  // slider (minimaal 1) en elk item; standaard blijft x/3.
+  const totalSlots = listCounts ? 2 + listCounts.items : REQUIRED_IMAGES;
+  const filledSlots = listCounts
+    ? (article.featured ? 1 : 0) + (article.slider.length >= 1 ? 1 : 0) + listCounts.withMedia
+    : count;
+  const listMissing = listCounts
+    ? [
+        ...(!article.featured ? ['featured'] : []),
+        ...(article.slider.length < 1 ? ['slider'] : []),
+        ...(listCounts.withMedia < listCounts.items
+          ? [`${listCounts.items - listCounts.withMedia} itemfoto${listCounts.items - listCounts.withMedia > 1 ? "'s" : ''}`]
+          : []),
+      ]
+    : [];
   const idx = worklist.findIndex(a => a.id === article.id);
   const prev = idx > 0 ? worklist[idx - 1] : null;
   const next = idx >= 0 && idx < worklist.length - 1 ? worklist[idx + 1] : null;
-  const needList = worklist.filter(a => (worklistCounts[a.id] ?? 0) < REQUIRED_IMAGES);
-  const readyList = worklist.filter(a => (worklistCounts[a.id] ?? 0) >= REQUIRED_IMAGES);
+  const needList = worklist.filter(a => !worklistMeta[a.id]?.ready);
+  const readyList = worklist.filter(a => worklistMeta[a.id]?.ready);
   const sliderMissing = Math.max(0, 1 - article.slider.length);
   // Gebruikte en afgewezen kandidaten verdwijnen uit de grid; gescoorde staan
   // op volgorde van score (de db-query sorteert al).
@@ -382,11 +426,11 @@ export default function ArticleDetail({ id }: { id: number }) {
             <div style={{ padding: '14px 16px 8px', fontSize: 11.5, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--amber-dark)' }}>
               Beelden nodig · {needList.length}
             </div>
-            {needList.map(a => <WorklistRow key={a.id} a={a} current={a.id === article.id} count={worklistCounts[a.id] ?? 0} />)}
+            {needList.map(a => <WorklistRow key={a.id} a={a} current={a.id === article.id} ready={false} label={worklistMeta[a.id]?.label || ''} />)}
             <div style={{ padding: '16px 16px 8px', fontSize: 11.5, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--green-dark)' }}>
               Klaar voor publicatie · {readyList.length}
             </div>
-            {readyList.map(a => <WorklistRow key={a.id} a={a} current={a.id === article.id} count={worklistCounts[a.id] ?? 0} />)}
+            {readyList.map(a => <WorklistRow key={a.id} a={a} current={a.id === article.id} ready label={worklistMeta[a.id]?.label || ''} />)}
           </div>
         </div>
 
@@ -472,12 +516,16 @@ export default function ArticleDetail({ id }: { id: number }) {
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               <span style={{ fontSize: 15, fontWeight: 800 }}>Beelden</span>
               <span className={complete ? 'chip-green' : 'chip-amber'} style={{ fontSize: 12 }}>
-                {complete ? `✓ ${count} beelden` : `${count} van ${REQUIRED_IMAGES} verplicht`}
+                {complete
+                  ? `✓ ${count} beelden`
+                  : listCounts
+                    ? `${listCounts.withMedia}/${listCounts.items} itemfoto's`
+                    : `${count} van ${REQUIRED_IMAGES} verplicht`}
               </span>
               <div style={{ flex: 1, height: 4, background: 'var(--border-light)', borderRadius: 2, overflow: 'hidden' }}>
                 <div
                   style={{
-                    width: `${Math.min(100, (count / REQUIRED_IMAGES) * 100)}%`, height: '100%',
+                    width: `${Math.min(100, (filledSlots / totalSlots) * 100)}%`, height: '100%',
                     background: complete ? 'var(--green)' : 'var(--amber)',
                   }}
                 />
@@ -784,6 +832,14 @@ export default function ArticleDetail({ id }: { id: number }) {
                   <br />
                   <span style={{ color: 'var(--gray)' }}>klaar om te publiceren op amsterdamnow.com</span>
                 </>
+              ) : listCounts ? (
+                <>
+                  <span style={{ fontWeight: 800, color: 'var(--amber-dark)' }}>
+                    Nog nodig: {listMissing.join(', ')}
+                  </span>
+                  <br />
+                  <span style={{ color: 'var(--gray)' }}>publiceren kan zodra featured, slider én alle itemfoto&apos;s gevuld zijn</span>
+                </>
               ) : (
                 <>
                   <span style={{ fontWeight: 800, color: 'var(--amber-dark)' }}>
@@ -812,8 +868,7 @@ export default function ArticleDetail({ id }: { id: number }) {
   );
 }
 
-function WorklistRow({ a, current, count }: { a: Article; current: boolean; count: number }) {
-  const ready = count >= REQUIRED_IMAGES;
+function WorklistRow({ a, current, ready, label }: { a: Article; current: boolean; ready: boolean; label: string }) {
   return (
     <Link href={`/artikel/${a.id}`} style={{ display: 'block' }}>
       <div
@@ -836,7 +891,7 @@ function WorklistRow({ a, current, count }: { a: Article; current: boolean; coun
             {a.title}
           </div>
           <div style={{ fontSize: 11, fontWeight: 700, marginTop: 3, color: ready ? 'var(--green-dark)' : 'var(--amber-dark)' }}>
-            {ready ? '✓ compleet' : `${count}/${REQUIRED_IMAGES} beelden`}
+            {ready ? '✓ compleet' : label}
           </div>
         </div>
       </div>
