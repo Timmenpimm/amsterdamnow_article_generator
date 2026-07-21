@@ -98,6 +98,7 @@ export default function Pipeline() {
   const autoOnFirstWrite = useRef(true);
   const dragId = useRef<number | null>(null);
   const [dragOverId, setDragOverId] = useState<number | null>(null);
+  const [publishState, setPublishState] = useState<{ enabled: boolean; nextAt: string | null } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -166,6 +167,28 @@ export default function Pipeline() {
       }
     })();
   }, [data, load]);
+
+  // Auto-publisher: server beslist zelf of het interval verstreken is en of
+  // er iets te publiceren valt (fire-and-forget poll, elke 60s zolang het
+  // bord open staat). Bij een gepubliceerd artikel: bord verversen + toast.
+  useEffect(() => {
+    let cancelled = false;
+    async function tick() {
+      try {
+        const res = await fetch('/api/publish/tick');
+        const body = await res.json();
+        if (cancelled || !res.ok) return;
+        setPublishState({ enabled: Boolean(body.enabled), nextAt: body.nextAt ?? null });
+        if (body.published) {
+          toast(`Automatisch gepubliceerd: ${body.published.title}`);
+          load();
+        }
+      } catch { /* volgende tik probeert het gewoon opnieuw */ }
+    }
+    tick();
+    const id = setInterval(tick, 60000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [load]);
 
   const topics = data?.topics || [];
   const queued = topics.filter(t => t.status === 'queued');
@@ -564,7 +587,18 @@ export default function Pipeline() {
           </Column>
 
           {/* Klaar voor publicatie */}
-          <Column color="var(--green)" title="Klaar voor publicatie" count={ready.length}>
+          <Column
+            color="var(--green)"
+            title="Klaar voor publicatie"
+            count={ready.length}
+            hint={
+              publishState
+                ? (publishState.enabled
+                  ? `auto: aan${publishState.nextAt ? ` · volgende ${new Date(publishState.nextAt).toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' })}` : ''}`
+                  : 'auto: uit')
+                : undefined
+            }
+          >
             {ready.map(a => (
               <div key={a.id} className="card" style={{ overflow: 'hidden' }}>
                 {a.featured && (

@@ -1,0 +1,129 @@
+'use client';
+
+import { useCallback, useEffect, useState } from 'react';
+import { toast } from '@/components/toast';
+
+type AutoPublishSettings = { enabled: boolean; intervalMinutes: number; lastPublishedAt: string | null };
+type SettingsResponse = AutoPublishSettings & { nextAt: string | null };
+
+const PRESETS: { minutes: number; label: string }[] = [
+  { minutes: 30, label: '30 min' },
+  { minutes: 60, label: '1 uur' },
+  { minutes: 120, label: '2 uur' },
+  { minutes: 240, label: '4 uur' },
+  { minutes: 480, label: '8 uur' },
+  { minutes: 1440, label: '24 uur' },
+];
+
+// Zelfde toggle-patroon als bronnen/page.tsx (geen gedeelde util-class voor
+// dit element — zie docs/DESIGN-MAP.md §3).
+function Toggle({ on, onClick, disabled }: { on: boolean; onClick?: () => void; disabled?: boolean }) {
+  return (
+    <span
+      onClick={disabled ? undefined : onClick}
+      title={on ? 'Actief — klik om te pauzeren' : 'Gepauzeerd — klik om te hervatten'}
+      style={{
+        width: 34, height: 20, borderRadius: 999, flexShrink: 0, position: 'relative',
+        background: on ? 'var(--ink)' : 'var(--border)', cursor: disabled ? 'default' : 'pointer',
+        transition: 'background 0.15s',
+      }}
+    >
+      <span style={{
+        position: 'absolute', top: 2, left: on ? 16 : 2, width: 16, height: 16, borderRadius: '50%',
+        background: '#fff', transition: 'left 0.15s',
+      }}
+      />
+    </span>
+  );
+}
+
+function fmt(iso: string | null): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
+  const time = d.toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' });
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  if (sameDay) return `vandaag ${time}`;
+  const yesterday = new Date(now.getTime() - 86400000).toDateString() === d.toDateString();
+  if (yesterday) return `gisteren ${time}`;
+  return d.toLocaleDateString('nl-NL', { day: 'numeric', month: 'short' }) + ` ${time}`;
+}
+
+export default function AutoPublishPanel() {
+  const [settings, setSettings] = useState<SettingsResponse | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    const res = await fetch('/api/publish/settings');
+    if (res.ok) setSettings(await res.json());
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function save(partial: Partial<AutoPublishSettings>) {
+    setBusy(true);
+    try {
+      const res = await fetch('/api/publish/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(partial),
+      });
+      const body = await res.json();
+      if (!res.ok) { toast(body.error || 'Opslaan mislukt', { kind: 'error' }); return; }
+      setSettings(body);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!settings) return null;
+
+  return (
+    <div style={{ flex: 1, minWidth: 0, padding: '20px 24px', background: 'var(--card)', overflowY: 'auto' }}>
+      <div className="card" style={{ maxWidth: 560, padding: 18, display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+          <Toggle on={settings.enabled} disabled={busy} onClick={() => save({ enabled: !settings.enabled })} />
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 700 }}>Automatisch publiceren</div>
+            <div style={{ fontSize: 12, color: 'var(--gray)', marginTop: 2, lineHeight: 1.5 }}>
+              Publiceert zelf artikelen uit de kolom "Klaar voor publicatie" op het ingestelde interval — één artikel per keer.
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 8 }}>
+            Interval
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <select
+              value={settings.intervalMinutes}
+              disabled={busy}
+              onChange={e => save({ intervalMinutes: Number(e.target.value) })}
+              style={{
+                fontSize: 13, fontWeight: 600, padding: '8px 12px', borderRadius: 8,
+                border: '1px solid var(--border)', background: 'var(--card)', color: 'var(--ink)',
+              }}
+            >
+              {PRESETS.map(p => (
+                <option key={p.minutes} value={p.minutes}>{p.label}</option>
+              ))}
+            </select>
+            <span style={{ fontSize: 12, color: 'var(--muted)' }}>({settings.intervalMinutes} minuten)</span>
+          </div>
+        </div>
+
+        <div style={{ borderTop: '1px solid var(--border-light)', paddingTop: 14, fontSize: 12.5, color: 'var(--gray)', lineHeight: 1.7 }}>
+          <div>Laatst gepubliceerd: <strong style={{ color: 'var(--ink)' }}>{fmt(settings.lastPublishedAt)}</strong></div>
+          <div>Volgende publicatie: <strong style={{ color: 'var(--ink)' }}>{settings.enabled ? fmt(settings.nextAt) : 'gepauzeerd'}</strong></div>
+          <div style={{ marginTop: 10, color: 'var(--muted)' }}>
+            Volgorde: niet-evergreen artikelen met een naderend evenement eerst (dichtstbijzijnde datum voorop), dan
+            overige niet-evergreen artikelen, dan evergreen content — binnen elke groep krijgen categorieën die het
+            langst niet aan bod kwamen voorrang, zodat de site gemixt blijft.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
