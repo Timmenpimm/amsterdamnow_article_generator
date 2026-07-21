@@ -187,7 +187,10 @@ export const LIST_COMPOSE_ITEMS_SCHEMA: Record<string, unknown> = {
   },
 };
 
-// SCAN_SYSTEM (scanner.ts) → runScan.
+// SCAN_SYSTEM (scanner.ts) → runScan. "datum" is nullable: JJJJ-MM-DD als de
+// brontekst een concrete eventdatum noemt, anders null (opening, doorlopende
+// expositie, geen vaste datum) — runScan gebruikt 'm om al voorbije events
+// eruit te filteren vóór ze de wachtrij bereiken.
 export const SCAN_SCHEMA: Record<string, unknown> = {
   type: 'object',
   additionalProperties: false,
@@ -198,9 +201,10 @@ export const SCAN_SCHEMA: Record<string, unknown> = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['titel'],
+        required: ['titel', 'datum'],
         properties: {
           titel: { type: 'string' },
+          datum: { anyOf: [{ type: 'string' }, { type: 'null' }] },
         },
       },
     },
