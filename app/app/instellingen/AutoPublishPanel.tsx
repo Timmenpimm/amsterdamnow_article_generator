@@ -7,6 +7,8 @@ type AutoPublishSettings = { enabled: boolean; intervalMinutes: number; lastPubl
 type SettingsResponse = AutoPublishSettings & { nextAt: string | null };
 
 const PRESETS: { minutes: number; label: string }[] = [
+  { minutes: 5, label: '5 min' },
+  { minutes: 10, label: '10 min' },
   { minutes: 30, label: '30 min' },
   { minutes: 60, label: '1 uur' },
   { minutes: 120, label: '2 uur' },
