@@ -12,8 +12,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
   try {
-    const cleaned = await cleanTaxonomyFootersFromDrafts();
-    return NextResponse.json({ cleaned });
+    const result = await cleanTaxonomyFootersFromDrafts();
+    return NextResponse.json(result);
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
