@@ -2,6 +2,7 @@ import { activeConstraints, activePrompt, completeTopic, failTopic, saveTopicPro
 import { askClaudeJson, FAST_WRITE_MODEL } from './claude';
 import { RESEARCH_SCHEMA, ARTICLE_SCHEMA, SEO_SCHEMA } from './schemas';
 import { createDraft, taxonomyChoices } from './wp';
+import { checkTopicAgainstWp } from './dedup';
 import { researchWithTavily } from './tavily';
 import { validateArticle, GeneratedArticle } from './validation';
 import { parseStandaardState, type StandaardConstraints, type StandaardPhase, type StandaardState, type Topic, type WordRange } from './types';
@@ -197,6 +198,16 @@ async function stepSchrijfRetry(topic: Topic, s: StandaardState): Promise<Standa
 
 async function stepSeo(topic: Topic, s: StandaardState): Promise<StandaardStepResult> {
   if (!s.research || !s.article) throw new Error('Onvolledige staat voor de SEO-fase.');
+  // Herkans-check vlak vóór de draft: topics kunnen lang in de wachtrij staan,
+  // dus de bij-invoer-check (POST /api/topics) kan intussen verouderd zijn.
+  // Force-toegevoegde topics (dedup_override) slaan deze over. Zie
+  // docs/superpowers/specs/2026-07-21-wp-dedup-index-design.md §4.
+  if (!topic.dedup_override) {
+    const dedup = await checkTopicAgainstWp(topic.title);
+    if (dedup.verdict === 'duplicate' && dedup.existing) {
+      throw new Error(`Duplicaat van bestaand artikel: ${dedup.existing.link}`);
+    }
+  }
   const { title, subregel, introductie_tekst: intro, content, quote } = s.article;
   const seoPrompt = await activePrompt('seo');
   const seo = await askClaudeJson(

@@ -387,7 +387,11 @@ export async function listTopics(): Promise<Topic[]> {
   return db.all(`SELECT * FROM topics WHERE status != 'done' ORDER BY (status = 'failed'), sort ASC`);
 }
 
-export async function addTopics(titles: string[]): Promise<{ added: Topic[]; skipped: string[] }> {
+// `forceTitles` (lowercase+trim, zoals de eigen dedup-sleutel hieronder):
+// titels in deze set worden ingevoegd met dedup_override=1, zodat de
+// herkans-check vlak vóór createDraft() ze niet nog een keer blokkeert. Zie
+// docs/superpowers/specs/2026-07-21-wp-dedup-index-design.md §4.
+export async function addTopics(titles: string[], forceTitles: Set<string> = new Set()): Promise<{ added: Topic[]; skipped: string[] }> {
   const db = await getDb();
   const rows = await db.all(`SELECT lower(trim(title)) AS t FROM topics WHERE status IN ('queued','writing','failed')`);
   const existing = new Set(rows.map(r => r.t as string));
@@ -402,9 +406,10 @@ export async function addTopics(titles: string[]): Promise<{ added: Topic[]; ski
     if (existing.has(key)) { skipped.push(title); continue; }
     existing.add(key);
     sort += 1;
+    const override = forceTitles.has(key) ? 1 : 0;
     const rec = await db.get(
-      `INSERT INTO topics (title, status, phase, sort, created_at) VALUES ($1, 'queued', 'research', $2, $3) RETURNING *`,
-      [title, sort, now()]
+      `INSERT INTO topics (title, status, phase, sort, created_at, dedup_override) VALUES ($1, 'queued', 'research', $2, $3, $4) RETURNING *`,
+      [title, sort, now(), override]
     );
     added.push(rec as Topic);
   }

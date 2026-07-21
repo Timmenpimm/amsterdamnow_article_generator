@@ -68,6 +68,7 @@ export interface Topic {
   post_id: number | null;
   locked_at?: string | null;
   lock_owner?: string | null;
+  dedup_override: number; // 1 = force-toegevoegd; slaat de herkans-check vóór createDraft over
 }
 
 export function parseListState(topic: Topic): ListState | null {
