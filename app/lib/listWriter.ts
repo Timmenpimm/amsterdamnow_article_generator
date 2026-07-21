@@ -308,7 +308,7 @@ async function stepCompose(topic: Topic): Promise<ListStepResult> {
       const [prompt, taxonomies] = await Promise.all([activePrompt('lijst-schrijf'), taxonomyChoices()]);
       result = await askClaudeJson(
         prompt.content,
-        `Schrijf het lijstartikel. Kies "categories" (1-2) en "district" uit de beschikbare lijsten en kies 3-6 "tags" uitsluitend uit "beschikbare_tags" (nooit nieuwe tags verzinnen; laat "tags" leeg als er geen passen). Voeg ook een "rubriek" (Locatie of Evenement) toe aan je JSON-output, naast de velden uit je instructie.\n\nHoud je aan deze regels:\n${describeArticleConstraints(constraints)}\n${describeItemConstraints(constraints)}${feedbackHint}\n\n${JSON.stringify({
+        `Schrijf het lijstartikel. Kies verplicht "categories" (1-2) uit de beschikbare lijst. Kies ook "district" uit de beschikbare lijst als de items in dit lijstartikel overwegend in één stadsdeel liggen; gaat het artikel over meerdere stadsdelen door elkaar, geef dan "district": "" (leeg) terug — verzin nooit een stadsdeel dat niet klopt. Kies 3-6 "tags" uitsluitend uit "beschikbare_tags" (nooit nieuwe tags verzinnen; laat "tags" leeg als er geen passen). Voeg ook een "rubriek" (Locatie of Evenement) toe aan je JSON-output, naast de velden uit je instructie.\n\nHoud je aan deze regels:\n${describeArticleConstraints(constraints)}\n${describeItemConstraints(constraints)}${feedbackHint}\n\n${JSON.stringify({
           ...input,
           beschikbare_categorieen: taxonomies.categories,
           beschikbare_districten: taxonomies.districts,
@@ -366,6 +366,11 @@ async function stepCompose(topic: Topic): Promise<ListStepResult> {
   const validated = toValidated(composed, verified, constraints.noConsecutiveQuotes);
   let meldingen: string[];
   try {
+    // Categorie is altijd verplicht (anders dan district, dat bij
+    // lijstartikelen legitiem kan ontbreken — zie createDraft-aanroep
+    // hieronder). Meegenomen in dezelfde herkansingsloop als de overige
+    // redactionele checks, in plaats van een gok-categorie te verzinnen.
+    if (!composed.categories.length) throw new Error('Geen categorie gekozen.');
     meldingen = validateListArticle(validated, constraints);
   } catch (err: any) {
     // Feedback-loop: wis de afgekeurde blokken en laat de volgende tikken het
@@ -492,8 +497,12 @@ async function stepFinalize(topic: Topic): Promise<ListStepResult> {
     slug: str(seo.slug),
     seoTitle: str(seo.rank_math_title),
     metaDescription: str(seo.rank_math_description),
-    categories: composed.categories.length ? composed.categories : ['Buurten'],
-    district: composed.district || 'Amsterdam Centrum',
+    // categories is hier altijd gevuld — leeg is al afgevangen (en herkanst)
+    // door de check vóór validateListArticle hierboven. district mag bij
+    // lijstartikelen wél leeg zijn (niet verplicht); createDraft/wp.ts slaat
+    // de WordPress-districttoewijzing dan gewoon over i.p.v. een gok te doen.
+    categories: composed.categories,
+    district: composed.district,
     tags: composed.tags,
     rubriek: composed.rubriek,
     naamLocatie: '',

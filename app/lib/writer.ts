@@ -37,6 +37,17 @@ function strings(value: unknown, label: string): string[] {
   return value.map(v => v.trim());
 }
 
+// Zelfde check als strings(), maar wijst ook een lege array af. Nodig voor
+// categorie: [].every(...) is in JS altijd true (vacuous truth), dus strings()
+// liet een lege categorie-lijst ongemerkt door tot in de WordPress-draft
+// (post zonder categorie). Categorie is — anders dan tags, die legitiem leeg
+// mogen zijn — altijd verplicht.
+function nonEmptyStrings(value: unknown, label: string): string[] {
+  const result = strings(value, label);
+  if (!result.length) throw new Error(`Claude gaf geen ${label} terug.`);
+  return result;
+}
+
 // De actieve Criteria als expliciete instructieregels bij de schrijfopdracht.
 // Woordaantallen mikken op het midden van de bandbreedte: het model telt niet
 // exact, dus wie op de ondergrens mikt valt er regelmatig onder — precies de
@@ -212,7 +223,7 @@ async function stepSeo(topic: Topic, s: StandaardState): Promise<StandaardStepRe
   const seoPrompt = await activePrompt('seo');
   const seo = await askClaudeJson(
     seoPrompt.content,
-    `POST_TITLE: ${title}\nPOST_EXCERPT: ${intro}\nPOST_CONTENT: ${content}\nCATEGORY: ${strings(s.research.categories, 'categories').join(', ')}\nDISTRICT: ${string(s.research.district, 'district')}`,
+    `POST_TITLE: ${title}\nPOST_EXCERPT: ${intro}\nPOST_CONTENT: ${content}\nCATEGORY: ${nonEmptyStrings(s.research.categories, 'categories').join(', ')}\nDISTRICT: ${string(s.research.district, 'district')}`,
     false, FAST_WRITE_MODEL, 6000, SEO_SCHEMA,
   );
   const draft = await createDraft({
@@ -221,7 +232,7 @@ async function stepSeo(topic: Topic, s: StandaardState): Promise<StandaardStepRe
     slug: string(seo.slug, 'slug'),
     seoTitle: string(seo.rank_math_title, 'rank_math_title'),
     metaDescription: string(seo.rank_math_description, 'rank_math_description'),
-    categories: strings(s.research.categories, 'categories'),
+    categories: nonEmptyStrings(s.research.categories, 'categories'),
     district: string(s.research.district, 'district'),
     tags: strings(s.research.tags, 'tags'),
     rubriek: string(s.research.rubriek, 'rubriek'),
