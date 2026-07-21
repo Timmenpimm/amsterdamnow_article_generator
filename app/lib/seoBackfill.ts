@@ -5,16 +5,15 @@
 // _description — zonder die registratie negeert WordPress deze velden
 // stilzwijgend, zowel bij het schrijven als het uitlezen via de REST API).
 //
-// Draait over alle drafts op het bord (Klaar - beelden nodig én Klaar voor
-// publicatie, dat zijn samen alle drafts) én alle gepubliceerde artikelen.
+// Scope is bewust de eigen wachtrij van de tool: alle drafts op het bord
+// (Klaar - beelden nodig én Klaar voor publicatie, dat zijn samen alle
+// status=draft-posts — zie listSeoStubs in wp.ts). NIET het hele
+// gepubliceerde archief van de site, dat teruggaat tot ver vóór deze tool.
 // Slug blijft bewust onaangeroerd, zie updateArticleSeo in wp.ts.
 //
 // Twee stappen, bewust gescheiden: eerst listSeoStubs() (lichtgewicht,
-// _fields=id,title,meta over ALLE artikelen) om kandidaten te vinden, dan
-// pas getArticle(id) (volle content) voor alléén de paar artikelen die deze
-// aanroep verwerkt. Een eerdere versie haalde de volle content van ALLE
-// gepubliceerde artikelen in één keer op en liep daarmee vast op
-// FUNCTION_INVOCATION_TIMEOUT nog vóór er iets verwerkt was.
+// _fields=id,title,meta) om kandidaten te vinden, dan pas getArticle(id)
+// (volle content) voor alléén de paar artikelen die deze aanroep verwerkt.
 //
 // Zelfde patroon als backfillDraftEditorialFormatting in wp.ts: dryRun,
 // kleine batches per aanroep (hier een Claude-call per artikel, dus trager
@@ -38,9 +37,9 @@ export interface SeoBackfillResult {
   remaining: number;
 }
 
-// Eén Claude-call per artikel (ná een losse getArticle-fetch); klein genoeg
-// om ruim binnen de 60s-serverless-limiet te blijven, ook als de laatste
-// call trager is dan gemiddeld.
+// Verwerkt per aanroep dit aantal kandidaten PARALLEL (niet sequentieel: 5
+// Claude-calls na elkaar duurde in productie ruim over de 60s-serverless-
+// limiet, FUNCTION_INVOCATION_TIMEOUT nog vóór er één artikel klaar was).
 const BATCH_SIZE = 5;
 
 async function generateStandardSeo(article: Article) {
@@ -82,25 +81,29 @@ export async function backfillSeo(dryRun = false): Promise<SeoBackfillResult> {
   if (dryRun) {
     result.updated = candidates.map(s => ({ id: s.id, title: s.title }));
     result.remaining = candidates.length;
+    result.done = false;
     return result;
   }
 
   const batch = candidates.slice(0, BATCH_SIZE);
-  for (const stub of batch) {
-    try {
-      const article = await getArticle(stub.id);
-      if (!article) throw new Error('artikel niet gevonden (verwijderd?)');
-      const structure = await getListStructure(article.id);
-      const seo = structure
-        ? await generateListSeo(article, structure.items.map(i => i.naam))
-        : await generateStandardSeo(article);
-      if (!seo.seoTitle) throw new Error('SEO-agent gaf geen titel terug');
-      await updateArticleSeo(article.id, seo);
-      result.updated.push({ id: article.id, title: article.title });
-    } catch (err: any) {
-      result.skipped.push({ id: stub.id, title: stub.title, reason: err.message || 'onbekende fout' });
+  const outcomes = await Promise.allSettled(batch.map(async stub => {
+    const article = await getArticle(stub.id);
+    if (!article) throw new Error('artikel niet gevonden (verwijderd?)');
+    const structure = await getListStructure(article.id);
+    const seo = structure
+      ? await generateListSeo(article, structure.items.map(i => i.naam))
+      : await generateStandardSeo(article);
+    if (!seo.seoTitle) throw new Error('SEO-agent gaf geen titel terug');
+    await updateArticleSeo(article.id, seo);
+    return { id: article.id, title: article.title };
+  }));
+  outcomes.forEach((outcome, i) => {
+    if (outcome.status === 'fulfilled') {
+      result.updated.push(outcome.value);
+    } else {
+      result.skipped.push({ id: batch[i].id, title: batch[i].title, reason: outcome.reason?.message || 'onbekende fout' });
     }
-  }
+  });
   result.remaining = Math.max(0, candidates.length - batch.length);
   result.done = result.remaining === 0;
   return result;
