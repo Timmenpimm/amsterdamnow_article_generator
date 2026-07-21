@@ -27,6 +27,7 @@ export const RESEARCH_SCHEMA: Record<string, unknown> = {
     'samenvatting', 'key_people', 'distinctive_features', 'product_or_menu_highlights',
     'company_facts', 'space_and_building', 'concept_description', 'categories',
     'district', 'tags', 'rubriek', 'naam_locatie', 'adres', 'stad', 'website',
+    'start_datum', 'eind_datum',
   ],
   properties: {
     samenvatting: { type: 'string' },
@@ -44,6 +45,13 @@ export const RESEARCH_SCHEMA: Record<string, unknown> = {
     adres: { type: 'string' },
     stad: { type: 'string' },
     website: { type: 'string' },
+    // Event-datums → WordPress ACF-velden start_datum/eind_datum (groep "Event").
+    // Leeg laten (lege string) als het onderwerp geen event met een concrete
+    // datum is (vaste zaak, doorlopende expositie, opening zonder datum). Bij een
+    // eendaags event is eind_datum gelijk aan start_datum. Formaat JJJJ-MM-DD;
+    // createDraft (wp.ts) zet dit om naar het ACF-formaat Ymd.
+    start_datum: { type: 'string', description: 'Startdatum van het event als JJJJ-MM-DD, of "" als er geen concrete eventdatum in de bronnen staat.' },
+    eind_datum: { type: 'string', description: 'Einddatum van het event als JJJJ-MM-DD (gelijk aan start_datum bij een eendaags event), of "" als er geen concrete eventdatum is.' },
   },
 };
 

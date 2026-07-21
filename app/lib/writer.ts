@@ -48,6 +48,14 @@ function nonEmptyStrings(value: unknown, label: string): string[] {
   return result;
 }
 
+// Event-datum uit de research: optioneel (niet elk onderwerp is een event), dus
+// nooit gooien — een leeg/ongeldig veld levert '' op, waarna createDraft het
+// ACF-datumveld gewoon overslaat. Accepteert alleen strikt JJJJ-MM-DD.
+function optionalIsoDate(value: unknown): string {
+  const s = typeof value === 'string' ? value.trim() : '';
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : '';
+}
+
 // De actieve Criteria als expliciete instructieregels bij de schrijfopdracht.
 // Woordaantallen mikken op het midden van de bandbreedte: het model telt niet
 // exact, dus wie op de ondergrens mikt valt er regelmatig onder — precies de
@@ -197,7 +205,7 @@ async function stepResearch(topic: Topic, s: StandaardState): Promise<StandaardS
   // content (zie VERIFY_SOURCE_CHARS in listWriter.ts voor dezelfde afweging).
   const research = await askClaudeJson(
     researchPrompt.content,
-    `Onderwerp: ${topic.title}\n\nBeschikbare WordPress-categorieën: ${taxonomies.categories.join(', ')}\nBeschikbare WordPress-districten: ${taxonomies.districts.join(', ')}\nBeschikbare WordPress-tags: ${taxonomies.tags.join(', ')}\nKies "tags" uitsluitend uit deze lijst; verzin nooit nieuwe tags. Past geen enkele bestaande tag goed, geef dan een lege lijst terug.\n\nTavily-bronnen:\n${sources.map((src, i) => `\n[${i + 1}] ${src.title}\n${src.url}\n${src.content.slice(0, 8000)}`).join('\n')}`,
+    `Onderwerp: ${topic.title}\n\nBeschikbare WordPress-categorieën: ${taxonomies.categories.join(', ')}\nBeschikbare WordPress-districten: ${taxonomies.districts.join(', ')}\nBeschikbare WordPress-tags: ${taxonomies.tags.join(', ')}\nKies "tags" uitsluitend uit deze lijst; verzin nooit nieuwe tags. Past geen enkele bestaande tag goed, geef dan een lege lijst terug.\n\nGaat dit onderwerp over een event met een concrete datum, geef die dan als "start_datum" (en "eind_datum", gelijk aan start bij een eendaags event) in JJJJ-MM-DD, letterlijk overgenomen uit de bronnen. Is het geen event of noemt geen bron een concrete datum, laat beide leeg ("").\n\nTavily-bronnen:\n${sources.map((src, i) => `\n[${i + 1}] ${src.title}\n${src.url}\n${src.content.slice(0, 8000)}`).join('\n')}`,
     false, FAST_WRITE_MODEL, 6000, RESEARCH_SCHEMA,
   );
   s.research = research;
@@ -307,6 +315,8 @@ async function stepSeo(topic: Topic, s: StandaardState): Promise<StandaardStepRe
     adres: string(s.research.adres, 'adres'),
     stad: string(s.research.stad, 'stad'),
     website: string(s.research.website, 'website'),
+    startDatum: optionalIsoDate(s.research.start_datum),
+    eindDatum: optionalIsoDate(s.research.eind_datum),
   });
   await completeTopic(topic.id, draft.id);
   return { topic, phase: 'seo', done: true, progress: 'Draft aangemaakt', article: { id: draft.id, title: draft.title } };
