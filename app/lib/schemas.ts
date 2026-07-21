@@ -224,6 +224,31 @@ export const DEDUP_JUDGE_SCHEMA: Record<string, unknown> = {
   },
 };
 
+// CLASSIFY_SYSTEM (publisher.ts) → classifyArticles. "event_date" is
+// nullable: "YYYY-MM-DD" als het artikel over een specifieke aankomende
+// gebeurtenis/datum gaat, anders null (evergreen content, of gewoon geen
+// vaste datum).
+export const AUTOPUBLISH_CLASSIFY_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['classifications'],
+  properties: {
+    classifications: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['id', 'evergreen', 'event_date'],
+        properties: {
+          id: { type: 'integer' },
+          evergreen: { type: 'boolean' },
+          event_date: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+        },
+      },
+    },
+  },
+};
+
 // buildPrompt (imageScore.ts) → scoreOneBatch via askClaudeJsonWithImages.
 export const IMAGE_SCORES_SCHEMA: Record<string, unknown> = {
   type: 'object',

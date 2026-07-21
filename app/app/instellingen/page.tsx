@@ -6,8 +6,9 @@ import type { ConstraintKind, PromptKind } from '@/lib/types';
 import { CONSTRAINT_KINDS } from '@/lib/types';
 import PromptEditor from './PromptEditor';
 import CriteriaEditor from './CriteriaEditor';
+import AutoPublishPanel from './AutoPublishPanel';
 
-type Section = PromptKind | ConstraintKind;
+type Section = PromptKind | ConstraintKind | 'publiceren';
 
 const TAB_GROUPS: { label: string; tabs: { key: Section; label: string }[] }[] = [
   {
@@ -32,6 +33,12 @@ const TAB_GROUPS: { label: string; tabs: { key: Section; label: string }[] }[] =
     tabs: [
       { key: 'standaard', label: 'Standaard artikel' },
       { key: 'lijst', label: 'Lijstartikel' },
+    ],
+  },
+  {
+    label: 'Publiceren',
+    tabs: [
+      { key: 'publiceren', label: 'Automatisch publiceren' },
     ],
   },
 ];
@@ -70,7 +77,13 @@ export default function Instellingen() {
             </div>
           ))}
         </div>
-        {isConstraintKind(kind) ? <CriteriaEditor kind={kind} /> : <PromptEditor kind={kind} />}
+        {kind === 'publiceren' ? (
+          <AutoPublishPanel />
+        ) : isConstraintKind(kind) ? (
+          <CriteriaEditor kind={kind} />
+        ) : (
+          <PromptEditor kind={kind} />
+        )}
       </div>
     </div>
   );

@@ -167,6 +167,17 @@ async function initSqlite(): Promise<DB> {
       wp_modified TEXT NOT NULL DEFAULT '',
       synced_at TEXT NOT NULL DEFAULT ''
     );
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS publish_meta (
+      article_id INTEGER PRIMARY KEY,
+      evergreen INTEGER NOT NULL DEFAULT 0,
+      event_date TEXT,
+      classified_at TEXT NOT NULL
+    );
   `);
   // Migratie voor databases van vóór de lijstpipeline.
   for (const col of ["type TEXT NOT NULL DEFAULT 'standaard'", 'phase TEXT', 'list_state TEXT', 'locked_at TEXT', 'lock_owner TEXT']) {
@@ -311,6 +322,21 @@ async function initPostgres(): Promise<DB> {
       categories TEXT NOT NULL DEFAULT '[]',
       wp_modified TEXT NOT NULL DEFAULT '',
       synced_at TEXT NOT NULL DEFAULT ''
+    );
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT
+    );
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS publish_meta (
+      article_id BIGINT PRIMARY KEY,
+      evergreen INTEGER NOT NULL DEFAULT 0,
+      event_date TEXT,
+      classified_at TEXT NOT NULL
     );
   `);
   // Migratie voor databases van vóór de lijstpipeline.
@@ -1087,4 +1113,83 @@ export async function ensureDemoSeed(
       );
     }
   }
+}
+
+// ---------- instellingen (key/value) ----------
+
+// Generieke opslag voor app-brede instellingen als JSON-string per key. De
+// autopublisher slaat zijn instellingen hier op onder key 'autopublish'
+// (zie lib/publisher.ts) — een aparte tabel per instelling is overkill voor
+// één klein settings-object.
+export async function getSetting(key: string): Promise<string | null> {
+  const db = await getDb();
+  const row = await db.get('SELECT value FROM app_settings WHERE key = $1', [key]);
+  return row ? String(row.value) : null;
+}
+
+export async function setSetting(key: string, value: string) {
+  const db = await getDb();
+  await db.run(
+    `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, $3)
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at`,
+    [key, value, now()]
+  );
+}
+
+// Optimistische compare-and-set: schrijft newValue voor `key` alleen weg als
+// de opgeslagen waarde nog exact oldValue is (of, als er nog geen rij
+// bestaat, alleen als er nog steeds geen rij bestaat). Gebruikt door de
+// auto-publish-tik om te voorkomen dat twee gelijktijdige tikken allebei
+// menen de tik te mogen claimen (zie lib/publisher.ts). Geeft terug of déze
+// aanroep de rij daadwerkelijk heeft bijgewerkt/aangemaakt.
+export async function claimSetting(key: string, oldValue: string | null, newValue: string): Promise<boolean> {
+  const db = await getDb();
+  if (oldValue === null) {
+    const rows = await db.all(
+      `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, $3)
+       ON CONFLICT (key) DO NOTHING RETURNING key`,
+      [key, newValue, now()]
+    );
+    return rows.length > 0;
+  }
+  const rows = await db.all(
+    `UPDATE app_settings SET value = $1, updated_at = $2 WHERE key = $3 AND value = $4 RETURNING key`,
+    [newValue, now(), key, oldValue]
+  );
+  return rows.length > 0;
+}
+
+// ---------- publish_meta (autopublisher-classificatie) ----------
+
+export interface PublishMetaRow {
+  evergreen: boolean;
+  event_date: string | null;
+}
+
+// Haalt de bekende classificatie op voor een set artikel-id's (WP post-id's).
+// Artikelen zonder rij ontbreken uit de map — de aanroeper (classifyArticles
+// in lib/publisher.ts) behandelt die als "nog niet geclassificeerd".
+export async function getPublishMetaByIds(ids: number[]): Promise<Map<number, PublishMetaRow>> {
+  const map = new Map<number, PublishMetaRow>();
+  if (!ids.length) return map;
+  const db = await getDb();
+  const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
+  const rows = await db.all(
+    `SELECT article_id, evergreen, event_date FROM publish_meta WHERE article_id IN (${placeholders})`,
+    ids
+  );
+  for (const r of rows) {
+    map.set(Number(r.article_id), { evergreen: Number(r.evergreen) === 1, event_date: r.event_date || null });
+  }
+  return map;
+}
+
+export async function upsertPublishMeta(articleId: number, evergreen: boolean, eventDate: string | null) {
+  const db = await getDb();
+  await db.run(
+    `INSERT INTO publish_meta (article_id, evergreen, event_date, classified_at) VALUES ($1, $2, $3, $4)
+     ON CONFLICT (article_id) DO UPDATE SET
+       evergreen = EXCLUDED.evergreen, event_date = EXCLUDED.event_date, classified_at = EXCLUDED.classified_at`,
+    [articleId, evergreen ? 1 : 0, eventDate, now()]
+  );
 }

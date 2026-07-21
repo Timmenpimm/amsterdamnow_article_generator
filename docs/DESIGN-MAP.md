@@ -4,9 +4,9 @@
 uitpluizen. Lees eerst dít bestand, importeer het verse design, diff de
 schermlabels tegen de tabel hieronder, en bouw alléén de delta.
 
-_Laatst bijgewerkt: 21 juli 2026 (WP-dedup-index — voorkomt topics over
-onderwerpen die al op de site staan). Klopt er iets niet meer? Werk deze tabel bij
-in dezelfde PR als de codewijziging._
+_Laatst bijgewerkt: 21 juli 2026 (auto-publisher — publiceert zelf artikelen
+uit "Klaar voor publicatie" op een instelbaar interval). Klopt er iets niet
+meer? Werk deze tabel bij in dezelfde PR als de codewijziging._
 
 ---
 
@@ -45,6 +45,7 @@ in dezelfde PR als de codewijziging._
 | — | "Items controleren" (review, modal) | `app/components/ReviewModal.tsx` |
 | **2a** | Prompt & instellingen (prompt-editor) | `app/app/instellingen/page.tsx` + `app/app/instellingen/PromptEditor.tsx` |
 | **2b** | Instellingen · Criteria (standaard/lijst) | `app/app/instellingen/CriteriaEditor.tsx` + `criteria-fields.ts` |
+| — | Instellingen · Publiceren (auto-publisher) | `app/app/instellingen/AutoPublishPanel.tsx`, tabgroep in `page.tsx`; kolomkopje "auto: aan/uit" in `Pipeline.tsx` (kolom "Klaar voor publicatie") |
 | — | Archief | `app/app/archief/page.tsx` |
 | **3a/3b/3c** | Bronnen (agenda-scanner) | `app/app/bronnen/page.tsx`; nav in `TopBar.tsx`; backend §4 |
 | toast | Meldingen | `app/components/toast.tsx` (`toast(...)` + `<ToastHost>` in `layout.tsx`) |
@@ -140,6 +141,27 @@ in dezelfde PR als de codewijziging._
     lang in de wachtrij staan); zonder override gaat de topic naar `failed`
     met "Duplicaat van {link}", mét override gaat 'm gewoon door.
   - **UI**: zie tabel hierboven (§2, rij **1b**) voor `BulkModal.tsx`.
+- **Auto-publisher (juli 2026)** — publiceert zelf artikelen uit "Klaar voor
+  publicatie" (exact dezelfde ready-regel als Pipeline.tsx/`articlePhase()`)
+  op een instelbaar interval, wanneer aangezet in Instellingen.
+  - **Tabellen** (beide drivers, `db.ts`): `app_settings` (generieke key/value,
+    autopublish-instellingen onder key `autopublish`) en `publish_meta`
+    (`article_id` PK, `evergreen`, `event_date`, `classified_at` — per
+    artikel-id de classificatie van `classifyArticles()`).
+  - **`lib/publisher.ts`**: instellingen (`getAutoPublishSettings`/
+    `saveAutoPublishSettings`), classificatie (`classifyArticles` — max 8
+    nog-onbekende ready-artikelen per tik in ÉÉN Haiku-call, schema
+    `AUTOPUBLISH_CLASSIFY_SCHEMA` in `schemas.ts`, fail-open) en selectie
+    (`pickNextForPublish` — pure functie: tier op evergreen/naderend-event,
+    plus een categorie-balansbonus capped op 72u zodat die nooit een tier
+    kan overslaan; tie-break op oudste `date`).
+  - **Routes**: `GET/POST /api/publish/tick` (client-driven poll zonder auth,
+    accepteert ook `Bearer CRON_SECRET`; één Claude-call + één publicatie per
+    tik, 60s-limiet) en `GET/POST /api/publish/settings` (geen auth, zoals
+    `/api/prompts`). Beide staan expliciet in `vercel.json` (geen cron-entry).
+  - **Driver**: `Pipeline.tsx` polt `/api/publish/tick` elke 60s; bij een
+    gepubliceerd artikel ververst het bord + toast. Kolomkopje toont
+    "auto: aan · volgende HH:MM" of "auto: uit".
 - **API-routes**: `app/app/api/*` — altijd `export const dynamic =
   'force-dynamic'`, `NextResponse.json`, dynamische `[id]` uit `params`.
   Cron/worker-routes: `GET` met `Bearer CRON_SECRET` (zie `queue/worker` &

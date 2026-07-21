@@ -21,6 +21,8 @@
     { "src": "^/api/wp-sync/?$", "dest": "/app/api/wp-sync" },
     { "src": "^/api/sources/([^/]+)/scan/?$", "dest": "/app/api/sources/[id]/scan?id=$1" },
     { "src": "^/api/sources/([^/]+)/?$", "dest": "/app/api/sources/[id]?id=$1" },
+    { "src": "^/api/publish/tick/?$", "dest": "/app/api/publish/tick" },
+    { "src": "^/api/publish/settings/?$", "dest": "/app/api/publish/settings" },
     { "src": "^/artikel/([^/]+)/?$", "dest": "/app/artikel/[id]?id=$1" },
     { "src": "/(.*)", "dest": "/app/$1", "check": true }
   ],
