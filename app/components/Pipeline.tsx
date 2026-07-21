@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Article, BoardData, Topic } from '@/lib/types';
-import { articlePhase, imageCount, parseListState, REQUIRED_IMAGES } from '@/lib/types';
+import { articlePhase, imageCount, listImagesReady, parseListState, REQUIRED_IMAGES } from '@/lib/types';
 import TopBar from './TopBar';
 import BulkModal from './BulkModal';
 import ListArticleModal from './ListArticleModal';
@@ -131,35 +131,49 @@ export default function Pipeline() {
 
   // Beeldselectie-autofill op de achtergrond: voor het eerste verse artikel
   // zonder beelden vult Claude alvast de beste 3 in (zoeken → scoren →
-  // plaatsen, één stap per tik). Artikelen waar de redactie al beeldwerk aan
-  // deed slaat de server over (eligible: false), dus dit raakt alleen
-  // onaangeraakt werk. autofillBusy voorkomt dubbele runs bij elke poll.
+  // plaatsen, één stap per tik). Lijstartikelen krijgen daarna per tik één
+  // itemfoto, tot elk item gevuld is (of gemarkeerd als "niets gevonden") —
+  // ook als de redactie featured/slider al zelf zette. Artikelen waar de
+  // redactie al beeldwerk aan deed slaat de server verder over (eligible:
+  // false), dus dit raakt alleen lege slots. autofillBusy voorkomt dubbele
+  // runs bij elke poll.
   const autofillBusy = useRef(false);
   const autofillDone = useRef(new Set<number>());
   useEffect(() => {
-    const fresh = (data?.articles || []).find(a =>
-      a.status === 'draft'
-      && imageCount(a) + (data?.lists?.[a.id]?.withMedia || 0) === 0
-      && !autofillDone.current.has(a.id)
-    );
+    const fresh = (data?.articles || []).find(a => {
+      if (a.status !== 'draft' || autofillDone.current.has(a.id)) return false;
+      const lc = data?.lists?.[a.id];
+      if (lc && lc.withMedia < lc.items) return true; // lijst met lege item-slots
+      return imageCount(a) + (lc?.withMedia || 0) === 0;
+    });
     if (!fresh || autofillBusy.current) return;
     autofillBusy.current = true;
     (async () => {
       try {
-        for (let tick = 0; tick < 10; tick++) {
+        // Zoeken (1) + scorebatches (±4) + plaatsen (1) = ±6 tikken; bij een
+        // lijst daarbovenop één tik per itemfoto.
+        const maxTicks = 10 + (data?.lists?.[fresh.id]?.items ?? 0) + 2;
+        let placedTotal = 0;
+        let itemsFilled = 0;
+        for (let tick = 0; tick < maxTicks; tick++) {
           const res = await fetch(`/api/articles/${fresh.id}/candidates/autofill`, { method: 'POST' });
           const body = await res.json();
           if (!res.ok) throw new Error(body.error);
+          if (body.placed > 0) placedTotal += body.placed;
+          if (body.filledItem) itemsFilled += 1;
           if (body.done) {
             autofillDone.current.add(fresh.id);
-            if (body.placed > 0) {
-              toast(`Claude heeft ${body.placed} beelden alvast ingevuld bij "${fresh.title}"`);
+            if (placedTotal > 0) {
+              toast(itemsFilled > 0
+                ? `Claude heeft beelden ingevuld bij "${fresh.title}" — waarvan ${itemsFilled} itemfoto${itemsFilled > 1 ? "'s" : ''}`
+                : `Claude heeft ${placedTotal} beelden alvast ingevuld bij "${fresh.title}"`);
               load();
             }
             return;
           }
         }
-        autofillDone.current.add(fresh.id); // na 10 tikken niet klaar: niet blijven hameren
+        autofillDone.current.add(fresh.id); // niet klaar binnen de limiet: niet blijven hameren
+        if (placedTotal > 0) load();
       } catch {
         autofillDone.current.add(fresh.id); // stil falen; handmatig zoeken kan altijd nog
       } finally {
@@ -204,8 +218,25 @@ export default function Pipeline() {
   const articles = data?.articles || [];
   // Itemfoto's van lijstartikelen tellen mee in de beeldenteller.
   const countFor = (a: Article) => imageCount(a) + (data?.lists?.[a.id]?.withMedia || 0);
-  const phaseFor = (a: Article): 'needImages' | 'ready' | 'published' =>
-    a.status === 'publish' ? 'published' : countFor(a) >= REQUIRED_IMAGES ? 'ready' : 'needImages';
+  // Klaar-regel: standaard = 3 beelden; lijst = featured + ≥1 slider + élk
+  // item een foto (zelfde regel als articlePhase/listImagesReady server-side).
+  const phaseFor = (a: Article): 'needImages' | 'ready' | 'published' => {
+    if (a.status === 'publish') return 'published';
+    const lc = data?.lists?.[a.id];
+    if (lc) return listImagesReady(a, lc) ? 'ready' : 'needImages';
+    return imageCount(a) >= REQUIRED_IMAGES ? 'ready' : 'needImages';
+  };
+  // Voortgangslabel voor de kaartjes: lijstartikelen tonen de itemfoto-teller
+  // in plaats van x/3.
+  const labelFor = (a: Article): string => {
+    const lc = data?.lists?.[a.id];
+    if (!lc) return `${imageCount(a)}/${REQUIRED_IMAGES} beelden`;
+    const extra = [
+      ...(!a.featured ? ['featured'] : []),
+      ...(a.slider.length < 1 ? ['slider'] : []),
+    ];
+    return `${lc.withMedia}/${lc.items} itemfoto's${extra.length ? ` · ${extra.join(' + ')} nodig` : ''}`;
+  };
   const needImages = articles.filter(a => phaseFor(a) === 'needImages');
   const ready = articles.filter(a => phaseFor(a) === 'ready');
   const today = new Date().toDateString();
@@ -557,7 +588,6 @@ export default function Pipeline() {
           {/* Beelden nodig */}
           <Column color="var(--amber)" title="Klaar — beelden nodig" count={needImages.length} highlight>
             {needImages.map(a => {
-              const count = countFor(a);
               return (
                 <div key={a.id} className="card" style={{ overflow: 'hidden' }}>
                   {a.featured && (
@@ -567,7 +597,7 @@ export default function Pipeline() {
                   <div style={{ padding: '10px 12px 12px' }}>
                     <div style={{ fontSize: 13.5, fontWeight: 600, lineHeight: 1.35 }}>{a.title}</div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 9 }}>
-                      <span className="chip-amber">{count}/{REQUIRED_IMAGES} beelden</span>
+                      <span className="chip-amber">{labelFor(a)}</span>
                       <span style={{ fontSize: 11, color: 'var(--muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {[a.category, a.district.replace('Amsterdam ', '')].filter(Boolean).join(' · ')}
                       </span>
@@ -703,6 +733,8 @@ export default function Pipeline() {
           failed={failed}
           needImages={needImages}
           ready={ready}
+          phaseOf={phaseFor}
+          labelOf={labelFor}
           onChanged={load}
           onBulk={() => setBulkOpen(true)}
           onToggleAuto={() => setAutoOn(v => !v)}
@@ -735,10 +767,12 @@ export default function Pipeline() {
 }
 
 function MobileHome({
-  queued, writing, failed, needImages, ready, onChanged, onBulk, onToggleAuto, autoOn, writingNow,
+  queued, writing, failed, needImages, ready, phaseOf, labelOf, onChanged, onBulk, onToggleAuto, autoOn, writingNow,
 }: {
   queued: Topic[]; writing: Topic[]; failed: Topic[];
   needImages: Article[]; ready: Article[];
+  phaseOf: (a: Article) => 'needImages' | 'ready' | 'published';
+  labelOf: (a: Article) => string;
   onChanged: () => void; onBulk: () => void;
   onToggleAuto: () => void; autoOn: boolean; writingNow: boolean;
 }) {
@@ -845,13 +879,13 @@ function MobileHome({
               <div
                 style={{
                   fontSize: 11, fontWeight: 700, marginTop: 3,
-                  color: articlePhase(a) === 'ready' ? 'var(--green-dark)' : 'var(--amber-dark)',
+                  color: phaseOf(a) === 'ready' ? 'var(--green-dark)' : 'var(--amber-dark)',
                 }}
               >
-                {articlePhase(a) === 'ready' ? '✓ klaar voor publicatie' : `Beelden nodig · ${imageCount(a)}/${REQUIRED_IMAGES}`}
+                {phaseOf(a) === 'ready' ? '✓ klaar voor publicatie' : `Beelden nodig · ${labelOf(a)}`}
               </div>
             </div>
-            <span className="dot" style={{ background: articlePhase(a) === 'ready' ? 'var(--green)' : 'var(--amber)' }} />
+            <span className="dot" style={{ background: phaseOf(a) === 'ready' ? 'var(--green)' : 'var(--amber)' }} />
           </div>
         ))}
         <div style={{ fontSize: 12, color: 'var(--muted)', textAlign: 'center', paddingTop: 2 }}>

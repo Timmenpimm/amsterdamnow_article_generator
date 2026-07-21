@@ -37,9 +37,9 @@ als de codewijziging._
 | topbar (overal) | Navigatie, snelle invoer, modus-indicator | `app/components/TopBar.tsx` |
 | **1a** | Statusboard (kanban) | `app/components/Pipeline.tsx` (7 kolommen, poll `/api/board`, `listProgress`); gerenderd door `app/app/page.tsx` |
 | **1b** | Bulk toevoegen (modal) | `app/components/BulkModal.tsx`. Sectie **"Bestaat al op de site"** na submit: per titel die de WP-dedup-check afwijst (§4) een rij met de bestaande WP-titel als link, status-chip en reden, plus knop "Toch toevoegen" (herhaalt `POST /api/topics` met `forceTitles`). Zie §4 (WP-dedup-index). |
-| **1c** | Artikel-detail / beeldwerk | `app/components/ArticleDetail.tsx`; route `app/app/artikel/[id]/page.tsx`. **Beeld-slots (standaard):** 1 featured, 2 slider (streefwaarde **1**), 3 **inline in tekst**, 4 kandidaten. Het inline-beeld leeft ín de content-HTML als `<figure class="an-inline">` (splice/parse in `lib/wp.ts` — `spliceInlineImage`/`parseInline`, tussen alinea 2/3 of achteraan); `Article.inline` + `imageCount` in `types.ts`; `inlineId` door `updateImages`, PATCH `/api/articles/[id]`, media `?role=inline`, autofill. **Alleen standaard-artikelen** (lijst houdt itemfoto-flow). Backfill bestaande concepten: `POST /api/admin/backfill-inline` (Bearer `CRON_SECRET`, laatste slider → inline). |
-| **1c** (sectie) | Voorgestelde beelden (beeldselectie + autofill top-3) | sectie + `CandidateCard` in `ArticleDetail.tsx`; autofill-driver ook in `Pipeline.tsx`; backend `lib/imageSearch.ts` + `lib/imageScore.ts` + `api/articles/[id]/candidates{,/search,/score,/autofill}`; briefing `BRIEFING-claude-design-addendum-beeldselectie.md`; spec `docs/superpowers/specs/2026-07-20-beeldselectie-design.md` |
-| **3d** | Voorgestelde beelden — states (leeg/bezig/lijstartikel item-kiezer) | losse states-doc van dezelfde sectie/component als 1c hierboven — geen eigen scherm, geen eigen bestand |
+| **1c** | Artikel-detail / beeldwerk | `app/components/ArticleDetail.tsx`; route `app/app/artikel/[id]/page.tsx`. **Beeld-slots (standaard):** 1 featured, 2 slider (streefwaarde **1**), 3 **inline in tekst**, 4 kandidaten. Het inline-beeld leeft ín de content-HTML als `<figure class="an-inline">` (splice/parse in `lib/wp.ts` — `spliceInlineImage`/`parseInline`, tussen alinea 2/3 of achteraan); `Article.inline` + `imageCount` in `types.ts`; `inlineId` door `updateImages`, PATCH `/api/articles/[id]`, media `?role=inline`, autofill. **Alleen standaard-artikelen** (lijst houdt itemfoto-flow). Backfill bestaande concepten: `POST /api/admin/backfill-inline` (Bearer `CRON_SECRET`, laatste slider → inline). **Klaar-regel (juli 2026)**: standaard = 3 beelden (`REQUIRED_IMAGES`); **lijstartikel = featured + ≥1 slider + élke item een foto** (`listImagesReady`/`articlePhase` in `types.ts`; geldt voor de kanban-kolommen, de publiceer-knop/route én de auto-publisher). UI toont bij lijsten een itemfoto-teller (x/y) i.p.v. x/3. |
+| **1c** (sectie) | Voorgestelde beelden (beeldselectie + autofill top-3 + itemfoto-autofill) | sectie + `CandidateCard` in `ArticleDetail.tsx`; autofill-driver ook in `Pipeline.tsx`; backend `lib/imageSearch.ts` + `lib/imageScore.ts` + `api/articles/[id]/candidates{,/search,/score,/autofill}`; briefing `BRIEFING-claude-design-addendum-beeldselectie.md`; spec `docs/superpowers/specs/2026-07-20-beeldselectie-design.md`. **Itemfoto-autofill (juli 2026)**: bij lijstartikelen vult dezelfde autofill-route ná featured+slider per aanroep máx één itemfoto (zoeken op itemnaam+buurt → één scorebatch → upload + her-assemblage via `assembleListHtml`); geen vondst ≥ drempel → melding in `list.meldingen`, item wordt daarna overgeslagen. Client-drivers loopen tot `done: true` (respons: `filledItem`/`skippedItem`/`remainingItems`). |
+| **3d** | Voorgestelde beelden — states (leeg/bezig/lijstartikel item-kiezer) | losse states-doc van dezelfde sectie/component als 1c hierboven — geen eigen scherm, geen eigen bestand. Bij lijstartikelen loopt autofill door in de itemfoto's (voortgang "Claude zoekt itemfoto's… nog N items" in `ArticleDetail.tsx`). |
 | **1d** | Lege & fout-states wachtrij | onderdeel van `app/components/Pipeline.tsx` |
 | **1e** | Mobiele invoer | `MobileHome`-subcomponent ín `Pipeline.tsx` + `.mobile-only` in `TopBar.tsx` |
 | — | "Nieuw lijstartikel" (modal) | `app/components/ListArticleModal.tsx` |
@@ -112,6 +112,16 @@ als de codewijziging._
     herschreven titels matchen hun `dedup_key` niet meer).
   - Beeldselectie: max 48 kandidaten (`MAX_CANDIDATES` in `imageSearch.ts`),
     scoren alleen op thumbnails (bewust géén full-size fallback).
+    **Itemfoto-autofill** (lijstartikelen, juli 2026): zelfde
+    `candidates/autofill`-route, ná de featured/slider-fase per request máx
+    één item (60s-limiet, één Claude-call): zoeken op itemnaam + buurt via
+    `searchImageCandidates`, één `scoreOneBatch` van max 12 (drempel
+    `AUTO_MIN_SCORE` = 55), `uploadMediaFromUrl` + `assembleListHtml` +
+    `updateArticleContent` + `saveListStructure` (zelfde patroon als
+    `item-media`). Geen bruikbare vondst → vaste melding in `list.meldingen`
+    ("Geen geschikte itemfoto gevonden voor …"), zodat de loop het item
+    daarna overslaat. Kandidaten belanden in dezelfde `image_candidates`-pool
+    (dedup op URL).
 - **WP-dedup-index (juli 2026)** — voorkomt dat de tool onderwerpen genereert
   die al op amsterdamnow.com staan (incl. drafts/pending/future). Spec:
   `docs/superpowers/specs/2026-07-21-wp-dedup-index-design.md`.
@@ -153,8 +163,10 @@ als de codewijziging._
     met "Duplicaat van {link}", mét override gaat 'm gewoon door.
   - **UI**: zie tabel hierboven (§2, rij **1b**) voor `BulkModal.tsx`.
 - **Auto-publisher (juli 2026)** — publiceert zelf artikelen uit "Klaar voor
-  publicatie" (exact dezelfde ready-regel als Pipeline.tsx/`articlePhase()`)
-  op een instelbaar interval, wanneer aangezet in Instellingen.
+  publicatie" (exact dezelfde ready-regel als Pipeline.tsx/`articlePhase()`:
+  standaard = 3 beelden; **lijst = featured + ≥1 slider + élke item een
+  itemfoto**, zie `listImagesReady` in `types.ts`) op een instelbaar
+  interval, wanneer aangezet in Instellingen.
   - **Tabellen** (beide drivers, `db.ts`): `app_settings` (generieke key/value,
     autopublish-instellingen onder key `autopublish`) en `publish_meta`
     (`article_id` PK, `evergreen`, `event_date`, `classified_at` — per

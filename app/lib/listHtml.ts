@@ -22,7 +22,9 @@ function linkedDescription(naam: string, beschrijving: string, link?: string): s
 // Assembleert de WordPress-content van een lijstartikel, in exact het formaat
 // van de bestaande gepubliceerde lijstartikelen op amsterdamnow.com:
 // inleiding-alinea, per item een H2 + beschrijving eindigend op "— <em>adres,
-// Buurt</em>", itemfoto's als eigen alinea, quotes als blockquote ertussen.
+// Buurt</em>", itemfoto's als eigen alinea in WordPress-classic markup
+// (wp-image-{id} class voor srcset/responsive), quotes als eenregelige
+// blockquote (cursieve quote — bron) ertussen.
 export function assembleListHtml(s: ListArticleStructure): string {
   const parts: string[] = [];
   if (s.inleiding.trim()) parts.push(`<p>${escapeHtml(s.inleiding.trim())}</p>`);
@@ -31,10 +33,13 @@ export function assembleListHtml(s: ListArticleStructure): string {
     const adres = [item.adres, item.buurt].filter(Boolean).join(', ') + (item.extra_info ? `. ${item.extra_info}` : '');
     parts.push(`<p>${linkedDescription(item.naam, item.beschrijving, item.interne_link)} &#8212; <em>${escapeHtml(adres)}</em></p>`);
     if (item.media) {
-      parts.push(`<p><img src="${escapeAttr(item.media.url)}" alt="${escapeAttr(item.naam)}" /></p>`);
+      const media = item.media;
+      parts.push(
+        `<p><img class="alignnone wp-image-${media.id} size-full" title="${escapeAttr(item.naam)}" src="${escapeAttr(media.url)}" alt="${escapeAttr(item.naam)}" /></p>`
+      );
     }
     if (item.quote) {
-      parts.push(`<blockquote><p>&#8220;${escapeHtml(item.quote.tekst)}&#8221;</p><p>&#8212; ${escapeHtml(item.quote.bron)}</p></blockquote>`);
+      parts.push(`<blockquote><p><em>&#8220;${escapeHtml(item.quote.tekst)}&#8221;</em> &#8212; ${escapeHtml(item.quote.bron)}</p></blockquote>`);
     }
   }
   if (s.afsluiting.trim()) parts.push(`<p>${escapeHtml(s.afsluiting.trim())}</p>`);

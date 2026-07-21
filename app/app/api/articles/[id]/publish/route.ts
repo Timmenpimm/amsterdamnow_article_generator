@@ -11,12 +11,29 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     const article = await getArticle(Number(id));
     if (!article) return NextResponse.json({ error: 'artikel niet gevonden' }, { status: 404 });
     const list = await getListStructure(Number(id));
-    const count = imageCount(article, list);
-    if (count < REQUIRED_IMAGES) {
-      return NextResponse.json(
-        { error: `Publiceren geblokkeerd: ${count}/${REQUIRED_IMAGES} beelden. Voeg eerst beelden toe.` },
-        { status: 409 }
-      );
+    if (list) {
+      // Lijstartikel: featured + minstens 1 slider + élk item een foto
+      // (zelfde regel als articlePhase/listImagesReady in lib/types.ts).
+      const zonderFoto = list.items.filter(i => !i.media).length;
+      const missing = [
+        ...(!article.featured ? ['featured image'] : []),
+        ...(article.slider.length < 1 ? ['minstens 1 sliderfoto'] : []),
+        ...(zonderFoto > 0 ? [`${zonderFoto} itemfoto${zonderFoto > 1 ? "'s" : ''}`] : []),
+      ];
+      if (missing.length) {
+        return NextResponse.json(
+          { error: `Publiceren geblokkeerd: nog nodig: ${missing.join(', ')}.` },
+          { status: 409 }
+        );
+      }
+    } else {
+      const count = imageCount(article);
+      if (count < REQUIRED_IMAGES) {
+        return NextResponse.json(
+          { error: `Publiceren geblokkeerd: ${count}/${REQUIRED_IMAGES} beelden. Voeg eerst beelden toe.` },
+          { status: 409 }
+        );
+      }
     }
     const updated = await publishArticle(Number(id));
     return NextResponse.json({ article: updated });
