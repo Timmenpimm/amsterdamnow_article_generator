@@ -336,6 +336,54 @@ export async function updateArticleTags(id: number, tags: string[]): Promise<Art
   return getArticle(id);
 }
 
+export interface SeoFields {
+  focusKeyword: string;
+  seoTitle: string;
+  metaDescription: string;
+}
+
+// Vult alleen de RankMath-metavelden; slug blijft onaangeroerd (die wijzigen
+// op een bestaand artikel breekt de URL, zie lib/seoBackfill.ts).
+export async function updateArticleSeo(id: number, seo: SeoFields): Promise<void> {
+  if (!LIVE) {
+    const a = (await demoArticles()).find(x => x.id === id);
+    if (!a) throw new Error('Artikel niet gevonden');
+    a.focusKeyword = seo.focusKeyword;
+    a.seoTitle = seo.seoTitle;
+    a.metaDescription = seo.metaDescription;
+    a.modified = new Date().toISOString();
+    await demoSave(a);
+    return;
+  }
+  await wpFetch(`/wp/v2/posts/${id}`, {
+    method: 'POST',
+    body: JSON.stringify({
+      meta: {
+        rank_math_focus_keyword: seo.focusKeyword,
+        rank_math_title: seo.seoTitle,
+        rank_math_description: seo.metaDescription,
+      },
+    }),
+  });
+}
+
+// Zelfde als listArticles(), maar zonder de per_page=15-cap op gepubliceerde
+// artikelen — die cap is bewust voor het bord (recente publicaties tonen),
+// maar de SEO-backfill (lib/seoBackfill.ts) moet ALLE gepubliceerde
+// artikelen kunnen scannen, ook oudere.
+export async function listAllPublishedArticles(): Promise<Article[]> {
+  if (!LIVE) return (await demoArticles()).filter(a => a.status === 'publish');
+  await loadTaxonomies();
+  const posts = await wpFetchAllPages(`/wp/v2/posts?status=publish&orderby=date&context=edit`);
+  const mediaIds = new Set<number>();
+  for (const p of posts) {
+    if (p.featured_media) mediaIds.add(p.featured_media);
+    for (const id of p.acf?.slider || []) mediaIds.add(id);
+  }
+  const media = await mediaRefs([...mediaIds]);
+  return Promise.all(posts.map((p: any) => mapPost(p, media)));
+}
+
 // Vervangt de volledige content-HTML van een post; gebruikt door het
 // per-item-beeldwerk van lijstartikelen (content wordt opnieuw geassembleerd).
 export async function updateArticleContent(id: number, html: string): Promise<void> {

@@ -182,6 +182,11 @@ export default function Pipeline() {
         if (body.published) {
           toast(`Automatisch gepubliceerd: ${body.published.title}`);
           load();
+        } else if (body.error) {
+          // De tick-route geeft bij een mislukte publicatie altijd HTTP 200
+          // terug (zie /api/publish/tick), dus zonder deze check verdween
+          // een mislukte auto-publish stilletjes: geen toast, geen signaal.
+          toast(`Automatisch publiceren mislukt: ${body.error}`, { kind: 'error' });
         }
       } catch { /* volgende tik probeert het gewoon opnieuw */ }
     }

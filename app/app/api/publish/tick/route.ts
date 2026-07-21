@@ -82,7 +82,11 @@ async function tick() {
       nextAt: nextRunAt(updated),
     };
   } catch (error: any) {
-    // lastPublishedAt terugdraaien — de volgende tik probeert opnieuw.
+    // lastPublishedAt terugdraaien — de volgende tik probeert opnieuw. Loggen
+    // hier is de enige plek waar een mislukte auto-publish zichtbaar wordt:
+    // de tick-route geeft altijd HTTP 200 terug (zie GET hieronder), dus
+    // zonder deze log verdwijnt de fout stilletjes in Vercel's function-logs.
+    console.error(`[autopublish] publiceren van artikel ${pick.id} mislukt`, error);
     await rollbackClaim();
     return { enabled: true, due: true, published: null, error: error.message || 'Publiceren mislukt' };
   }
