@@ -1,10 +1,10 @@
 import { activeConstraints, activePrompt, completeTopic, failTopic, saveTopicProgress } from './db';
-import { askClaudeJson, FAST_WRITE_MODEL } from './claude';
+import { askClaudeJson, FAST_WRITE_MODEL, TITLE_MODEL } from './claude';
 import { RESEARCH_SCHEMA, ARTICLE_SCHEMA, SEO_SCHEMA } from './schemas';
 import { createDraft, taxonomyChoices } from './wp';
 import { checkTopicAgainstWp } from './dedup';
 import { researchWithTavily } from './tavily';
-import { validateArticle, GeneratedArticle } from './validation';
+import { validateArticle, checkTitle, GeneratedArticle } from './validation';
 import { parseStandaardState, type StandaardConstraints, type StandaardPhase, type StandaardState, type Topic, type WordRange } from './types';
 import { formatStandardArticleHtml } from './articleHtml';
 
@@ -125,6 +125,68 @@ function buildCandidate(payload: Record<string, unknown>): GeneratedArticle {
   };
 }
 
+// Genereert de titel apart en VRIJ, buiten de structured-output-call om. De
+// hoofd-schrijfcall levert geldige JSON via constrained decoding (output_config
+// .format), en juist dat sloeg de titel plat: het meest creatieve veld lijdt
+// het meest onder token-voor-token grammatica-dwang. De oude n8n-workflow liet
+// het model vrije tekst schrijven en parste die achteraf — punchier titels.
+// Hier halen we dat gedrag terug voor alléén de titel: een losse, goedkope
+// call (TITLE_MODEL) zonder schema levert drie kandidaten; we nemen de eerste
+// die door dezelfde titel-keuring komt als validateArticle. Komt geen kandidaat
+// erdoor (of hapert de call), dan houden we de al-gevalideerde bestaande titel:
+// deze stap kan de titel dus nooit slechter of ongeldig maken.
+async function polishTitle(article: GeneratedArticle, s: StandaardState, naam: string, constraints: StandaardConstraints): Promise<string> {
+  const r = s.research ?? {};
+  const facts = [
+    `Naam onderwerp: ${naam}`,
+    typeof r.samenvatting === 'string' && r.samenvatting ? `Samenvatting: ${r.samenvatting}` : '',
+    Array.isArray(r.key_people) && r.key_people.length ? `Mensen/acts: ${r.key_people.join(', ')}` : '',
+    Array.isArray(r.distinctive_features) && r.distinctive_features.length ? `Onderscheidend: ${r.distinctive_features.join('; ')}` : '',
+  ].filter(Boolean).join('\n');
+
+  const system = 'Je bent eindredacteur van amsterdamnow.com, een lokale stadsgids door en voor Amsterdammers. Je bedenkt de kop: informeel, direct, nuchter en concreet. Nooit toeristisch, nooit marketingtaal.';
+  const prompt = [
+    'Bedenk drie mogelijke titels voor dit artikel.',
+    '',
+    'REGELS (hard):',
+    `- ${constraints.titleWords.min}-${constraints.titleWords.max} woorden.`,
+    `- De naam "${naam}" (of de kernnaam ervan) staat erin, bij voorkeur vooraan. Essentieel voor SEO.`,
+    '- Prikkelend en concreet. Gebruik eventueel een dubbele punt voor spanning.',
+    '- Vermijd saaie constructies als "Nieuw restaurant X opent zijn deuren".',
+    constraints.noDashInText ? '- Geen em dash (—) of en dash (–).' : '',
+    constraints.noAmsterdamRepeatInTitleSubregelIntro ? '- Het woord "Amsterdam" mag NIET in de titel staan.' : '',
+    '',
+    'Goede voorbeelden:',
+    '- BOLIA aan de Utrechtsestraat: Deens design met koffie en maatwerk',
+    '- Chez Chloé op de Overtoom: klassiek Frans van chef Marcelo Hernandez',
+    '',
+    'Context uit de research:',
+    facts,
+    '',
+    `Huidige kop (mag beter): ${article.title}`,
+    `Subregel: ${article.subregel}`,
+    `Introductie: ${article.introductie_tekst}`,
+    '',
+    'Antwoord ALLEEN met JSON: {"titels": ["...", "...", "..."]}',
+  ].filter(line => line !== '').join('\n');
+
+  try {
+    // Geen schema → vrije generatie (extractJson-vangnet in claude.ts). Klein
+    // token-budget: drie korte koppen zijn ruim binnen ~400 tokens.
+    const payload = await askClaudeJson(system, prompt, false, TITLE_MODEL, 600);
+    const kandidaten = Array.isArray(payload.titels) ? payload.titels : [];
+    for (const kandidaat of kandidaten) {
+      if (typeof kandidaat === 'string' && kandidaat.trim() && checkTitle(kandidaat.trim(), naam, constraints) === null) {
+        return kandidaat.trim();
+      }
+    }
+  } catch {
+    // Titel-polish is nice-to-have: bij een hapering houden we de bestaande
+    // (al gevalideerde) titel en laten we de pipeline gewoon doorlopen.
+  }
+  return article.title;
+}
+
 async function stepResearch(topic: Topic, s: StandaardState): Promise<StandaardStepResult> {
   const [researchPrompt, taxonomies] = await Promise.all([activePrompt('research'), taxonomyChoices()]);
   const sources = await researchWithTavily(topic.title);
@@ -155,6 +217,10 @@ async function stepSchrijf(topic: Topic, s: StandaardState): Promise<StandaardSt
   try {
     const candidate = buildCandidate(payload);
     validateArticle(candidate, subjectName(topic, s), constraints);
+    // Titel apart, vrij (her)genereren voor meer punch — zie polishTitle. Nooit
+    // slechter: valt terug op de zojuist gevalideerde titel als geen kandidaat
+    // de keuring haalt.
+    candidate.title = await polishTitle(candidate, s, subjectName(topic, s), constraints);
     s.article = candidate;
     await saveTopicProgress(topic.id, { status: 'queued', phase: 'seo', state: s });
     return { topic, phase: 'seo', done: false, progress: 'Artikel geschreven en gevalideerd · SEO en draft' };
@@ -199,6 +265,7 @@ async function stepSchrijfRetry(topic: Topic, s: StandaardState): Promise<Standa
     await saveTopicProgress(topic.id, { status: 'queued', phase: 'schrijf-retry', state: s });
     return { topic, phase: 'schrijf-retry', done: false, progress: `Afgekeurd (${String(e.message).slice(0, 60)}…) · herkansing ${attempts + 1} start` };
   }
+  checked.title = await polishTitle(checked, s, subjectName(topic, s), constraints);
   s.article = checked;
   s.draftPayload = undefined;
   s.rejectReason = undefined;

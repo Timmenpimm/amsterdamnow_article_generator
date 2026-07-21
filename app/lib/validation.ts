@@ -17,6 +17,47 @@ function range(label: string, value: string, min: number, max: number) {
   if (count < min || count > max) throw new Error(`${label} moet ${min}-${max} woorden bevatten (nu ${count}).`);
 }
 
+// De "kern" van een onderwerpnaam: de merknaam vóór een kwalificatie. De
+// research levert vaak een volledige naam als "AMAZE by ID&T", "Bar Basquiat x
+// Mistral", "Vondelpark Openluchttheater: zomerseizoen" of "Modelstad
+// Haven-Stad — Arcam"; eisen dat die hele string létterlijk in de titel staat
+// perste het model in klungelige koppen. We accepteren daarom ook de kernnaam:
+// het deel vóór by/x/:/|/feat/presenteert óf vóór een gespatieerde streep
+// (" — ", " – ", " - "), waarmee de research vaak de locatie of ondertitel
+// aanplakt. De niet-gespatieerde koppelstreep (Haven-Stad) blijft intact.
+function coreName(topic: string): string {
+  const core = topic.split(/\s+by\s+|\s+x\s+|:|\||\s+feat\.?\s+|\s+presenteert\s+|\s+[—–-]\s+/i)[0]?.trim();
+  return core || topic;
+}
+
+// De titel bevat de naam van het onderwerp als de volledige naam óf de kernnaam
+// erin voorkomt (genormaliseerd, dus hoofdletter- en leesteken-ongevoelig).
+export function subjectInTitle(title: string, topic: string): boolean {
+  const t = normal(title);
+  if (t.includes(normal(topic))) return true;
+  const core = normal(coreName(topic));
+  return core.length > 1 && t.includes(core);
+}
+
+// Alle titel-eisen op een rij, als één (of geen) foutmelding. Wordt gebruikt om
+// de los-gegenereerde titelkandidaten (writer.ts polishTitle) te keuren met
+// exact dezelfde regels als validateArticle voor de titel hanteert.
+export function checkTitle(title: string, topic: string, config: StandaardConstraints): string | null {
+  const count = words(title);
+  if (count < config.titleWords.min || count > config.titleWords.max) {
+    return `Titel moet ${config.titleWords.min}-${config.titleWords.max} woorden bevatten (nu ${count}).`;
+  }
+  if (title.length > config.titleMaxChars) return `Titel is ${title.length} tekens; maximaal ${config.titleMaxChars}.`;
+  if (config.titleMustContainTopic && !subjectInTitle(title, topic)) {
+    return `De titel moet de naam van het onderwerp bevatten ("${topic}", of de kernnaam "${coreName(topic)}").`;
+  }
+  if (config.noDashInText && /[—–]/.test(title)) return 'De titel mag geen em dash of en dash bevatten.';
+  if (config.noAmsterdamRepeatInTitleSubregelIntro && /\bAmsterdam\b/i.test(title)) {
+    return 'Amsterdam mag niet in de titel staan.';
+  }
+  return null;
+}
+
 // ---------- lijstartikelen ----------
 
 export interface ListItemDraft {
@@ -130,11 +171,12 @@ export function validateArticle(article: GeneratedArticle, topic: string, config
   range('Introductie', article.introductie_tekst, config.introWords.min, config.introWords.max);
   range('Artikeltekst', article.content, config.contentWords.min, config.contentWords.max);
   range('Quote', article.quote, config.quoteWords.min, config.quoteWords.max);
-  if (config.titleMustContainTopic && !normal(article.title).includes(normal(topic))) {
+  if (config.titleMustContainTopic && !subjectInTitle(article.title, topic)) {
     // Noem de vereiste naam letterlijk: deze melding wordt als afkeurreden aan
     // de herschrijfronde meegegeven, en zonder de concrete naam blijft het
-    // model gokken welke formulering de check verwacht.
-    throw new Error(`De titel moet de naam van het onderwerp bevatten ("${topic}").`);
+    // model gokken welke formulering de check verwacht. De kernnaam (zonder
+    // "by X"/"x Y"-toevoeging) volstaat — zie subjectInTitle/coreName.
+    throw new Error(`De titel moet de naam van het onderwerp bevatten ("${topic}", of de kernnaam "${coreName(topic)}").`);
   }
   if (config.quoteMustBeVerbatimInContent && !normal(article.content).includes(normal(article.quote))) {
     throw new Error('De quote moet letterlijk in de artikeltekst voorkomen.');
