@@ -21,10 +21,28 @@ Negeer: navigatie, cookiemeldingen, reclame, algemene teksten, items buiten Amst
 
 Formuleer elk item als één bondige onderwerptitel zoals een redacteur die zou intypen — concreet en herkenbaar (naam + kern), bv. "Lucky Chops: brass party in de grote zaal van Paradiso". Geen datums-als-titel, geen opsommingstekens.
 
+Geef per item ook "datum" mee: de concrete datum van het event in ISO-formaat (JJJJ-MM-DD), als de brontekst die noemt. Gaat het om iets zonder vaste enkele datum (een opening, een doorlopende expositie, nieuws zonder events-datum), geef dan datum: null. Een event waarvan de datum al voorbij is (zie "Vandaag is" hierboven) hoort niet in de output.
+
 Geef UITSLUITEND geldige JSON terug in exact dit formaat, zonder omliggende tekst:
-{"items": [{"titel": "..."}]}
+{"items": [{"titel": "...", "datum": "JJJJ-MM-DD" of null}]}
 
 Maximaal 12 items, de meest relevante eerst. Vind je niets bruikbaars, geef dan {"items": []}.`;
+
+// JJJJ-MM-DD in Europe/Amsterdam, zodat de prompt en de code-side filter
+// hieronder dezelfde "vandaag" hanteren als de kalenderdag van de redactie.
+function amsterdamToday(): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Amsterdam' }).format(new Date());
+}
+
+// Deterministische check bovenop de prompt-instructie: Claude's eigen begrip
+// van "vandaag" is niet betrouwbaar, dus filteren we hier nog eens hard op de
+// "datum" die het schema teruggeeft. Alles wat niet als JJJJ-MM-DD parseert
+// (null, "doorlopend", een bereik) laten we door — bij twijfel niet
+// overslaan, dan maar een keer een oud item ter beoordeling op het bord.
+function isPastEvent(item: any, todayISO: string): boolean {
+  const datum = typeof item?.datum === 'string' ? item.datum.trim() : '';
+  return /^\d{4}-\d{2}-\d{2}$/.test(datum) && datum < todayISO;
+}
 
 function findingKey(title: string): string {
   return title.toLowerCase().trim().replace(/\s+/g, ' ');
@@ -61,11 +79,13 @@ async function runScan(source: Source): Promise<ScanResult & { contentHash: stri
     return { sourceId: source.id, ok: true, added: 0, skipped: 0, contentHash };
   }
 
-  const prompt = `Bron: ${source.name}\nURL: ${source.url}\n\nUitgelezen pagina-inhoud:\n---\n${pageText}\n---`;
+  const today = amsterdamToday();
+  const prompt = `Bron: ${source.name}\nURL: ${source.url}\nVandaag is ${today} (Europe/Amsterdam).\n\nUitgelezen pagina-inhoud:\n---\n${pageText}\n---`;
   const data = await askClaudeJson(SCAN_SYSTEM, prompt, false, FAST_WRITE_MODEL, 6000, SCAN_SCHEMA);
 
   const rawItems = Array.isArray((data as any).items) ? (data as any).items : [];
   const titles: string[] = rawItems
+    .filter((it: any) => !isPastEvent(it, today))
     .map((it: any) => (typeof it === 'string' ? it : String(it?.titel || it?.title || '')))
     .map((t: string) => t.trim())
     .filter(Boolean);
