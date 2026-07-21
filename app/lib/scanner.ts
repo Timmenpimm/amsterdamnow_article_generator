@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { askClaudeJson, FAST_WRITE_MODEL } from './claude';
-import { SCAN_SCHEMA } from './schemas';
+import { SCAN_SCHEMA, SCAN_EDITORIALIZE_SCHEMA } from './schemas';
 import { extractPageText } from './tavily';
 import {
   activeSources, addTopics, getFindingKeys, getSource,
@@ -46,6 +46,49 @@ function isPastEvent(item: any, todayISO: string): boolean {
 
 function findingKey(title: string): string {
   return title.toLowerCase().trim().replace(/\s+/g, ' ');
+}
+
+// Simpele, mechanische herschrijftaak → goedkoop model (zelfde patroon als
+// DEDUP_MODEL in dedup.ts en CLASSIFY_MODEL in publisher.ts).
+const EDITORIALIZE_MODEL = 'claude-haiku-4-5-20251001';
+// ~20 korte titelparen per call; 3000 tokens is ruim.
+const EDITORIALIZE_MAX_TOKENS = 3000;
+
+const EDITORIALIZE_SYSTEM = `Je bent eindredacteur van Amsterdam NOW, een online stadsmagazine over Amsterdam.
+
+Je krijgt onderwerp-titels die onze bronnenscanner letterlijk uit externe pagina's heeft gehaald (agenda's, nieuwspagina's, artikelen van andere media). Zet elke gescande titel om in een eigen input-topic voor onze redactie, zodat ons artikel nooit een kopie van het bronartikel wordt.
+
+Regels:
+1. Feiten blijven staan: namen van events, zaken, venues, buurten en jaartallen neem je over.
+2. Bron-opmaak verdwijnt: aantallen uit lijstjes ("55 X", "top 10", "40+"), rubrieksnamen en huisstijl-formats van de bron laat je weg. Onze redactie bepaalt straks zelf de selectie en het aantal.
+3. Thematische en lijst-onderwerpen krijgen een eigen invalshoek (bijvoorbeeld per buurt, per seizoen, voor een doelgroep, of een andere insteek), maar de zoekintentie blijft herkenbaar: uit "55 X beste terrassen van Amsterdam per wijk" moet nog altijd "beste terrassen Amsterdam" doorklinken.
+4. Losse events, openingen en nieuwtjes blijven concreet (naam + kern), maar formuleer je kort in eigen woorden — niet de bronkop naschrijven.
+5. Nederlands, één bondige onderwerptitel per item, geen aanhalingstekens, nummering of opsommingstekens.
+
+Geef UITSLUITEND geldige JSON in exact dit formaat, zonder omliggende tekst:
+{"topics": [{"bron": "<de gescande titel, letterlijk geëchood>", "topic": "<het eigen input-topic>"}]}
+Eén object per invoertitel, in dezelfde volgorde als de invoer.`;
+
+// Zet gescande bronkoppen om naar eigen input-topics. Fail-open: valt de call
+// of een individueel item uit, dan gaat de originele titel de wachtrij in —
+// liever één keer een letterlijk topic dan een verloren vondst. De uitvoer
+// heeft gegarandeerd dezelfde lengte en volgorde als de invoer.
+export async function editorializeTitles(titles: string[]): Promise<string[]> {
+  if (!titles.length) return [];
+  try {
+    const prompt = `Gescande titels:\n${titles.map((t, i) => `${i + 1}. ${t}`).join('\n')}`;
+    const data = await askClaudeJson(
+      EDITORIALIZE_SYSTEM, prompt, false, EDITORIALIZE_MODEL, EDITORIALIZE_MAX_TOKENS, SCAN_EDITORIALIZE_SCHEMA,
+    );
+    const out = Array.isArray((data as any).topics) ? (data as any).topics : [];
+    return titles.map((original, i) => {
+      const topic = typeof out[i]?.topic === 'string' ? out[i].topic.trim() : '';
+      return topic || original;
+    });
+  } catch (e) {
+    console.warn('[scanner] redactionaliseren mislukt, gebruik gescande titels', e);
+    return titles;
+  }
 }
 
 // Scant één bron: pagina lezen → Claude haalt items eruit → ontdubbelen tegen de
@@ -105,11 +148,22 @@ async function runScan(source: Source): Promise<ScanResult & { contentHash: stri
   const fresh = unique.filter(t => !known.has(findingKey(t))).slice(0, MAX_NEW_PER_SCAN);
   if (!fresh.length) return { sourceId: source.id, ok: true, added: 0, skipped: 0, contentHash };
 
+  // Redactionaliseer vóór de wachtrij: de gescande kop is de kop van de bron;
+  // wij zetten er een eigen input-topic van in de wachtrij zodat het artikel
+  // geen kopie van het bronartikel wordt. De vondsten-historie (en dus de
+  // dedup tegen eerdere scans) blijft op de originele bronkop draaien —
+  // anders zou elke scan hetzelfde item met een nieuwe herformulering opnieuw
+  // aandragen.
+  const topics = await editorializeTitles(fresh);
+
   // addTopics ontdubbelt nog eens tegen de globale wachtrij (handmatige invoer of
   // een andere bron die hetzelfde al aandroeg).
-  const { added, skipped } = await addTopics(fresh);
-  const idMap = await topicIdsByTitle(fresh);
-  const entries = fresh.map(t => ({ title: t, topicId: idMap.get(t.toLowerCase().trim()) ?? null }));
+  const { added, skipped } = await addTopics(topics);
+  const idMap = await topicIdsByTitle(topics);
+  const entries = fresh.map((original, i) => ({
+    title: original,
+    topicId: idMap.get(topics[i].toLowerCase().trim()) ?? null,
+  }));
   await recordFindings(source.id, entries);
 
   return { sourceId: source.id, ok: true, added: added.length, skipped: skipped.length, contentHash };

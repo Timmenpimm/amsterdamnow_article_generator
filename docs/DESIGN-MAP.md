@@ -4,9 +4,10 @@
 uitpluizen. Lees eerst dít bestand, importeer het verse design, diff de
 schermlabels tegen de tabel hieronder, en bouw alléén de delta.
 
-_Laatst bijgewerkt: 21 juli 2026 (auto-publisher — publiceert zelf artikelen
-uit "Klaar voor publicatie" op een instelbaar interval). Klopt er iets niet
-meer? Werk deze tabel bij in dezelfde PR als de codewijziging._
+_Laatst bijgewerkt: 21 juli 2026 (scanner-redactionaliseren — gescande
+bronkoppen worden vóór de wachtrij omgezet naar eigen input-topics; daarvoor:
+auto-publisher). Klopt er iets niet meer? Werk deze tabel bij in dezelfde PR
+als de codewijziging._
 
 ---
 
@@ -99,6 +100,16 @@ meer? Werk deze tabel bij in dezelfde PR als de codewijziging._
     tokens (Sonnet) cachen stilletjes níet.
   - Bronscanner slaat een `content_hash` per bron op (`sources`-tabel) en
     slaat de Claude-call over bij een ongewijzigde pagina.
+  - **Redactionaliseren (juli 2026)**: gescande bronkoppen gaan níet meer
+    letterlijk de wachtrij in. `editorializeTitles()` in `lib/scanner.ts`
+    (Haiku, `SCAN_EDITORIALIZE_SCHEMA`, fail-open → originele titel) zet elke
+    vondst om naar een eigen input-topic (bron-aantallen zoals "55 X" eruit,
+    eigen invalshoek, zoekintentie behouden). De vondsten-historie
+    (`source_findings.dedup_key`) blijft op de originele bronkop draaien,
+    anders draagt elke scan hetzelfde item opnieuw aan. Backfill voor
+    bestaande letterlijke wachtrij-topics: `POST /api/admin/editorialize-queue`
+    (Bearer `CRON_SECRET`, batches, POST'en tot `done: true`; idempotent —
+    herschreven titels matchen hun `dedup_key` niet meer).
   - Beeldselectie: max 48 kandidaten (`MAX_CANDIDATES` in `imageSearch.ts`),
     scoren alleen op thumbnails (bewust géén full-size fallback).
 - **WP-dedup-index (juli 2026)** — voorkomt dat de tool onderwerpen genereert
