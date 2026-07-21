@@ -21,10 +21,10 @@ Negeer: navigatie, cookiemeldingen, reclame, algemene teksten, items buiten Amst
 
 Formuleer elk item als één bondige onderwerptitel zoals een redacteur die zou intypen — concreet en herkenbaar (naam + kern), bv. "Lucky Chops: brass party in de grote zaal van Paradiso". Geen datums-als-titel, geen opsommingstekens.
 
-Geef per item ook "datum" mee: de concrete datum van het event in ISO-formaat (JJJJ-MM-DD), als de brontekst die noemt. Gaat het om iets zonder vaste enkele datum (een opening, een doorlopende expositie, nieuws zonder events-datum), geef dan datum: null. Een event waarvan de datum al voorbij is (zie "Vandaag is" hierboven) hoort niet in de output.
+Geef per item ook de eventdatum mee in ISO-formaat (JJJJ-MM-DD), letterlijk uit de brontekst: "startdatum" en "einddatum". Bij een eendaags event is einddatum gelijk aan startdatum; bij een meerdaags event (festival, expositieperiode) de eerste en laatste dag. Gaat het om iets zonder concrete datum (een opening, een doorlopende expositie, nieuws zonder events-datum), geef dan startdatum: null en einddatum: null. Een event waarvan de einddatum al voorbij is (zie "Vandaag is" hierboven) hoort niet in de output.
 
 Geef UITSLUITEND geldige JSON terug in exact dit formaat, zonder omliggende tekst:
-{"items": [{"titel": "...", "datum": "JJJJ-MM-DD" of null}]}
+{"items": [{"titel": "...", "startdatum": "JJJJ-MM-DD" of null, "einddatum": "JJJJ-MM-DD" of null}]}
 
 Maximaal 12 items, de meest relevante eerst. Vind je niets bruikbaars, geef dan {"items": []}.`;
 
@@ -34,14 +34,24 @@ function amsterdamToday(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Amsterdam' }).format(new Date());
 }
 
+// Genormaliseerd scan-item: titel + (optionele) event-datums als JJJJ-MM-DD.
+type ScanItem = { titel: string; start: string; eind: string };
+
+// Strikt JJJJ-MM-DD of ''. Accepteert alleen het exacte ISO-formaat dat het
+// schema/de prompt vraagt; al het andere (null, "doorlopend", een bereik) → ''.
+function isoOrEmpty(value: unknown): string {
+  const s = typeof value === 'string' ? value.trim() : '';
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : '';
+}
+
 // Deterministische check bovenop de prompt-instructie: Claude's eigen begrip
-// van "vandaag" is niet betrouwbaar, dus filteren we hier nog eens hard op de
-// "datum" die het schema teruggeeft. Alles wat niet als JJJJ-MM-DD parseert
-// (null, "doorlopend", een bereik) laten we door — bij twijfel niet
-// overslaan, dan maar een keer een oud item ter beoordeling op het bord.
-function isPastEvent(item: any, todayISO: string): boolean {
-  const datum = typeof item?.datum === 'string' ? item.datum.trim() : '';
-  return /^\d{4}-\d{2}-\d{2}$/.test(datum) && datum < todayISO;
+// van "vandaag" is niet betrouwbaar, dus filteren we hier nog eens hard. Een
+// event is pas voorbij als de einddatum (of, bij ontbreken, de startdatum)
+// vóór vandaag ligt. Zonder parsebare datum niet overslaan — bij twijfel
+// liever een keer een oud item ter beoordeling op het bord.
+function isPastEvent(item: ScanItem, todayISO: string): boolean {
+  const ref = item.eind || item.start;
+  return ref !== '' && ref < todayISO;
 }
 
 function findingKey(title: string): string {
@@ -127,16 +137,18 @@ async function runScan(source: Source): Promise<ScanResult & { contentHash: stri
   const data = await askClaudeJson(SCAN_SYSTEM, prompt, false, FAST_WRITE_MODEL, 6000, SCAN_SCHEMA);
 
   const rawItems = Array.isArray((data as any).items) ? (data as any).items : [];
-  const titles: string[] = rawItems
-    .filter((it: any) => !isPastEvent(it, today))
-    .map((it: any) => (typeof it === 'string' ? it : String(it?.titel || it?.title || '')))
-    .map((t: string) => t.trim())
-    .filter(Boolean);
+  const items: ScanItem[] = rawItems
+    .map((it: any) => {
+      const start = isoOrEmpty(it?.startdatum);
+      const eind = isoOrEmpty(it?.einddatum) || start; // eendaags: eind = start
+      return { titel: (typeof it === 'string' ? it : String(it?.titel || it?.title || '')).trim(), start, eind };
+    })
+    .filter((it: ScanItem) => it.titel && !isPastEvent(it, today));
 
-  // Ontdubbel binnen deze scan.
+  // Ontdubbel binnen deze scan (op titel; de datum reist mee).
   const seen = new Set<string>();
-  const unique = titles.filter(t => {
-    const k = findingKey(t);
+  const unique = items.filter(it => {
+    const k = findingKey(it.titel);
     if (seen.has(k)) return false;
     seen.add(k);
     return true;
@@ -145,7 +157,7 @@ async function runScan(source: Source): Promise<ScanResult & { contentHash: stri
   // Ontdubbel tegen wat deze bron eerder al vond (ook verwijderde items blijven
   // onderdrukt — dat is de dedup-historie).
   const known = await getFindingKeys(source.id);
-  const fresh = unique.filter(t => !known.has(findingKey(t))).slice(0, MAX_NEW_PER_SCAN);
+  const fresh = unique.filter(it => !known.has(findingKey(it.titel))).slice(0, MAX_NEW_PER_SCAN);
   if (!fresh.length) return { sourceId: source.id, ok: true, added: 0, skipped: 0, contentHash };
 
   // Redactionaliseer vóór de wachtrij: de gescande kop is de kop van de bron;
@@ -154,14 +166,24 @@ async function runScan(source: Source): Promise<ScanResult & { contentHash: stri
   // dedup tegen eerdere scans) blijft op de originele bronkop draaien —
   // anders zou elke scan hetzelfde item met een nieuwe herformulering opnieuw
   // aandragen.
-  const topics = await editorializeTitles(fresh);
+  const topics = await editorializeTitles(fresh.map(f => f.titel));
+
+  // Seed de event-datum op het topic: de datum hoort bij de originele bronkop
+  // (fresh[i]); we koppelen 'm aan het editorialized topic dat de wachtrij
+  // ingaat, zodat stepResearch (writer.ts) 'm als gezaghebbende event-datum
+  // gebruikt — de bronpagina is betrouwbaarder dan een research-gok. Alleen
+  // items met een concrete startdatum krijgen een seed.
+  const seeds = new Map<string, { start: string; eind: string }>();
+  fresh.forEach((f, i) => {
+    if (f.start) seeds.set(topics[i].toLowerCase().trim(), { start: f.start, eind: f.eind });
+  });
 
   // addTopics ontdubbelt nog eens tegen de globale wachtrij (handmatige invoer of
-  // een andere bron die hetzelfde al aandroeg).
-  const { added, skipped } = await addTopics(topics);
+  // een andere bron die hetzelfde al aandroeg) en zet de seed in list_state.
+  const { added, skipped } = await addTopics(topics, new Set(), seeds);
   const idMap = await topicIdsByTitle(topics);
-  const entries = fresh.map((original, i) => ({
-    title: original,
+  const entries = fresh.map((f, i) => ({
+    title: f.titel,
     topicId: idMap.get(topics[i].toLowerCase().trim()) ?? null,
   }));
   await recordFindings(source.id, entries);

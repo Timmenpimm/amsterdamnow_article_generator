@@ -208,6 +208,13 @@ async function stepResearch(topic: Topic, s: StandaardState): Promise<StandaardS
     `Onderwerp: ${topic.title}\n\nBeschikbare WordPress-categorieën: ${taxonomies.categories.join(', ')}\nBeschikbare WordPress-districten: ${taxonomies.districts.join(', ')}\nBeschikbare WordPress-tags: ${taxonomies.tags.join(', ')}\nKies "tags" uitsluitend uit deze lijst; verzin nooit nieuwe tags. Past geen enkele bestaande tag goed, geef dan een lege lijst terug.\n\nGaat dit onderwerp over een event met een concrete datum, geef die dan als "start_datum" (en "eind_datum", gelijk aan start bij een eendaags event) in JJJJ-MM-DD, letterlijk overgenomen uit de bronnen. Is het geen event of noemt geen bron een concrete datum, laat beide leeg ("").\n\nTavily-bronnen:\n${sources.map((src, i) => `\n[${i + 1}] ${src.title}\n${src.url}\n${src.content.slice(0, 8000)}`).join('\n')}`,
     false, FAST_WRITE_MODEL, 6000, RESEARCH_SCHEMA,
   );
+  // Seed van de bronscanner is gezaghebbend: die datum komt rechtstreeks van de
+  // agendapagina, betrouwbaarder dan wat het model uit de Tavily-bronnen afleidt.
+  // Alleen overschrijven als er een seed is; anders blijft de research-datum staan.
+  if (s.seedStartDatum) {
+    (research as Record<string, unknown>).start_datum = s.seedStartDatum;
+    (research as Record<string, unknown>).eind_datum = s.seedEindDatum || s.seedStartDatum;
+  }
   s.research = research;
   await saveTopicProgress(topic.id, { status: 'queued', phase: 'schrijf', state: s });
   return { topic, phase: 'schrijf', done: false, progress: 'Research klaar · schrijven start' };

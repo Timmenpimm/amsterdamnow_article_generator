@@ -83,6 +83,11 @@ export interface StandaardState {
   draftPayload?: Record<string, unknown>; // afgekeurde Claude-JSON, input voor de herkansing
   rejectReason?: string;                  // afkeurreden van de vorige poging
   schrijfAttempts?: number;               // aantal afgekeurde herkansingen tot nu toe
+  // Door de bronscanner aangedragen event-datum (JJJJ-MM-DD), als beginstaat op
+  // het topic gezet in addTopics. stepResearch prefereert deze boven de
+  // research-gok — de bronpagina is de betrouwbaarste datumbron.
+  seedStartDatum?: string;
+  seedEindDatum?: string;
 }
 
 export function parseStandaardState(topic: Topic): StandaardState | null {
@@ -125,6 +130,10 @@ export interface Article {
   slug: string;
   seoTitle: string;
   metaDescription: string;
+  // Event-startdatum uit ACF (start_datum), genormaliseerd naar JJJJ-MM-DD; ''
+  // als het geen event met datum is. De auto-publisher gebruikt dit om de
+  // event_date-classificatie zonder LLM-call te bepalen (zie lib/publisher.ts).
+  eventStart?: string;
   flags: {
     new_in_town: boolean;
     featured_item: boolean;

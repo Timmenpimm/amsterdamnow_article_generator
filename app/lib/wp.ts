@@ -227,6 +227,7 @@ async function mapPost(p: any, media: Record<number, MediaRef>): Promise<Article
     slug: p.slug || '',
     seoTitle: p.meta?.rank_math_title || '',
     metaDescription: p.meta?.rank_math_description || '',
+    eventStart: acfDateToIso(acf.start_datum),
     flags: {
       new_in_town: Boolean(acf.new_in_town),
       featured_item: Boolean(acf.featured_item),
@@ -566,6 +567,16 @@ function eventDateAcf(draft: GeneratedDraft): Record<string, string> {
   return { start_datum: start, eind_datum: eind };
 }
 
+// Omgekeerd aan toAcfDate: het ACF-opslagformaat Ymd (JJJJMMDD) terug naar
+// JJJJ-MM-DD, zodat de rest van de app (o.a. de auto-publisher) met het
+// gebruikelijke ISO-formaat werkt. Onherkenbaar/leeg → ''.
+function acfDateToIso(value: unknown): string {
+  const s = typeof value === 'string' ? value.trim() : '';
+  const m = /^(\d{4})(\d{2})(\d{2})$/.exec(s);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : '';
+}
+
 export async function createDraft(draft: GeneratedDraft): Promise<Article> {
   const contentHtml = stripTaxonomyFooter(draft.contentHtml);
   if (!LIVE) {
@@ -585,6 +596,7 @@ export async function createDraft(draft: GeneratedDraft): Promise<Article> {
       naam_locatie: draft.naamLocatie, adres: draft.adres, stad: draft.stad, website: draft.website, cordA: '', cordB: '', tags: draft.tags,
       focusKeyword: draft.focusKeyword, slug: draft.slug, seoTitle: draft.seoTitle,
       metaDescription: draft.metaDescription,
+      eventStart: acfDateToIso(toAcfDate(draft.startDatum) || ''),
       flags: { new_in_town: false, featured_item: false, beste_van_amsterdam: Boolean(draft.isList), homepage_carousel: false },
     };
     await demoSave(article);

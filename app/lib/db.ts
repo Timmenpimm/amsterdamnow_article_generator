@@ -423,7 +423,11 @@ export async function listTopics(): Promise<Topic[]> {
 // titels in deze set worden ingevoegd met dedup_override=1, zodat de
 // herkans-check vlak vóór createDraft() ze niet nog een keer blokkeert. Zie
 // docs/superpowers/specs/2026-07-21-wp-dedup-index-design.md §4.
-export async function addTopics(titles: string[], forceTitles: Set<string> = new Set()): Promise<{ added: Topic[]; skipped: string[] }> {
+export async function addTopics(
+  titles: string[],
+  forceTitles: Set<string> = new Set(),
+  seeds: Map<string, { start: string; eind: string }> = new Map(),
+): Promise<{ added: Topic[]; skipped: string[] }> {
   const db = await getDb();
   const rows = await db.all(`SELECT lower(trim(title)) AS t FROM topics WHERE status IN ('queued','writing','failed')`);
   const existing = new Set(rows.map(r => r.t as string));
@@ -439,9 +443,14 @@ export async function addTopics(titles: string[], forceTitles: Set<string> = new
     existing.add(key);
     sort += 1;
     const override = forceTitles.has(key) ? 1 : 0;
+    // Scanner-seed: als de bronscanner een event-datum aandroeg, zetten we die
+    // als beginstaat in list_state (StandaardState.seedStartDatum/seedEindDatum),
+    // zodat writer.ts stepResearch 'm als gezaghebbende event-datum oppikt.
+    const seed = seeds.get(key);
+    const listState = seed ? JSON.stringify({ seedStartDatum: seed.start, seedEindDatum: seed.eind }) : null;
     const rec = await db.get(
-      `INSERT INTO topics (title, status, phase, sort, created_at, dedup_override) VALUES ($1, 'queued', 'research', $2, $3, $4) RETURNING *`,
-      [title, sort, now(), override]
+      `INSERT INTO topics (title, status, phase, list_state, sort, created_at, dedup_override) VALUES ($1, 'queued', 'research', $2, $3, $4, $5) RETURNING *`,
+      [title, listState, sort, now(), override]
     );
     added.push(rec as Topic);
   }
