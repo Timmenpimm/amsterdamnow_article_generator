@@ -270,12 +270,18 @@ export async function findArticleLink(name: string): Promise<string | null> {
   return null;
 }
 
-export async function listArticles(): Promise<Article[]> {
+// `publishedPerPage`: hoeveel recent gepubliceerde artikelen worden meegeladen
+// (naast álle drafts). Het bord heeft aan 15 genoeg, maar de auto-publisher
+// heeft een langere terugkijk nodig voor de cluster-cooldown (zie de tick-route,
+// die 50 opvraagt). Drafts blijven onveranderd — dit raakt alleen de
+// published-tak.
+export async function listArticles(publishedPerPage = 15): Promise<Article[]> {
   if (!LIVE) return demoArticles();
   await loadTaxonomies();
+  const perPage = Math.max(1, Math.min(100, Math.trunc(publishedPerPage)));
   const [drafts, published] = await Promise.all([
     wpFetchAllPages(`/wp/v2/posts?status=draft&orderby=modified&context=edit`),
-    wpFetch(`/wp/v2/posts?status=publish&per_page=15&orderby=date`),
+    wpFetch(`/wp/v2/posts?status=publish&per_page=${perPage}&orderby=date`),
   ]);
   const posts = [...drafts, ...published];
   const mediaIds = new Set<number>();
@@ -350,6 +356,48 @@ export async function updateArticleTags(id: number, tags: string[]): Promise<Art
   }
   const tagIds = await tagIdsForNames(tags);
   await wpFetch(`/wp/v2/posts/${id}`, { method: 'POST', body: JSON.stringify({ tags: tagIds }) });
+  return getArticle(id);
+}
+
+// Normaliseert een door de redactie ingetypte website naar een absolute
+// https-URL: "arcam.nl" → "https://arcam.nl". Leeg blijft leeg (veld wissen
+// mag). Al aanwezige http(s)-schema's blijven ongemoeid.
+function normalizeWebsite(raw: string): string {
+  const s = (raw || '').trim();
+  if (!s) return '';
+  if (/^https?:\/\//i.test(s)) return s;
+  return 'https://' + s.replace(/^\/+/, '');
+}
+
+export interface ArticleFieldUpdate {
+  naamLocatie?: string;
+  adres?: string;
+  website?: string;
+}
+
+// Werkt de redactioneel corrigeerbare ACF-velden bij (naam_locatie, adres,
+// website). Alleen meegegeven velden worden geschreven; de website wordt naar
+// een absolute https-URL genormaliseerd. Zelfde patroon als updateArticleTags:
+// PATcht via een POST op de post en geeft het verse artikel terug.
+export async function updateArticleFields(id: number, upd: ArticleFieldUpdate): Promise<Article | null> {
+  const acf: Record<string, string> = {};
+  if (upd.naamLocatie !== undefined) acf.naam_locatie = upd.naamLocatie.trim();
+  if (upd.adres !== undefined) acf.adres = upd.adres.trim();
+  if (upd.website !== undefined) acf.website = normalizeWebsite(upd.website);
+
+  if (!LIVE) {
+    const a = (await demoArticles()).find(x => x.id === id);
+    if (!a) return null;
+    if (acf.naam_locatie !== undefined) a.naam_locatie = acf.naam_locatie;
+    if (acf.adres !== undefined) a.adres = acf.adres;
+    if (acf.website !== undefined) a.website = acf.website;
+    a.modified = new Date().toISOString();
+    await demoSave(a);
+    return a;
+  }
+  if (Object.keys(acf).length) {
+    await wpFetch(`/wp/v2/posts/${id}`, { method: 'POST', body: JSON.stringify({ acf }) });
+  }
   return getArticle(id);
 }
 

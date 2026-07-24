@@ -25,6 +25,12 @@ export default function ArticleDetail({ id }: { id: number }) {
   const [busy, setBusy] = useState(false);
   const [dragOver, setDragOver] = useState<UploadTarget | null>(null);
   const [fotograaf, setFotograaf] = useState('');
+  // Redactioneel corrigeerbare ACF-velden — lokale invoerstaat, net als fotograaf.
+  // De website wordt zonder schema getoond maar met https:// opgeslagen (server
+  // normaliseert).
+  const [naamLocatie, setNaamLocatie] = useState('');
+  const [adres, setAdres] = useState('');
+  const [website, setWebsite] = useState('');
   const [candidates, setCandidates] = useState<ImageCandidate[]>([]);
   const [suggestPhase, setSuggestPhase] = useState('');   // '' = niet bezig
   const fileInput = useRef<HTMLInputElement>(null);
@@ -39,6 +45,9 @@ export default function ArticleDetail({ id }: { id: number }) {
       setArticle(a);
       setList((payload.list as ListArticleStructure) || null);
       setFotograaf(a.fotograaf);
+      setNaamLocatie(a.naam_locatie);
+      setAdres(a.adres);
+      setWebsite(a.website.replace(/^https?:\/\//, ''));
       const board = (await bRes.json()) as BoardData;
       const meta: Record<number, { ready: boolean; label: string }> = {};
       const drafts = board.articles.filter(x => x.status === 'draft');
@@ -491,12 +500,30 @@ export default function ArticleDetail({ id }: { id: number }) {
             {/* artikelgegevens */}
             <div style={{ marginTop: 8, border: '1px solid var(--border-light)', borderRadius: 10, padding: '16px 18px', background: 'var(--panel)' }}>
               <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--gray)', marginBottom: 12 }}>
-                Artikelgegevens — door de AI ingevuld · alleen-lezen, corrigeren in WordPress
+                Artikelgegevens — door de AI ingevuld · locatie, adres en website kun je hier corrigeren
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 24px', fontSize: 13 }}>
-                <Meta k="Locatie" v={article.naam_locatie} />
-                <Meta k="Adres" v={article.adres} />
-                <Meta k="Website" v={article.website.replace(/^https?:\/\//, '')} />
+                <EditableMeta
+                  k="Locatie"
+                  value={naamLocatie}
+                  onChange={setNaamLocatie}
+                  onCommit={() => naamLocatie !== article.naam_locatie && patch({ naamLocatie })}
+                  placeholder="naam van de zaak…"
+                />
+                <EditableMeta
+                  k="Adres"
+                  value={adres}
+                  onChange={setAdres}
+                  onCommit={() => adres !== article.adres && patch({ adres })}
+                  placeholder="straat en huisnummer…"
+                />
+                <EditableMeta
+                  k="Website"
+                  value={website}
+                  onChange={setWebsite}
+                  onCommit={() => website !== article.website.replace(/^https?:\/\//, '') && patch({ website })}
+                  placeholder="voorbeeld.nl"
+                />
                 <Meta k="Kaart" v={article.cordA && article.cordB ? `${article.cordB}, ${article.cordA} ✓` : ''} />
                 <Meta k="Tags" v={article.tags.join(', ')} />
                 <Meta k="Stad" v={article.stad} />
@@ -922,6 +949,34 @@ function Meta({ k, v, wide, ellipsis }: { k: string; v: string; wide?: boolean; 
       >
         {v || '—'}
       </span>
+    </div>
+  );
+}
+
+// Bewerkbare variant van <Meta> voor de redactioneel corrigeerbare velden
+// (locatie, adres, website). Zelfde onBlur→patch-patroon als het fotograaf-veld.
+function EditableMeta({
+  k, value, onChange, onCommit, placeholder,
+}: {
+  k: string;
+  value: string;
+  onChange: (v: string) => void;
+  onCommit: () => void;
+  placeholder?: string;
+}) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, borderBottom: '1px solid #eceae5', paddingBottom: 8 }}>
+      <span style={{ color: 'var(--gray)', flexShrink: 0 }}>{k}</span>
+      <input
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        onBlur={onCommit}
+        placeholder={placeholder}
+        style={{
+          flex: 1, minWidth: 0, textAlign: 'right', border: '1px solid var(--border)', borderRadius: 6,
+          padding: '4px 8px', background: 'var(--card)', fontWeight: 600, fontSize: 12.5, outline: 'none',
+        }}
+      />
     </div>
   );
 }

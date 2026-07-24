@@ -6,20 +6,33 @@
 import type { Article } from './types';
 import { getSetting, setSetting, claimSetting, getPublishMetaByIds, upsertPublishMeta, type PublishMetaRow } from './db';
 import { askClaudeJson } from './claude';
-import { AUTOPUBLISH_CLASSIFY_SCHEMA } from './schemas';
 
 const SETTINGS_KEY = 'autopublish';
+
+// Standaard aantal laatst gepubliceerde artikelen waarvan het cluster (of, bij
+// gebrek daaraan, de primaire categorie) een nieuwe kandidaat blokkeert. Ook de
+// default voor de instelbare clusterCooldown.
+const DEFAULT_CLUSTER_COOLDOWN = 3;
+// Standaard harde dagcap: max aantal auto-publicaties per 24u. 0 = onbeperkt.
+const DEFAULT_MAX_PER_DAY = 12;
 
 export interface AutoPublishSettings {
   enabled: boolean;
   intervalMinutes: number;
   lastPublishedAt: string | null;
+  // Harde dagcap (max publicaties per rollend 24u-venster); 0 = onbeperkt.
+  maxPerDay: number;
+  // Aantal laatst gepubliceerde artikelen waartegen de cluster-cooldown checkt
+  // (zie pickNextForPublish). 0 = cooldown uit.
+  clusterCooldown: number;
 }
 
 const DEFAULT_SETTINGS: AutoPublishSettings = {
   enabled: false,
   intervalMinutes: 120,
   lastPublishedAt: null,
+  maxPerDay: DEFAULT_MAX_PER_DAY,
+  clusterCooldown: DEFAULT_CLUSTER_COOLDOWN,
 };
 
 // Zelfde ruwe JSON-string als opgeslagen onder app_settings.autopublish,
@@ -92,7 +105,33 @@ Niet-evergreen = nieuws, openingen, tijdgebonden content — verliest relevantie
 
 Gaat het artikel over een specifieke aankomende gebeurtenis of datum, geef die dan terug als "event_date" in het formaat "YYYY-MM-DD". Gaat het niet over een specifieke datum (of is het evergreen), geef dan event_date: null.
 
-Antwoord uitsluitend met geldig JSON conform het schema: een array "classifications" met per artikel {id, evergreen, event_date}, in dezelfde volgorde als de aangeleverde artikelen.`;
+Geef daarnaast een kort "cluster"-label dat het SOORT zaak of gebeurtenis beschrijft in 1 à 2 woorden, lowercase, Nederlands — bijvoorbeeld "padelclub", "muziekfestival", "restaurant", "expositie", "theatervoorstelling". Twee artikelen over hetzelfde soort zaak/gebeurtenis moeten hetzelfde cluster-label krijgen, zodat de redactie niet meerdere gelijksoortige artikelen kort na elkaar publiceert.
+
+Antwoord uitsluitend met geldig JSON conform het schema: een array "classifications" met per artikel {id, evergreen, event_date, cluster}, in dezelfde volgorde als de aangeleverde artikelen.`;
+
+// Lokaal schema (schemas.ts mag hier niet gewijzigd worden): identiek aan
+// AUTOPUBLISH_CLASSIFY_SCHEMA maar met het extra verplichte "cluster"-veld.
+const CLASSIFY_SCHEMA_WITH_CLUSTER: Record<string, unknown> = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['classifications'],
+  properties: {
+    classifications: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['id', 'evergreen', 'event_date', 'cluster'],
+        properties: {
+          id: { type: 'integer' },
+          evergreen: { type: 'boolean' },
+          event_date: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+          cluster: { type: 'string' },
+        },
+      },
+    },
+  },
+};
 
 function buildClassifyPrompt(articles: Article[], todayIso: string): string {
   const lines = articles.map(a => {
@@ -104,6 +143,14 @@ function buildClassifyPrompt(articles: Article[], todayIso: string): string {
 
 function isValidEventDate(v: unknown): v is string {
   return typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+}
+
+// Normaliseert een clusterlabel uit de classifier: lowercase, randspaties weg,
+// interne spaties samen. Leeg/ongeldig → null (valt terug op de categorie).
+function normalizeCluster(v: unknown): string | null {
+  if (typeof v !== 'string') return null;
+  const s = v.toLowerCase().trim().replace(/\s+/g, ' ').slice(0, 60);
+  return s || null;
 }
 
 // Classificeert artikelen die nog geen publish_meta-rij hebben, in maximaal
@@ -122,8 +169,10 @@ export async function classifyArticles(articles: Article[]): Promise<Map<number,
   // en de datum kennen we exact. Scheelt een Haiku-call per event (token-winst)
   // en is betrouwbaarder dan de datum uit titel+intro afleiden.
   for (const a of unclassified.filter(a => isValidEventDate(a.eventStart))) {
-    await upsertPublishMeta(a.id, false, a.eventStart as string);
-    known.set(a.id, { evergreen: false, event_date: a.eventStart as string });
+    // Cluster onbekend zonder LLM-call — pickNextForPublish valt voor de
+    // cooldown terug op de primaire categorie van dit artikel.
+    await upsertPublishMeta(a.id, false, a.eventStart as string, null);
+    known.set(a.id, { evergreen: false, event_date: a.eventStart as string, cluster: null });
   }
 
   // Alleen artikelen zónder bekende datum gaan (gelimiteerd) langs de classifier.
@@ -134,7 +183,7 @@ export async function classifyArticles(articles: Article[]): Promise<Map<number,
     const today = todayInAmsterdam();
     const prompt = buildClassifyPrompt(needLlm, today);
     const result = await askClaudeJson(
-      CLASSIFY_SYSTEM, prompt, false, CLASSIFY_MODEL, CLASSIFY_MAX_TOKENS, AUTOPUBLISH_CLASSIFY_SCHEMA
+      CLASSIFY_SYSTEM, prompt, false, CLASSIFY_MODEL, CLASSIFY_MAX_TOKENS, CLASSIFY_SCHEMA_WITH_CLUSTER
     );
     const list = Array.isArray(result.classifications) ? result.classifications : [];
     const askedIds = new Set(needLlm.map(a => a.id));
@@ -143,8 +192,9 @@ export async function classifyArticles(articles: Article[]): Promise<Map<number,
       if (!askedIds.has(id)) continue; // defensief: alleen ids verwerken die we ook vroegen
       const evergreen = raw.evergreen === true;
       const event_date = isValidEventDate(raw.event_date) ? raw.event_date : null;
-      await upsertPublishMeta(id, evergreen, event_date);
-      known.set(id, { evergreen, event_date });
+      const cluster = normalizeCluster(raw.cluster);
+      await upsertPublishMeta(id, evergreen, event_date, cluster);
+      known.set(id, { evergreen, event_date, cluster });
     }
   } catch (err) {
     console.warn('[publisher] classificatie mislukt, artikelen blijven ongeclassificeerd (fail-open)', err);
@@ -194,25 +244,70 @@ function lastPublishedByCategory(published: Pick<Article, 'category' | 'date'>[]
   return map;
 }
 
-// Pure functie: geen DB/netwerk, dus makkelijk te redeneren en (met fixtures)
-// te testen. `ready` = artikelen in de "Klaar voor publicatie"-kolom,
-// `metaById` = classificatie per artikel-id (ontbrekend = nog niet
-// geclassificeerd, telt als niet-evergreen zonder event), `published` = alle
-// al gepubliceerde artikelen op het bord (voor de categorie-balans).
-export function pickNextForPublish(
-  ready: Article[],
+// Primaire categorie = eerste categorie vóór de komma (wp.ts voegt meerdere
+// categorieën samen met ", "). "Uitgaan, Cultuur" en "Uitgaan" tellen zo als
+// hetzelfde cluster — anders zou het minieme verschil de spreiding omzeilen.
+function primaryCategoryKey(category: string | undefined): string {
+  return (category || '').split(',')[0].trim().toLowerCase();
+}
+
+// Spreidingssleutel van een artikel: het clusterlabel als dat bekend is (uit de
+// Haiku-classificatie), anders de primaire categorie. Leeg → '' (blokkeert
+// niets).
+function clusterKeyFor(article: Pick<Article, 'id' | 'category'>, metaById: Map<number, PublishMetaRow>): string {
+  const cluster = metaById.get(article.id)?.cluster;
+  if (cluster) return cluster;
+  return primaryCategoryKey(article.category);
+}
+
+// Spreidingssleutels van de laatste `cooldown` gepubliceerde artikelen (nieuwste
+// eerst). Een kandidaat met een sleutel in deze set wordt geweerd, tenzij er
+// geen enkel alternatief is (zie pickNextForPublish). cooldown <= 0 → leeg.
+function recentClusterKeys(
+  published: Pick<Article, 'id' | 'category' | 'date'>[],
+  metaById: Map<number, PublishMetaRow>,
+  cooldown: number
+): Set<string> {
+  const keys = new Set<string>();
+  if (cooldown <= 0) return keys;
+  const sorted = [...published]
+    .filter(a => Number.isFinite(new Date(a.date).getTime()))
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    .slice(0, cooldown);
+  for (const a of sorted) {
+    const key = clusterKeyFor(a, metaById);
+    if (key) keys.add(key);
+  }
+  return keys;
+}
+
+// Aantal al gepubliceerde artikelen binnen het rollende 24u-venster vóór `now`
+// — de dagcap (maxPerDay) in de tick-route leunt hierop. Fail-open: ongeldige
+// datums tellen niet mee.
+export function publishedCountLast24h(published: Pick<Article, 'date'>[], now: Date = new Date()): number {
+  const cutoff = now.getTime() - 24 * 3_600_000;
+  let count = 0;
+  for (const a of published) {
+    const t = new Date(a.date).getTime();
+    if (Number.isFinite(t) && t >= cutoff && t <= now.getTime()) count += 1;
+  }
+  return count;
+}
+
+// Beste kandidaat binnen `pool` op score = tier + categorie-balansbonus. Puur
+// intern; pickNextForPublish bepaalt eerst welke pool (na cluster-cooldown).
+function pickBest(
+  pool: Article[],
   metaById: Map<number, PublishMetaRow>,
   published: Pick<Article, 'category' | 'date'>[],
-  now: Date = new Date()
+  now: Date
 ): Article | null {
-  if (!ready.length) return null;
   const lastByCategory = lastPublishedByCategory(published);
-
   let best: Article | null = null;
   let bestScore = -Infinity;
   let bestDateMs = Infinity;
 
-  for (const a of ready) {
+  for (const a of pool) {
     const tier = tierScore(metaById.get(a.id), now);
     const lastMs = lastByCategory.get(a.category || '');
     const bonus = lastMs === undefined
@@ -229,4 +324,32 @@ export function pickNextForPublish(
     }
   }
   return best;
+}
+
+// Pure functie: geen DB/netwerk, dus makkelijk te redeneren en (met fixtures)
+// te testen. `ready` = artikelen in de "Klaar voor publicatie"-kolom,
+// `metaById` = classificatie per artikel-id (ontbrekend = nog niet
+// geclassificeerd, telt als niet-evergreen zonder event), `published` = alle
+// al gepubliceerde artikelen op het bord (voor de categorie-balans én de
+// cluster-cooldown), `clusterCooldown` = aantal laatst gepubliceerde artikelen
+// waarvan het cluster een kandidaat blokkeert.
+//
+// Harde spreidingsregel: een kandidaat met hetzelfde cluster (of, fallback,
+// dezelfde primaire categorie) als één van de laatste N gepubliceerde artikelen
+// wordt geweerd. Blijft er dan niets over, dan mag de geweerde pool alsnog —
+// niets publiceren is erger dan een clustertje herhalen.
+export function pickNextForPublish(
+  ready: Article[],
+  metaById: Map<number, PublishMetaRow>,
+  published: Pick<Article, 'id' | 'category' | 'date'>[],
+  clusterCooldown: number = DEFAULT_CLUSTER_COOLDOWN,
+  now: Date = new Date()
+): Article | null {
+  if (!ready.length) return null;
+  const blocked = recentClusterKeys(published, metaById, clusterCooldown);
+  const allowed = blocked.size
+    ? ready.filter(a => !blocked.has(clusterKeyFor(a, metaById)))
+    : ready;
+  const pool = allowed.length ? allowed : ready;
+  return pickBest(pool, metaById, published, now);
 }
