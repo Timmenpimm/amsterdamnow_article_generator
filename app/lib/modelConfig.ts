@@ -11,14 +11,12 @@ import { getSetting, setSetting } from './db';
 //
 // Kern: Omniroute's /v1/messages spreekt hetzelfde Anthropic-Messages-formaat
 // (getest 2026-07-25: content[]{type:text}, stop_reason, usage), dus de
-// request/response-afhandeling in claude.ts blijft identiek. TWEE verschillen
-// zijn wél afgevangen via capability-vlaggen hieronder:
+// request/response-afhandeling in claude.ts blijft identiek. Eén verschil is
+// wél afgevangen via een capability-vlag hieronder:
 //   - Omniroute negeert `output_config` (structured outputs): het antwoordt met
 //     platte tekst i.p.v. gegarandeerde JSON. Daarom stuurt claude.ts bij
 //     Omniroute géén output_config en valt het terug op het schemaloze pad
 //     (extractJson + corrigerende herkansing) dat er toch al is.
-//   - Omniroute draait de Anthropic-hosted `web_search`-tool niet. Bij
-//     Omniroute wordt die tool weggelaten (research zonder live-zoeken).
 // Omniroute negeert daarnaast `thinking:{type:disabled}` (het denkt toch); dat
 // is onschadelijk want textFrom() filtert op type==='text'.
 // ---------------------------------------------------------------------------
@@ -104,7 +102,6 @@ export interface ActiveProvider {
   messagesUrl: string;
   headers: Record<string, string>;
   supportsStructuredOutputs: boolean;
-  supportsWebSearch: boolean;
   // Kiest het uiteindelijke model-id. Bij Anthropic: het door de aanroeper
   // gevraagde model (ongewijzigd). Bij Omniroute: het in Instellingen gekozen
   // (vision-)model — de per-stap Anthropic-modelnamen worden dan genegeerd.
@@ -122,7 +119,6 @@ function anthropicProvider(): ActiveProvider {
       'anthropic-version': '2023-06-01',
     },
     supportsStructuredOutputs: true,
-    supportsWebSearch: true,
     modelFor: (requested) => requested,
   };
 }
@@ -138,7 +134,6 @@ function omnirouteProvider(cfg: OmnirouteConfig): ActiveProvider {
       'anthropic-version': '2023-06-01',
     },
     supportsStructuredOutputs: false,
-    supportsWebSearch: false,
     modelFor: (_requested, isVision) => (isVision ? cfg.visionModel : cfg.model) || cfg.model,
   };
 }

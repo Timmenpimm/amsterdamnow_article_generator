@@ -183,7 +183,7 @@ export async function classifyArticles(articles: Article[]): Promise<Map<number,
     const today = todayInAmsterdam();
     const prompt = buildClassifyPrompt(needLlm, today);
     const result = await askClaudeJson(
-      CLASSIFY_SYSTEM, prompt, false, CLASSIFY_MODEL, CLASSIFY_MAX_TOKENS, CLASSIFY_SCHEMA_WITH_CLUSTER
+      CLASSIFY_SYSTEM, prompt, CLASSIFY_MODEL, CLASSIFY_MAX_TOKENS, CLASSIFY_SCHEMA_WITH_CLUSTER
     );
     const list = Array.isArray(result.classifications) ? result.classifications : [];
     const askedIds = new Set(needLlm.map(a => a.id));

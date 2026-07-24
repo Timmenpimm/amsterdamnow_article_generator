@@ -140,7 +140,7 @@ export default function ModelPanel({
               <ProviderCard
                 active={!isOmni}
                 title="Claude (Anthropic)"
-                subtitle="Rechtstreeks naar api.anthropic.com. Volledige features (structured output, web-search)."
+                subtitle="Rechtstreeks naar api.anthropic.com. Volledige features (structured output)."
                 onClick={() => !busy && save({ provider: 'anthropic' })}
               />
               <ProviderCard
@@ -256,8 +256,7 @@ export default function ModelPanel({
                 <div style={{ fontWeight: 700, color: 'var(--ink)', marginBottom: 4 }}>Goed om te weten</div>
                 <ul style={{ margin: 0, paddingLeft: 18 }}>
                   <li>Op de Vercel-productieomgeving is <code>localhost</code> onbereikbaar — gebruik Omniroute lokaal, of vul een publiek bereikbare URL in.</li>
-                  <li>Omniroute draait de Anthropic web-search niet: de research-stap werkt dan zonder live-zoeken.</li>
-                  <li>Structured output valt automatisch terug op het vangnet (extractie + herkansing), dus de pipeline blijft werken.</li>
+                  <li>Structured output valt bij Omniroute automatisch terug op het vangnet (extractie + herkansing), dus de pipeline blijft werken.</li>
                 </ul>
               </div>
             </>
