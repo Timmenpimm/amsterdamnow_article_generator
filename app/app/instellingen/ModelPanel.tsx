@@ -12,7 +12,28 @@ type ModelSettings = {
     visionModel: string;
     hasApiKey: boolean;
   };
+  failover: boolean;
 };
+
+// Zelfde toggle-patroon/stijl als AutoPublishPanel (geen gedeelde util-class).
+function Toggle({ on, onClick, disabled }: { on: boolean; onClick?: () => void; disabled?: boolean }) {
+  return (
+    <span
+      onClick={disabled ? undefined : onClick}
+      style={{
+        width: 34, height: 20, borderRadius: 999, flexShrink: 0, position: 'relative',
+        background: on ? 'var(--ink)' : 'var(--border)', cursor: disabled ? 'default' : 'pointer',
+        transition: 'background 0.15s',
+      }}
+    >
+      <span style={{
+        position: 'absolute', top: 2, left: on ? 16 : 2, width: 16, height: 16, borderRadius: '50%',
+        background: '#fff', transition: 'left 0.15s',
+      }}
+      />
+    </span>
+  );
+}
 
 const inputStyle: React.CSSProperties = {
   fontSize: 13, padding: '8px 12px', borderRadius: 8,
@@ -98,7 +119,7 @@ export default function ModelPanel({
     if (settings?.provider === 'omniroute') fetchModels();
   }, [settings?.provider, fetchModels]);
 
-  async function save(partial: Partial<{ provider: string; omniroute: Record<string, unknown> }>) {
+  async function save(partial: Partial<{ provider: string; omniroute: Record<string, unknown>; failover: boolean }>) {
     setBusy(true);
     try {
       const res = await fetch('/api/model', {
@@ -132,6 +153,17 @@ export default function ModelPanel({
       <PanelHeader eyebrow={eyebrow} title={title} description={description} />
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '20px 28px 24px' }}>
         <div className="card" style={{ maxWidth: 620, padding: 18, display: 'flex', flexDirection: 'column', gap: 18 }}>
+
+          {/* AUTOMATISCHE FAILOVER (zichtbaar in beide provider-standen) */}
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+            <Toggle on={settings.failover} disabled={busy} onClick={() => save({ failover: !settings.failover })} />
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 700 }}>Automatische failover naar Omniroute</div>
+              <div style={{ fontSize: 12, color: 'var(--gray)', marginTop: 2, lineHeight: 1.5 }}>
+                Als je Anthropic-credits op zijn of je wordt gerate-limit, gaat de tool automatisch verder via Omniroute.
+              </div>
+            </div>
+          </div>
 
           {/* PROVIDER-KEUZE */}
           <div>

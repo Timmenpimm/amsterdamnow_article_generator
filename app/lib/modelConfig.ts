@@ -33,6 +33,10 @@ export interface OmnirouteConfig {
 export interface ModelSettings {
   provider: ProviderId;
   omniroute: OmnirouteConfig;
+  // Automatische failover: als een directe Anthropic-call faalt door opgeraakte
+  // credits of rate-limiting, draait claude.ts dezelfde call éénmalig opnieuw
+  // via de Omniroute-config hierboven. Staat standaard aan.
+  failover: boolean;
 }
 
 export const DEFAULT_OMNIROUTE: OmnirouteConfig = {
@@ -45,6 +49,7 @@ export const DEFAULT_OMNIROUTE: OmnirouteConfig = {
 export const DEFAULT_SETTINGS: ModelSettings = {
   provider: 'anthropic',
   omniroute: DEFAULT_OMNIROUTE,
+  failover: true,
 };
 
 const SETTING_KEY = 'model_provider';
@@ -71,6 +76,8 @@ function coerce(raw: unknown): ModelSettings {
       model: typeof o.model === 'string' && o.model.trim() ? o.model.trim() : DEFAULT_OMNIROUTE.model,
       visionModel: typeof o.visionModel === 'string' && o.visionModel.trim() ? o.visionModel.trim() : DEFAULT_OMNIROUTE.visionModel,
     },
+    // Standaard aan; alleen een expliciete `false` zet failover uit.
+    failover: typeof obj.failover === 'boolean' ? obj.failover : true,
   };
 }
 
@@ -90,6 +97,7 @@ export async function saveModelSettings(partial: Partial<ModelSettings>): Promis
   const next: ModelSettings = coerce({
     provider: partial.provider ?? current.provider,
     omniroute: { ...current.omniroute, ...(partial.omniroute || {}) },
+    failover: partial.failover ?? current.failover,
   });
   await setSetting(SETTING_KEY, JSON.stringify(next));
   cache = { at: nowMs(), value: next };
@@ -141,4 +149,21 @@ function omnirouteProvider(cfg: OmnirouteConfig): ActiveProvider {
 export async function activeProvider(): Promise<ActiveProvider> {
   const s = await getModelSettings();
   return s.provider === 'omniroute' ? omnirouteProvider(s.omniroute) : anthropicProvider();
+}
+
+// Bouwt een Omniroute-ActiveProvider uit de gegeven instellingen, óók als de
+// actieve provider 'anthropic' is. Nodig voor de automatische failover in
+// claude.ts: die moet een Omniroute-route kunnen samenstellen terwijl Anthropic
+// de standaardkeuze blijft.
+export function omnirouteProviderFromSettings(s: ModelSettings): ActiveProvider {
+  return omnirouteProvider(s.omniroute);
+}
+
+// Geeft de Omniroute-ActiveProvider terug als automatische failover aan staat,
+// anders null. claude.ts gebruikt dit om na een credit-/rate-fout op Anthropic
+// éénmalig naar Omniroute over te schakelen.
+export async function failoverProvider(): Promise<ActiveProvider | null> {
+  const s = await getModelSettings();
+  if (!s.failover) return null;
+  return omnirouteProviderFromSettings(s);
 }

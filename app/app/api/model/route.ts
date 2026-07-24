@@ -17,6 +17,7 @@ function redact(s: Awaited<ReturnType<typeof getModelSettings>>) {
       visionModel: s.omniroute.visionModel,
       hasApiKey: Boolean(s.omniroute.apiKey),
     },
+    failover: s.failover,
   };
 }
 
@@ -33,6 +34,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "provider moet 'anthropic' of 'omniroute' zijn." }, { status: 400 });
     }
     partial.provider = body.provider as ProviderId;
+  }
+
+  if (body.failover !== undefined) {
+    if (typeof body.failover !== 'boolean') {
+      return NextResponse.json({ error: 'failover moet een boolean zijn.' }, { status: 400 });
+    }
+    partial.failover = body.failover;
   }
 
   const o = body.omniroute;
