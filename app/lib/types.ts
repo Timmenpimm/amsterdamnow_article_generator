@@ -88,6 +88,12 @@ export interface StandaardState {
   // research-gok — de bronpagina is de betrouwbaarste datumbron.
   seedStartDatum?: string;
   seedEindDatum?: string;
+  // Uitkomst van de entiteitsverificatie na de research (writer.ts verifyEntity):
+  // horen naam_locatie, adres en website bij dezelfde echte zaak? Werkstroom C
+  // kan dit later uitlezen. Fail-open: bij een mislukte verificatiecall blijft
+  // entiteitConsistent undefined en de waarschuwing leeg.
+  entiteitConsistent?: boolean;
+  entiteitWaarschuwing?: string;
 }
 
 export function parseStandaardState(topic: Topic): StandaardState | null {
@@ -291,7 +297,7 @@ export const DEFAULT_STANDAARD_CONSTRAINTS: StandaardConstraints = {
   subregelWords: { min: 10, max: 15 },
   introWords: { min: 40, max: 60 },
   contentWords: { min: 400, max: 450 },
-  quoteWords: { min: 15, max: 25 },
+  quoteWords: { min: 25, max: 40 },
   minParagraphs: 5,
   titleMustContainTopic: true,
   quoteMustBeVerbatimInContent: true,

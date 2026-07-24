@@ -81,7 +81,9 @@ export async function processListStep(topicId?: number): Promise<ListStepResult 
 async function stepSelect(topic: Topic): Promise<ListStepResult> {
   const s = state(topic);
   const prompt = await activePrompt('lijst-selectie');
-  const sources = await researchWithTavily(topic.title);
+  // researchWithTavily geeft nu { sources, officialUrl } terug (zie tavily.ts);
+  // de lijstpipeline gebruikt alleen de bronnen.
+  const { sources } = await researchWithTavily(topic.title);
   const result = await askClaudeJson(
     prompt.content,
     `Thema van het lijstartikel: ${topic.title}${weekendContext(s.weekendgids)}\n\nTavily-bronnen:\n${sources.map((x, i) => `\n[${i + 1}] ${x.title}\n${x.url}\n${x.content.slice(0, 6000)}`).join('\n')}`,
@@ -112,7 +114,7 @@ async function stepVerify(topic: Topic): Promise<ListStepResult> {
   for (const item of pending) {
     let sources;
     try {
-      sources = await researchWithTavily(`${item.naam}`);
+      sources = (await researchWithTavily(`${item.naam}`)).sources;
     } catch (error: any) {
       // Configuratiefouten (ontbrekende API-key) horen de run te laten falen;
       // alleen "niets gevonden" is een geldige reden om een item af te keuren.
