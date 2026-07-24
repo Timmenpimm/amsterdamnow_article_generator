@@ -13,7 +13,7 @@ Je beoordeelt kandidaat-beelden voor een artikel. De beeldstijl van de site:
 - Warm en levendig: natuurlijk licht of sfeervol interieurlicht, het "avondje uit"-gevoel. Kille stockfoto-sfeer scoort laag.
 - Typische onderwerpen: interieur van de zaak, terras of gevel, gerecht in close-up met ondiepe scherptediepte, mensen die de plek echt gebruiken (niet poserend recht in de camera), event- of tentoonstellingsbeeld, straatbeeld van de buurt.
 - Specifiek wint van generiek: het genoemde venue of event zelf > de genoemde buurt > herkenbaar Amsterdam > generiek thema. Een beeld dat herkenbaar een ándere stad of een ander land toont is 0 punten.
-- Het beeld moet bruikbaar zijn liggend én als vierkante crop: onderwerp niet tegen de rand geplakt.
+- Kies liggende, rechthoekige beelden (breder dan hoog). Staande of vierkante beelden zijn ongeschikt. Componeer zo dat het onderwerp ruim in beeld staat en niet tegen de rand, zodat een vierkante uitsnede voor social ook nog werkt.
 - Watermerken, tekst-overlays, zichtbare compressie of gedateerde beelden (oude auto's, oude telefoons prominent in beeld) kosten zwaar punten.
 
 Wees streng: 75+ betekent "kan zo op de site". Twijfel over of het beeld wel echt bij dít onderwerp past drukt de score onder de 50.`;
@@ -117,7 +117,8 @@ ${meta}
 
 Beoordeel elk beeld op geschiktheid voor dit artikel volgens de beeldstijl. Antwoord ALLEEN met JSON:
 {"scores":[{"beeld":1,"score":0-100,"reden":"één korte zin in het Nederlands","rol":"featured"|"slider"|"geen"}, …]}
-Geef precies één entry per beeld, in volgorde. "rol" is je advies: "featured" alleen voor het sterkste, meest artikelspecifieke beeld.`;
+Geef precies één entry per beeld, in volgorde. "rol" is je advies: "featured" alleen voor het sterkste, meest artikelspecifieke beeld.
+Let op de afmetingen: een duidelijk staand beeld (hoogte > breedte) is ongeschikt en krijgt een lage score.`;
 }
 
 function parseScores(data: Record<string, unknown>): Score[] {

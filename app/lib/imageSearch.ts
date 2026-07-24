@@ -14,8 +14,23 @@ import type { Article, ImageCandidateDraft } from './types';
 //   alles op Google Images auteursrechtelijk beschermd. Die licentie-info
 //   komt van paginamarkup en is indicatief; de redactie kan via de
 //   bronpagina-link controleren vóór publicatie.
-// Harde eis van de redactie: beide zijden minimaal 1000 px.
-export const MIN_EDGE = 1000;
+// Harde eis van de redactie: beeld moet liggend/rechthoekig zijn. Een enkel
+// minimum op béide zijden werkt averechts (het gooit 1600×800 weg maar laat
+// 1000×2000 toe). We eisen daarom een landscape-ratio plus een minimum op de
+// lange én — veel lager — de korte zijde, zodat een normale liggende foto
+// (1600×900, 1200×800) slaagt en een vierkant/staand beeld faalt.
+const MIN_LONG_EDGE = 1200;
+const MIN_SHORT_EDGE = 700;
+const LANDSCAPE_RATIO = 1.3;
+
+// Geldig = duidelijk liggend én groot genoeg. width/height zitten al in de
+// candidate-metadata van elke provider, dus deze centrale guard vangt ook
+// Wikimedia Commons af (dat geen oriëntatie-zoekparam heeft).
+export function isLandscapeEnough(width: number, height: number): boolean {
+  const w = Number(width), h = Number(height);
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return false;
+  return w >= h * LANDSCAPE_RATIO && w >= MIN_LONG_EDGE && h >= MIN_SHORT_EDGE;
+}
 const PER_QUERY = 20;
 const FETCH_TIMEOUT_MS = 8000;
 // Bovengrens op het aantal kandidaten dat doorgaat naar scoring. Scoren kost
@@ -51,12 +66,12 @@ export function buildImageQueries(article: Pick<Article, 'title' | 'naam_locatie
 type Draft = ImageCandidateDraft;
 
 async function searchOpenverse(query: string): Promise<Draft[]> {
-  const url = `https://api.openverse.org/v1/images/?q=${encodeURIComponent(query)}&license_type=commercial&page_size=${PER_QUERY}`;
+  const url = `https://api.openverse.org/v1/images/?q=${encodeURIComponent(query)}&license_type=commercial&aspect_ratio=wide&page_size=${PER_QUERY}`;
   const res = await timeoutFetch(url, { headers: { 'User-Agent': 'AmsterdamNOW-beeldselectie' } });
   if (!res.ok) throw new Error(`Openverse ${res.status}`);
   const data = await res.json() as { results?: any[] };
   return (data.results || [])
-    .filter(r => r.url && Number(r.width) >= MIN_EDGE && Number(r.height) >= MIN_EDGE && !/\.svg(\?|$)/i.test(r.url))
+    .filter(r => r.url && !/\.svg(\?|$)/i.test(r.url))
     .map(r => ({
       url: r.url as string,
       thumb_url: (r.thumbnail || r.url) as string,
@@ -86,7 +101,7 @@ async function searchCommons(query: string): Promise<Draft[]> {
   const out: Draft[] = [];
   for (const page of Object.values(data.query?.pages || {})) {
     const info = page.imageinfo?.[0];
-    if (!info?.url || Number(info.width) < MIN_EDGE || Number(info.height) < MIN_EDGE) continue;
+    if (!info?.url) continue;
     if (!/\.(jpe?g|png|webp)$/i.test(info.url)) continue;
     const meta = info.extmetadata || {};
     const license = String(meta.LicenseShortName?.value || '');
@@ -109,13 +124,12 @@ async function searchCommons(query: string): Promise<Draft[]> {
 async function searchPexels(query: string): Promise<Draft[]> {
   const key = process.env.PEXELS_API_KEY;
   if (!key) return [];
-  const res = await timeoutFetch(`https://api.pexels.com/v1/search?query=${encodeURIComponent(query)}&per_page=${PER_QUERY}`, {
+  const res = await timeoutFetch(`https://api.pexels.com/v1/search?query=${encodeURIComponent(query)}&orientation=landscape&per_page=${PER_QUERY}`, {
     headers: { Authorization: key },
   });
   if (!res.ok) throw new Error(`Pexels ${res.status}`);
   const data = await res.json() as { photos?: any[] };
   return (data.photos || [])
-    .filter(p => Number(p.width) >= MIN_EDGE && Number(p.height) >= MIN_EDGE)
     .map(p => ({
       url: (p.src?.original || p.src?.large2x) as string,
       thumb_url: (p.src?.medium || p.src?.large) as string,
@@ -136,8 +150,9 @@ async function searchGoogle(query: string): Promise<Draft[]> {
   const res = await timeoutFetch('https://google.serper.dev/images', {
     method: 'POST',
     headers: { 'X-API-KEY': key, 'Content-Type': 'application/json' },
-    // tbs=il:cl is Googles eigen "Creative Commons-licenties"-beeldfilter.
-    body: JSON.stringify({ q: query, gl: 'nl', hl: 'nl', num: PER_QUERY, tbs: 'il:cl' }),
+    // tbs=il:cl is Googles eigen "Creative Commons-licenties"-beeldfilter;
+    // iar:w voegt Googles "wide/liggend"-beeldvormfilter toe.
+    body: JSON.stringify({ q: query, gl: 'nl', hl: 'nl', num: PER_QUERY, tbs: 'il:cl,iar:w' }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({})) as { message?: string };
@@ -145,7 +160,7 @@ async function searchGoogle(query: string): Promise<Draft[]> {
   }
   const data = await res.json() as { images?: any[] };
   return (data.images || [])
-    .filter(it => it.imageUrl && Number(it.imageWidth) >= MIN_EDGE && Number(it.imageHeight) >= MIN_EDGE && !/\.svg(\?|$)/i.test(it.imageUrl))
+    .filter(it => it.imageUrl && !/\.svg(\?|$)/i.test(it.imageUrl))
     .map(it => ({
       url: it.imageUrl as string,
       thumb_url: (it.thumbnailUrl || it.imageUrl) as string,
@@ -186,6 +201,9 @@ export async function searchImageCandidates(
       return;
     }
     for (const d of s.value) {
+      // Centrale liggend-guard: alleen duidelijk rechthoekige, liggende
+      // beelden die groot genoeg zijn gaan door naar scoring.
+      if (!isLandscapeEnough(d.width, d.height)) continue;
       const key = d.url.split('?')[0];
       if (seen.has(key)) continue;
       seen.add(key);
