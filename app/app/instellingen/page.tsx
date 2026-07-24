@@ -7,6 +7,7 @@ import { CONSTRAINT_KINDS, PROMPT_KINDS } from '@/lib/types';
 import PromptEditor from './PromptEditor';
 import CriteriaEditor from './CriteriaEditor';
 import AutoPublishPanel from './AutoPublishPanel';
+import ModelPanel from './ModelPanel';
 import PlaceholderPanel from './PlaceholderPanel';
 import { RAIL_GROUPS, panelMeta, PLACEHOLDER_CARD, type RailKey } from './meta';
 
@@ -70,7 +71,7 @@ export default function Instellingen() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [promptResults, constraintResults, publish] = await Promise.all([
+      const [promptResults, constraintResults, publish, model] = await Promise.all([
         Promise.all(
           PROMPT_KINDS.map(k =>
             fetch(`/api/prompts?kind=${k}`).then(r => r.json()).then(d => [k, d] as const).catch(() => [k, null] as const)
@@ -82,6 +83,7 @@ export default function Instellingen() {
           )
         ),
         fetch('/api/publish/settings').then(r => (r.ok ? r.json() : null)).catch(() => null),
+        fetch('/api/model').then(r => (r.ok ? r.json() : null)).catch(() => null),
       ]);
       if (cancelled) return;
       const next: Partial<Record<RailKey, Badge>> = {};
@@ -95,7 +97,9 @@ export default function Instellingen() {
       }
       next.publiceren = publish?.enabled ? { label: 'automatisch', tone: 'green' } : { label: 'uit', tone: 'muted' };
       next.variabelen = { label: 'context', tone: 'muted' };
-      next.model = { label: 'Claude', tone: 'muted' };
+      next.model = model?.provider === 'omniroute'
+        ? { label: 'Omniroute', tone: 'green' }
+        : { label: 'Claude', tone: 'muted' };
       setBadges(next);
     })();
     return () => { cancelled = true; };
@@ -163,7 +167,9 @@ export default function Instellingen() {
         {/* PANEEL (+ conditionele versielade zit in de editor-componenten) */}
         {selected === 'publiceren' ? (
           <AutoPublishPanel key="publiceren" eyebrow={meta.eyebrow} title={meta.title} description={meta.description} onChanged={onChanged} />
-        ) : selected === 'variabelen' || selected === 'model' ? (
+        ) : selected === 'model' ? (
+          <ModelPanel key="model" eyebrow={meta.eyebrow} title={meta.title} description={meta.description} onChanged={onChanged} />
+        ) : selected === 'variabelen' ? (
           <PlaceholderPanel
             key={selected}
             eyebrow={meta.eyebrow}
