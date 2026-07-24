@@ -1,12 +1,13 @@
 import { activeConstraints, activePrompt, completeTopic, failTopic, saveTopicProgress } from './db';
 import { askClaudeJson, FAST_WRITE_MODEL, TITLE_MODEL } from './claude';
-import { RESEARCH_SCHEMA, ARTICLE_SCHEMA, SEO_SCHEMA, ENTITY_VERIFY_SCHEMA } from './schemas';
+import { RESEARCH_SCHEMA, ARTICLE_SCHEMA, SEO_SCHEMA, ENTITY_VERIFY_SCHEMA, QUOTE_REWRITE_SCHEMA } from './schemas';
 import { createDraft, taxonomyChoices } from './wp';
 import { checkTopicAgainstWp } from './dedup';
 import { researchWithTavily } from './tavily';
 import { validateArticle, checkTitle, GeneratedArticle } from './validation';
-import { parseStandaardState, type StandaardConstraints, type StandaardPhase, type StandaardState, type Topic, type WordRange } from './types';
+import { parseStandaardState, type Article, type StandaardConstraints, type StandaardPhase, type StandaardState, type Topic, type WordRange } from './types';
 import { formatStandardArticleHtml } from './articleHtml';
+import { decodeHtmlEntities } from './htmlEntities';
 
 // Ruime marge boven een realistisch artikel (~450 woorden content + korte
 // titel/subregel/intro/quote-velden ≈ 800-1000 tokens als JSON), maar veel
@@ -236,12 +237,60 @@ async function stepResearch(topic: Topic, s: StandaardState): Promise<StandaardS
   return { topic, phase: 'schrijf', done: false, progress: 'Research klaar · schrijven start' };
 }
 
-// Eén goedkope Claude-call (FAST_WRITE_MODEL) die controleert of naam_locatie,
-// adres en website bij één en dezelfde echte entiteit horen, gegeven de
-// gecrawlde officiële homepage. Canoniseert de naam (strip Google-Maps-achtige
-// toevoegingen) en bewaart consistentie + waarschuwing op de topic-state.
-// FAIL-OPEN: bij een fout gaan we door met de originele waarden en een lege
-// waarschuwing. Logt niets gevoeligs.
+export interface EntityVerifyInput {
+  naam: string;
+  adres: string;
+  website: string;
+  rubriek: string;
+  officialUrl: string | null;
+  homepageContent: string;
+}
+
+export interface EntityVerifyResult {
+  canonical_naam_locatie: string;
+  entiteit_consistent: boolean;
+  waarschuwing: string;
+}
+
+// Queue-onafhankelijke kern van de entiteitsverificatie: één goedkope Claude-
+// call (FAST_WRITE_MODEL) die controleert of naam, adres en website bij één
+// en dezelfde echte zaak of instelling horen, gegeven de gecrawlde officiële
+// homepage, en de naam canoniseert (strip Google-Maps-achtige toevoegingen).
+// Gooit door bij een fout — de aanroeper bepaalt zelf hoe fail-open te zijn.
+// Gebruikt zowel door de research-fase van de queue (verifyEntity hieronder)
+// als door de admin-backfill-route voor bestaande drafts.
+export async function verifyEntityFields(input: EntityVerifyInput): Promise<EntityVerifyResult> {
+  const { naam, adres, website, rubriek, officialUrl, homepageContent } = input;
+  const system = 'Je bent verificatieredacteur voor amsterdamnow.com. Je controleert of de naam, het adres en de website die de research opleverde bij ÉÉN en dezelfde echte zaak of instelling horen, op basis van de aangeleverde officiële homepage-tekst. Je verzint niets.';
+  const prompt = [
+    'Controleer de onderstaande entiteit en geef ALLEEN JSON terug.',
+    '',
+    `Rubriek: ${rubriek || '(onbekend)'}`,
+    `naam_locatie: ${naam || '(leeg)'}`,
+    `adres: ${adres || '(leeg)'}`,
+    `website: ${website || '(leeg)'}`,
+    officialUrl ? `Officiële homepage-URL: ${officialUrl}` : 'Geen officiële homepage gevonden.',
+    '',
+    'Officiële homepage-tekst (kan leeg zijn):',
+    homepageContent ? homepageContent.slice(0, 8000) : '(geen homepage-tekst beschikbaar)',
+    '',
+    'Bepaal:',
+    '- canonical_naam_locatie: de echte, beknopte merk-/organisatienaam zoals die op de officiële site staat. Strip Google-Maps-achtige toevoegingen (keukentype, gerecht, plaatsnaam, "Museum"), bv. "Jinweide Lanzhou Beef Noodles Amsterdam Museum" wordt "Jinweide". Bij een evenement is dit de organiserende plek/instelling, niet de titel van het evenement. Leeg laten als je het niet betrouwbaar kunt bepalen.',
+    '- entiteit_consistent: horen naam, adres en website bij dezelfde zaak?',
+    '- waarschuwing: korte NL-zin bij een probleem, anders lege string.',
+  ].join('\n');
+  const payload = await askClaudeJson(system, prompt, false, FAST_WRITE_MODEL, 1000, ENTITY_VERIFY_SCHEMA);
+  return {
+    canonical_naam_locatie: optionalString(payload.canonical_naam_locatie),
+    entiteit_consistent: payload.entiteit_consistent === true,
+    waarschuwing: optionalString(payload.waarschuwing),
+  };
+}
+
+// Canoniseert naam_locatie op de topic-state en bewaart consistentie +
+// waarschuwing, op basis van verifyEntityFields hierboven. FAIL-OPEN: bij een
+// fout gaan we door met de originele waarden en een lege waarschuwing. Logt
+// niets gevoeligs.
 async function verifyEntity(s: StandaardState, officialUrl: string | null, homepageContent: string): Promise<void> {
   const r = s.research as Record<string, unknown> | undefined;
   if (!r) return;
@@ -250,29 +299,10 @@ async function verifyEntity(s: StandaardState, officialUrl: string | null, homep
   const website = optionalString(r.website);
   const rubriek = optionalString(r.rubriek);
   try {
-    const system = 'Je bent verificatieredacteur voor amsterdamnow.com. Je controleert of de naam, het adres en de website die de research opleverde bij ÉÉN en dezelfde echte zaak of instelling horen, op basis van de aangeleverde officiële homepage-tekst. Je verzint niets.';
-    const prompt = [
-      'Controleer de onderstaande entiteit en geef ALLEEN JSON terug.',
-      '',
-      `Rubriek: ${rubriek || '(onbekend)'}`,
-      `naam_locatie: ${naam || '(leeg)'}`,
-      `adres: ${adres || '(leeg)'}`,
-      `website: ${website || '(leeg)'}`,
-      officialUrl ? `Officiële homepage-URL: ${officialUrl}` : 'Geen officiële homepage gevonden.',
-      '',
-      'Officiële homepage-tekst (kan leeg zijn):',
-      homepageContent ? homepageContent.slice(0, 8000) : '(geen homepage-tekst beschikbaar)',
-      '',
-      'Bepaal:',
-      '- canonical_naam_locatie: de echte, beknopte merk-/organisatienaam zoals die op de officiële site staat. Strip Google-Maps-achtige toevoegingen (keukentype, gerecht, plaatsnaam, "Museum"), bv. "Jinweide Lanzhou Beef Noodles Amsterdam Museum" wordt "Jinweide". Bij een evenement is dit de organiserende plek/instelling, niet de titel van het evenement. Leeg laten als je het niet betrouwbaar kunt bepalen.',
-      '- entiteit_consistent: horen naam, adres en website bij dezelfde zaak?',
-      '- waarschuwing: korte NL-zin bij een probleem, anders lege string.',
-    ].join('\n');
-    const payload = await askClaudeJson(system, prompt, false, FAST_WRITE_MODEL, 1000, ENTITY_VERIFY_SCHEMA);
-    const canonical = optionalString(payload.canonical_naam_locatie);
-    if (canonical) r.naam_locatie = canonical;
-    s.entiteitConsistent = payload.entiteit_consistent === true;
-    s.entiteitWaarschuwing = optionalString(payload.waarschuwing);
+    const result = await verifyEntityFields({ naam, adres, website, rubriek, officialUrl, homepageContent });
+    if (result.canonical_naam_locatie) r.naam_locatie = result.canonical_naam_locatie;
+    s.entiteitConsistent = result.entiteit_consistent;
+    s.entiteitWaarschuwing = result.waarschuwing;
   } catch {
     // FAIL-OPEN: originele waarden behouden, geen waarschuwing.
     s.entiteitWaarschuwing = '';
@@ -388,4 +418,132 @@ async function stepSeo(topic: Topic, s: StandaardState): Promise<StandaardStepRe
   });
   await completeTopic(topic.id, draft.id);
   return { topic, phase: 'seo', done: true, progress: 'Draft aangemaakt', article: { id: draft.id, title: draft.title } };
+}
+
+// ---------- quote-lengte backfill (admin) ----------
+//
+// Hulpfuncties voor de backfill-quote-length-route: verlengt een bestaande,
+// te korte pull-quote (< 25 woorden, uit "Klaar"-drafts van vóór de
+// quoteWords-regel) naar 25-40 woorden. validation.ts wordt hier bewust NIET
+// aangeroerd (buiten de toegestane bestanden voor deze backfill) — words()
+// en de quoteMustBeVerbatimInContent-vergelijking staan daar niet als losse
+// export, dus die kleine, pure berekeningen worden hier 1-op-1 herhaald.
+
+// Zelfde telling als validation.ts words(): tags eruit, op witruimte splitsen.
+function wordCount(value: string): number {
+  return value.replace(/<[^>]*>/g, ' ').trim().split(/\s+/).filter(Boolean).length;
+}
+
+// Zelfde normalisatie als validation.ts normal(): voor een hoofdletter- en
+// leesteken-ongevoelige "komt letterlijk voor"-vergelijking.
+function normalizeForVerbatim(value: string): string {
+  return value.toLocaleLowerCase('nl-NL').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+}
+
+function plainText(html: string): string {
+  return decodeHtmlEntities(html.replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim();
+}
+
+function escapeQuoteHtml(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// Top-level content-blokken van de artikeltekst. Lokale kopie van hetzelfde
+// idee als BLOCK_RE in wp.ts (dat bestand mag voor deze backfill niet
+// gewijzigd worden en exporteert die regex niet).
+const CONTENT_BLOCK_RE = /<(p|h[1-6]|blockquote)\b[^>]*>[\s\S]*?<\/\1>/gi;
+
+export interface ExistingQuoteBlock {
+  quoteText: string;      // platte, gedecodeerde tekst van de bestaande blockquote
+  blockquoteHtml: string; // het volledige <blockquote>...</blockquote>-blok, letterlijk uit contentHtml
+  paragraphHtml: string;  // het bronparagraaf-blok (incl. tag), letterlijk uit contentHtml — bevat de quote woord voor woord
+  paragraphTag: string;   // 'p', 'h2', ... — voor het herbouwen van het blok met dezelfde tag
+}
+
+// Vindt de bestaande blockquote plus de paragraaf die de quote letterlijk
+// bevat (de "bronparagraaf" — zoals formatStandardArticleHtml/validateArticle
+// die eis stellen: de quote moet woord voor woord in de artikeltekst
+// voorkomen). Geeft null als er geen blockquote is, of als geen enkele
+// andere paragraaf de quote letterlijk bevat — dan is de structuur niet
+// betrouwbaar genoeg om veilig te herschrijven en slaat de aanroeper het
+// artikel over.
+export function findExistingQuoteBlock(contentHtml: string): ExistingQuoteBlock | null {
+  const blocks = [...(contentHtml || '').matchAll(CONTENT_BLOCK_RE)].map(m => ({ html: m[0], tag: m[1].toLowerCase() }));
+  const bqIndex = blocks.findIndex(b => b.tag === 'blockquote');
+  if (bqIndex === -1) return null;
+  const blockquoteHtml = blocks[bqIndex].html;
+  const quoteText = plainText(blockquoteHtml);
+  if (!quoteText) return null;
+  const needle = normalizeForVerbatim(quoteText);
+  if (!needle) return null;
+  const source = blocks.find((b, i) => i !== bqIndex && b.tag !== 'blockquote' && normalizeForVerbatim(plainText(b.html)).includes(needle));
+  if (!source) return null;
+  return { quoteText, blockquoteHtml, paragraphHtml: source.html, paragraphTag: source.tag };
+}
+
+export interface QuoteRewriteOutcome {
+  html: string;  // nieuwe, volledige content-HTML (bronparagraaf + blockquote vervangen)
+  quote: string; // de nieuwe quote (25-40 woorden)
+}
+
+// Herschrijft een te korte pull-quote naar 25-40 woorden en past de
+// bronparagraaf zo aan dat de nieuwe quote daar ook woord voor woord
+// letterlijk in staat — dezelfde eis (quoteMustBeVerbatimInContent) als bij
+// nieuw geschreven artikelen. Eén goedkope Claude-call (FAST_WRITE_MODEL).
+// Gooit door bij elke fout of als de uitkomst niet aan de eisen voldoet; de
+// aanroeper (backfill-quote-length-route) vangt dat af en slaat het artikel
+// dan over — bij twijfel liever skippen dan een artikel fout herschrijven.
+export async function rewriteQuote(article: Article, contentHtml: string): Promise<QuoteRewriteOutcome> {
+  const block = findExistingQuoteBlock(contentHtml);
+  if (!block) throw new Error('Geen herkenbare quote-structuur (blockquote + bronparagraaf) gevonden.');
+
+  const constraints = await activeConstraints('standaard');
+  const { min: minWords, max: maxWords } = constraints.quoteWords;
+  const paragraphText = plainText(block.paragraphHtml);
+
+  const system = 'Je bent eindredacteur van amsterdamnow.com, een lokale stadsgids door en voor Amsterdammers. Je herschrijft een te korte pull-quote naar een langere, sterkere quote die zowel als losstaande pull-quote als in de lopende tekst goed leest. Nuchtere, informele toon, geen marketingtaal, je verzint geen nieuwe feiten.';
+  const prompt = [
+    `Artikel: ${article.title}`,
+    '',
+    `Bestaande (te korte) quote: "${block.quoteText}"`,
+    '',
+    'Bronparagraaf (bevat de quote letterlijk):',
+    paragraphText,
+    '',
+    'Volledige artikeltekst, ter context (pas alleen de bronparagraaf hierboven aan):',
+    plainText(contentHtml).slice(0, 6000),
+    '',
+    'Opdracht:',
+    `- Herschrijf de quote naar ${minWords}-${maxWords} woorden. Behoud de kernboodschap en toon; voeg geen nieuwe feiten toe die niet al in de tekst staan.`,
+    '- Herschrijf de bronparagraaf zo dat de NIEUWE quote daar woord voor woord letterlijk in voorkomt, net als de oorspronkelijke opzet. Lopende tekst, geen opsomming.',
+    '- Geen em dash (—) of en dash (–).',
+    '- Geen vraag en geen meta-taal ("zoals hij zelf zegt", etc.) in de quote zelf.',
+    '',
+    'Antwoord ALLEEN met JSON: "quote" (de nieuwe quote) en "herschreven_paragraaf" (de volledige, aangepaste bronparagraaf).',
+  ].join('\n');
+
+  const payload = await askClaudeJson(system, prompt, false, FAST_WRITE_MODEL, 1200, QUOTE_REWRITE_SCHEMA);
+  const quote = string(payload.quote, 'quote');
+  const herschrevenParagraaf = string(payload.herschreven_paragraaf, 'herschreven_paragraaf');
+
+  const count = wordCount(quote);
+  if (count < minWords || count > maxWords) {
+    throw new Error(`Herschreven quote is ${count} woorden; moet ${minWords}-${maxWords} zijn.`);
+  }
+  if (!normalizeForVerbatim(herschrevenParagraaf).includes(normalizeForVerbatim(quote))) {
+    throw new Error('Herschreven quote staat niet letterlijk in de herschreven bronparagraaf.');
+  }
+
+  const newParagraphHtml = `<${block.paragraphTag}>${herschrevenParagraaf.replace(/\n/g, '<br>')}</${block.paragraphTag}>`;
+  const newBlockquoteHtml = `<blockquote><p>${escapeQuoteHtml(plainText(quote))}</p></blockquote>`;
+  const html = contentHtml.replace(block.paragraphHtml, newParagraphHtml).replace(block.blockquoteHtml, newBlockquoteHtml);
+
+  // Eindcontrole tegen de VOLLEDIGE nieuwe content (niet alleen de paragraaf),
+  // als laatste vangnet vóór de aanroeper wegschrijft — exact dezelfde eis als
+  // quoteMustBeVerbatimInContent in validation.ts validateArticle.
+  if (constraints.quoteMustBeVerbatimInContent && !normalizeForVerbatim(plainText(html)).includes(normalizeForVerbatim(quote))) {
+    throw new Error('De nieuwe quote staat niet letterlijk in de nieuwe artikeltekst.');
+  }
+
+  return { html, quote };
 }

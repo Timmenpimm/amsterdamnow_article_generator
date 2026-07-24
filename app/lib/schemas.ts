@@ -105,6 +105,21 @@ export const ENTITY_VERIFY_SCHEMA: Record<string, unknown> = {
   },
 };
 
+// quote-herschrijf-backfill → writer.ts rewriteQuote (backfill-quote-length-
+// route). Herschrijft een te korte pull-quote (< 25 woorden, uit oudere
+// "Klaar"-drafts van vóór de quoteWords-regel) naar 25-40 woorden, en levert
+// meteen de aangepaste bronparagraaf zodat de nieuwe quote daar ook woord
+// voor woord letterlijk in blijft staan (quoteMustBeVerbatimInContent-eis).
+export const QUOTE_REWRITE_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['quote', 'herschreven_paragraaf'],
+  properties: {
+    quote: { type: 'string', description: 'Herschreven pull-quote van 25-40 woorden: een krachtige zin met een concreet feit uit de paragraaf. Geen em dash of en dash, geen vraag, geen meta-taal.' },
+    herschreven_paragraaf: { type: 'string', description: 'De volledige, aangepaste bronparagraaf (lopende tekst, geen opsomming) waarin de nieuwe quote woord voor woord letterlijk voorkomt.' },
+  },
+};
+
 // seo-seed én lijst-seo-seed → writer.ts stepSeo, listWriter.ts stepFinalize.
 export const SEO_SCHEMA: Record<string, unknown> = {
   type: 'object',
