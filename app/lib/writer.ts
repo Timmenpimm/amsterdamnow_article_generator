@@ -188,7 +188,7 @@ async function polishTitle(article: GeneratedArticle, s: StandaardState, naam: s
   try {
     // Geen schema → vrije generatie (extractJson-vangnet in claude.ts). Klein
     // token-budget: drie korte koppen zijn ruim binnen ~400 tokens.
-    const payload = await askClaudeJson(system, prompt, false, TITLE_MODEL, 600);
+    const payload = await askClaudeJson(system, prompt, TITLE_MODEL, 600);
     const kandidaten = Array.isArray(payload.titels) ? payload.titels : [];
     for (const kandidaat of kandidaten) {
       if (typeof kandidaat === 'string' && kandidaat.trim() && checkTitle(kandidaat.trim(), naam, constraints) === null) {
@@ -213,7 +213,7 @@ async function stepResearch(topic: Topic, s: StandaardState): Promise<StandaardS
   const research = await askClaudeJson(
     researchPrompt.content,
     `Onderwerp: ${topic.title}\n\nBeschikbare WordPress-categorieën: ${taxonomies.categories.join(', ')}\nBeschikbare WordPress-districten: ${taxonomies.districts.join(', ')}\nBeschikbare WordPress-tags: ${taxonomies.tags.join(', ')}\nKies "tags" uitsluitend uit deze lijst; verzin nooit nieuwe tags. Past geen enkele bestaande tag goed, geef dan een lege lijst terug.\n\nGaat dit onderwerp over een event met een concrete datum, geef die dan als "start_datum" (en "eind_datum", gelijk aan start bij een eendaags event) in JJJJ-MM-DD, letterlijk overgenomen uit de bronnen. Is het geen event of noemt geen bron een concrete datum, laat beide leeg ("").\n\nTavily-bronnen:\n${sources.map((src, i) => `\n[${i + 1}] ${src.title}\n${src.url}\n${src.content.slice(0, 8000)}`).join('\n')}`,
-    false, FAST_WRITE_MODEL, 6000, RESEARCH_SCHEMA,
+    FAST_WRITE_MODEL, 6000, RESEARCH_SCHEMA,
   );
   // Seed van de bronscanner is gezaghebbend: die datum komt rechtstreeks van de
   // agendapagina, betrouwbaarder dan wat het model uit de Tavily-bronnen afleidt.
@@ -279,7 +279,7 @@ export async function verifyEntityFields(input: EntityVerifyInput): Promise<Enti
     '- entiteit_consistent: horen naam, adres en website bij dezelfde zaak?',
     '- waarschuwing: korte NL-zin bij een probleem, anders lege string.',
   ].join('\n');
-  const payload = await askClaudeJson(system, prompt, false, FAST_WRITE_MODEL, 1000, ENTITY_VERIFY_SCHEMA);
+  const payload = await askClaudeJson(system, prompt, FAST_WRITE_MODEL, 1000, ENTITY_VERIFY_SCHEMA);
   return {
     canonical_naam_locatie: optionalString(payload.canonical_naam_locatie),
     entiteit_consistent: payload.entiteit_consistent === true,
@@ -316,7 +316,7 @@ async function stepSchrijf(topic: Topic, s: StandaardState): Promise<StandaardSt
   const payload = await askClaudeJson(
     writePrompt.content,
     `Onderwerp: ${topic.title}\n\nGebruik uitsluitend deze gecontroleerde research van Tavily. Schrijf het artikel als geldige JSON volgens de actieve prompt.\n\nHoud je aan deze regels:\n${rules}\n\n${JSON.stringify(s.research)}`,
-    false, FAST_WRITE_MODEL, WRITE_MAX_TOKENS, ARTICLE_SCHEMA,
+    FAST_WRITE_MODEL, WRITE_MAX_TOKENS, ARTICLE_SCHEMA,
   );
   try {
     const candidate = buildCandidate(payload);
@@ -347,7 +347,7 @@ async function stepSchrijfRetry(topic: Topic, s: StandaardState): Promise<Standa
   const payload = await askClaudeJson(
     writePrompt.content,
     `Je vorige versie van dit artikel is afgekeurd door de eindredactie.\n\nOnderwerp: ${topic.title}\nAfkeurreden: ${s.rejectReason}\n\nLever het VOLLEDIGE artikel opnieuw aan als JSON met exact dezelfde velden (title, subregel, introductie_tekst, content, quote). Los de afkeurreden op en houd de rest zoveel mogelijk intact. Alle regels blijven gelden:\n${rules}\n\nJe vorige versie:\n${JSON.stringify(s.draftPayload)}`,
-    false, FAST_WRITE_MODEL, WRITE_MAX_TOKENS, ARTICLE_SCHEMA,
+    FAST_WRITE_MODEL, WRITE_MAX_TOKENS, ARTICLE_SCHEMA,
   );
   let checked: GeneratedArticle;
   try {
@@ -395,7 +395,7 @@ async function stepSeo(topic: Topic, s: StandaardState): Promise<StandaardStepRe
   const seo = await askClaudeJson(
     seoPrompt.content,
     `POST_TITLE: ${title}\nPOST_EXCERPT: ${intro}\nPOST_CONTENT: ${content}\nCATEGORY: ${nonEmptyStrings(s.research.categories, 'categories').join(', ')}\nDISTRICT: ${string(s.research.district, 'district')}`,
-    false, FAST_WRITE_MODEL, 6000, SEO_SCHEMA,
+    FAST_WRITE_MODEL, 6000, SEO_SCHEMA,
   );
   const draft = await createDraft({
     title, subregel, intro, contentHtml: formatStandardArticleHtml(content, quote), quote,
@@ -522,7 +522,7 @@ export async function rewriteQuote(article: Article, contentHtml: string): Promi
     'Antwoord ALLEEN met JSON: "quote" (de nieuwe quote) en "herschreven_paragraaf" (de volledige, aangepaste bronparagraaf).',
   ].join('\n');
 
-  const payload = await askClaudeJson(system, prompt, false, FAST_WRITE_MODEL, 1200, QUOTE_REWRITE_SCHEMA);
+  const payload = await askClaudeJson(system, prompt, FAST_WRITE_MODEL, 1200, QUOTE_REWRITE_SCHEMA);
   const quote = string(payload.quote, 'quote');
   const herschrevenParagraaf = string(payload.herschreven_paragraaf, 'herschreven_paragraaf');
 

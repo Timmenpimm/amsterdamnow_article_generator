@@ -47,7 +47,7 @@ async function generateStandardSeo(article: Article) {
   const seo = await askClaudeJson(
     seoPrompt.content,
     `POST_TITLE: ${article.title}\nPOST_EXCERPT: ${article.intro}\nPOST_CONTENT: ${article.contentHtml}\nCATEGORY: ${article.category}\nDISTRICT: ${article.district}`,
-    false, FAST_WRITE_MODEL, 6000, SEO_SCHEMA,
+    FAST_WRITE_MODEL, 6000, SEO_SCHEMA,
   );
   return {
     focusKeyword: str(seo.rank_math_focus_keyword),
@@ -61,7 +61,7 @@ async function generateListSeo(article: Article, items: string[]) {
   const seo = await askClaudeJson(
     seoPrompt.content,
     `Onderwerp: ${article.title}\nTitel: ${article.title}\nIntro: ${article.intro}\nItems: ${items.join(', ')}`,
-    false, FAST_WRITE_MODEL, 6000, SEO_SCHEMA,
+    FAST_WRITE_MODEL, 6000, SEO_SCHEMA,
   );
   return {
     focusKeyword: str(seo.rank_math_focus_keyword),
