@@ -196,6 +196,26 @@ async function mediaRefs(ids: number[]): Promise<Record<number, MediaRef>> {
   return out;
 }
 
+// Haalt alleen de opgeslagen pixelafmetingen van media op (geen URL's), zodat
+// een backfill kan bepalen welke bestaande beelden liggend genoeg zijn
+// (zie lib/imageSearch.ts isLandscapeEnough) zonder de volledige mediaRefs-
+// payload te hoeven laden. Zelfde chunk/aanpak als mediaRefs hierboven.
+export async function mediaDimensions(ids: number[]): Promise<Map<number, { width: number; height: number }>> {
+  const out = new Map<number, { width: number; height: number }>();
+  if (!ids.length) return out;
+  const chunks: number[][] = [];
+  for (let i = 0; i < ids.length; i += 50) chunks.push(ids.slice(i, i + 50));
+  for (const chunk of chunks) {
+    const media = await wpFetch(`/wp/v2/media?include=${chunk.join(',')}&per_page=100&_fields=id,media_details`);
+    for (const m of media) {
+      const width = Number(m.media_details?.width);
+      const height = Number(m.media_details?.height);
+      if (Number.isFinite(width) && Number.isFinite(height)) out.set(m.id, { width, height });
+    }
+  }
+  return out;
+}
+
 async function mapPost(p: any, media: Record<number, MediaRef>): Promise<Article> {
   const acf = p.acf || {};
   const sliderIds: number[] = Array.isArray(acf.slider) ? acf.slider : [];
