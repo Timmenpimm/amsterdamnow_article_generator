@@ -5,6 +5,7 @@ import { articlePhase } from '@/lib/types';
 import {
   getAutoPublishSettingsRaw, getAutoPublishSettings, saveAutoPublishSettings,
   claimAutoPublishTick, classifyArticles, pickNextForPublish, publishedCountLast24h, nextRunAt,
+  isWithinActiveWindow,
 } from '@/lib/publisher';
 
 export const dynamic = 'force-dynamic';
@@ -25,6 +26,16 @@ async function tick() {
   if (!settings.enabled) return { enabled: false };
 
   const now = new Date();
+
+  // Venster-gate VÓÓR de optimistische claim: buiten het dagelijkse actief-
+  // tijdvenster doet de tik niets. Geen claim, geen rollback, lastPublishedAt
+  // blijft ongemoeid — sluit het venster om 17:00, dan staat lastPublishedAt
+  // stil; opent het om 09:00, dan is het interval allang verstreken en
+  // publiceert de eerste tik meteen. Handmatig publiceren blijft altijd mogelijk.
+  if (!isWithinActiveWindow(settings, now)) {
+    return { enabled: true, due: false, reason: 'outside-window' };
+  }
+
   if (settings.lastPublishedAt) {
     const nextAt = nextRunAt(settings);
     if (nextAt && now.getTime() < new Date(nextAt).getTime()) {

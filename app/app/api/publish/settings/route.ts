@@ -1,18 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAutoPublishSettings, saveAutoPublishSettings, nextRunAt } from '@/lib/publisher';
+import {
+  getAutoPublishSettings, saveAutoPublishSettings, nextRunAt, isWithinActiveWindow,
+  type AutoPublishSettings,
+} from '@/lib/publisher';
 
 export const dynamic = 'force-dynamic';
+
+// "HH:MM" 24u, gebruikt om schedule.start/end te valideren.
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 // Geen CRON-auth: dit is een redactie-instelling, client-driven zoals
 // POST /api/prompts.
 export async function GET() {
   const settings = await getAutoPublishSettings();
-  return NextResponse.json({ ...settings, nextAt: nextRunAt(settings) });
+  return NextResponse.json({ ...settings, nextAt: nextRunAt(settings), windowOpen: isWithinActiveWindow(settings) });
 }
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
-  const partial: { enabled?: boolean; intervalMinutes?: number; maxPerDay?: number; clusterCooldown?: number } = {};
+  const partial: Partial<AutoPublishSettings> = {};
 
   if (typeof body.enabled === 'boolean') partial.enabled = body.enabled;
 
@@ -49,6 +55,22 @@ export async function POST(req: NextRequest) {
     partial.clusterCooldown = n;
   }
 
+  if (body.schedule !== undefined) {
+    const s = body.schedule;
+    if (
+      typeof s !== 'object' || s === null ||
+      typeof s.enabled !== 'boolean' ||
+      typeof s.start !== 'string' || !HHMM.test(s.start) ||
+      typeof s.end !== 'string' || !HHMM.test(s.end)
+    ) {
+      return NextResponse.json(
+        { error: 'schedule moet { enabled: boolean, start: "HH:MM", end: "HH:MM" } zijn (24-uurs tijd).' },
+        { status: 400 }
+      );
+    }
+    partial.schedule = { enabled: s.enabled, start: s.start, end: s.end };
+  }
+
   const settings = await saveAutoPublishSettings(partial);
-  return NextResponse.json({ ...settings, nextAt: nextRunAt(settings) });
+  return NextResponse.json({ ...settings, nextAt: nextRunAt(settings), windowOpen: isWithinActiveWindow(settings) });
 }

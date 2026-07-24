@@ -25,6 +25,11 @@ export interface AutoPublishSettings {
   // Aantal laatst gepubliceerde artikelen waartegen de cluster-cooldown checkt
   // (zie pickNextForPublish). 0 = cooldown uit.
   clusterCooldown: number;
+  // Dagelijks actief-tijdvenster (Europe/Amsterdam) waarbinnen de auto-publisher
+  // mag publiceren. enabled=false → geen tijd-gating. start/end = "HH:MM" 24u.
+  // Zie isWithinActiveWindow voor de vier gevallen (begin<eind / begin>eind /
+  // gelijk / uitgeschakeld).
+  schedule: { enabled: boolean; start: string; end: string };
 }
 
 const DEFAULT_SETTINGS: AutoPublishSettings = {
@@ -33,6 +38,7 @@ const DEFAULT_SETTINGS: AutoPublishSettings = {
   lastPublishedAt: null,
   maxPerDay: DEFAULT_MAX_PER_DAY,
   clusterCooldown: DEFAULT_CLUSTER_COOLDOWN,
+  schedule: { enabled: false, start: '09:00', end: '17:00' },
 };
 
 // Zelfde ruwe JSON-string als opgeslagen onder app_settings.autopublish,
@@ -88,6 +94,49 @@ export function nextRunAt(settings: AutoPublishSettings): string | null {
   const last = new Date(settings.lastPublishedAt).getTime();
   if (!Number.isFinite(last)) return null;
   return new Date(last + settings.intervalMinutes * 60_000).toISOString();
+}
+
+// ---------- dagelijks actief-tijdvenster ----------
+
+// Huidige minuten-sinds-middernacht in Europe/Amsterdam (0..1439). Volgt het
+// todayInAmsterdam-patroon (Intl + timeZone: 'Europe/Amsterdam'), dus geen UTC.
+// Let op de "24:00"-randgeval: sommige runtimes geven bij middernacht "24" i.p.v.
+// "00" terug → normaliseer 24 naar 0.
+export function minutesOfDayInAmsterdam(now: Date = new Date()): number {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/Amsterdam', hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(now);
+  const hRaw = Number(parts.find(p => p.type === 'hour')?.value);
+  const m = Number(parts.find(p => p.type === 'minute')?.value);
+  const h = hRaw === 24 ? 0 : hRaw;
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return 0;
+  return h * 60 + m;
+}
+
+// "HH:MM" (24u) → minuten-sinds-middernacht, of null bij ongeldige invoer.
+export function parseHHMM(s: string): number | null {
+  if (typeof s !== 'string') return null;
+  const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(s.trim());
+  if (!match) return null;
+  return Number(match[1]) * 60 + Number(match[2]);
+}
+
+// Valt de auto-publisher op dit moment binnen het ingestelde tijdvenster? Puur,
+// zonder side-effects. Vier gevallen:
+//   - venster uit          → true  (geen tijd-gating)
+//   - start/end ongeldig    → true  (fail-open: liever door dan stil vastlopen)
+//   - start === end         → true  (venster = hele dag; voorkomt een footgun)
+//   - start < end           → actief als start <= cur < end
+//   - start > end           → nachtvenster (over middernacht): cur >= start || cur < end
+export function isWithinActiveWindow(settings: AutoPublishSettings, now: Date = new Date()): boolean {
+  if (!settings.schedule?.enabled) return true;
+  const start = parseHHMM(settings.schedule.start);
+  const end = parseHHMM(settings.schedule.end);
+  if (start === null || end === null) return true;
+  if (start === end) return true;
+  const cur = minutesOfDayInAmsterdam(now);
+  if (start < end) return cur >= start && cur < end;
+  return cur >= start || cur < end;
 }
 
 // ---------- classificatie ----------
