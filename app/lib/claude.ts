@@ -87,8 +87,8 @@ async function request(body: Record<string, unknown>, prov: ActiveProvider): Pro
 // fout terwijl Anthropic direct actief is én automatische failover aan staat,
 // dan draait dezelfde call éénmalig opnieuw via de Omniroute-provider. `run`
 // leidt zijn model/capability-vlaggen af uit de meegegeven `prov`, dus bij de
-// retry gelden automatisch de Omniroute-capabilities (geen output_config, geen
-// web_search, model-override incl. vision). Er wordt maximaal één keer
+// retry gelden automatisch de Omniroute-capabilities (geen output_config,
+// model-override incl. vision). Er wordt maximaal één keer
 // omgeschakeld: mislukt ook de Omniroute-poging, dan propageert die fout.
 async function withFailover<T>(run: (prov: ActiveProvider) => Promise<T>): Promise<T> {
   const prov = await activeProvider();
