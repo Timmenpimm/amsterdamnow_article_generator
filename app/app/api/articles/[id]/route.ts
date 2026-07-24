@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { deleteArticle, getArticle, updateArticleTags, updateImages } from '@/lib/wp';
+import { deleteArticle, getArticle, updateArticleFields, updateArticleTags, updateImages } from '@/lib/wp';
 import { deleteListStructure, getListStructure } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
@@ -24,6 +24,16 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (!article) return NextResponse.json({ error: 'not found' }, { status: 404 });
     if (Array.isArray(body.tags)) {
       article = await updateArticleTags(Number(id), body.tags);
+    }
+    // Redactioneel corrigeerbare ACF-velden. Alleen meesturen wat de client ook
+    // echt aanlevert (undefined = ongewijzigd), zodat een tags-only PATCH deze
+    // velden niet leegmaakt.
+    if (body.naamLocatie !== undefined || body.adres !== undefined || body.website !== undefined) {
+      article = await updateArticleFields(Number(id), {
+        naamLocatie: body.naamLocatie,
+        adres: body.adres,
+        website: body.website,
+      });
     }
     const list = await getListStructure(Number(id));
     return NextResponse.json({ article, list });

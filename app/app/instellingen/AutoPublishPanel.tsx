@@ -3,7 +3,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from '@/components/toast';
 
-type AutoPublishSettings = { enabled: boolean; intervalMinutes: number; lastPublishedAt: string | null };
+type AutoPublishSettings = {
+  enabled: boolean;
+  intervalMinutes: number;
+  lastPublishedAt: string | null;
+  maxPerDay: number;
+  clusterCooldown: number;
+};
 type SettingsResponse = AutoPublishSettings & { nextAt: string | null };
 
 const PRESETS: { minutes: number; label: string }[] = [
@@ -16,6 +22,9 @@ const PRESETS: { minutes: number; label: string }[] = [
   { minutes: 480, label: '8 uur' },
   { minutes: 1440, label: '24 uur' },
 ];
+
+const MAX_PER_DAY_PRESETS = [0, 6, 8, 12, 16, 24];
+const CLUSTER_COOLDOWN_PRESETS = [0, 2, 3, 4, 5];
 
 // Zelfde toggle-patroon als bronnen/page.tsx (geen gedeelde util-class voor
 // dit element — zie docs/DESIGN-MAP.md §3).
@@ -116,13 +125,64 @@ export default function AutoPublishPanel() {
           </div>
         </div>
 
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 8 }}>
+            Max. per dag
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <select
+              value={settings.maxPerDay}
+              disabled={busy}
+              onChange={e => save({ maxPerDay: Number(e.target.value) })}
+              style={{
+                fontSize: 13, fontWeight: 600, padding: '8px 12px', borderRadius: 8,
+                border: '1px solid var(--border)', background: 'var(--card)', color: 'var(--ink)',
+              }}
+            >
+              {MAX_PER_DAY_PRESETS.map(n => (
+                <option key={n} value={n}>{n === 0 ? 'Onbeperkt' : `${n} per dag`}</option>
+              ))}
+            </select>
+            <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+              {settings.maxPerDay === 0 ? 'geen dagcap' : 'harde cap in het laatste etmaal'}
+            </span>
+          </div>
+        </div>
+
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 8 }}>
+            Cluster-cooldown
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <select
+              value={settings.clusterCooldown}
+              disabled={busy}
+              onChange={e => save({ clusterCooldown: Number(e.target.value) })}
+              style={{
+                fontSize: 13, fontWeight: 600, padding: '8px 12px', borderRadius: 8,
+                border: '1px solid var(--border)', background: 'var(--card)', color: 'var(--ink)',
+              }}
+            >
+              {CLUSTER_COOLDOWN_PRESETS.map(n => (
+                <option key={n} value={n}>{n === 0 ? 'Uit' : `${n} artikelen`}</option>
+              ))}
+            </select>
+            <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+              {settings.clusterCooldown === 0 ? 'geen spreiding op soort' : 'geen soortgelijk artikel binnen de laatste ' + settings.clusterCooldown}
+            </span>
+          </div>
+        </div>
+
         <div style={{ borderTop: '1px solid var(--border-light)', paddingTop: 14, fontSize: 12.5, color: 'var(--gray)', lineHeight: 1.7 }}>
           <div>Laatst gepubliceerd: <strong style={{ color: 'var(--ink)' }}>{fmt(settings.lastPublishedAt)}</strong></div>
           <div>Volgende publicatie: <strong style={{ color: 'var(--ink)' }}>{settings.enabled ? fmt(settings.nextAt) : 'gepauzeerd'}</strong></div>
           <div style={{ marginTop: 10, color: 'var(--muted)' }}>
             Volgorde: niet-evergreen artikelen met een naderend evenement eerst (dichtstbijzijnde datum voorop), dan
-            overige niet-evergreen artikelen, dan evergreen content — binnen elke groep krijgen categorieën die het
-            langst niet aan bod kwamen voorrang, zodat de site gemixt blijft.
+            overige niet-evergreen artikelen, dan evergreen content. Om te voorkomen dat er meerdere gelijksoortige
+            artikelen kort na elkaar live gaan, wordt een kandidaat overgeslagen als hetzelfde soort zaak of gebeurtenis
+            (cluster, bv. "muziekfestival" of "padelclub") al bij één van de laatste {settings.clusterCooldown || 3}{' '}
+            publicaties zat — tenzij er geen alternatief klaarstaat. De dagcap begrenst bovendien het totaal aantal
+            automatische publicaties per etmaal{settings.maxPerDay > 0 ? ` op ${settings.maxPerDay}` : ''}.
           </div>
         </div>
       </div>

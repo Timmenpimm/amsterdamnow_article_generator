@@ -176,6 +176,7 @@ async function initSqlite(): Promise<DB> {
       article_id INTEGER PRIMARY KEY,
       evergreen INTEGER NOT NULL DEFAULT 0,
       event_date TEXT,
+      cluster TEXT,
       classified_at TEXT NOT NULL
     );
   `);
@@ -193,6 +194,12 @@ async function initSqlite(): Promise<DB> {
   // topics slaan de tweede (her)check tegen wp_posts over.
   for (const col of ['dedup_override INTEGER NOT NULL DEFAULT 0']) {
     try { db.exec(`ALTER TABLE topics ADD COLUMN ${col}`); } catch { /* kolom bestaat al */ }
+  }
+  // Migratie voor databases van vóór de cluster-spreiding: een kort clusterlabel
+  // (soort zaak/gebeurtenis) per artikel, gebruikt door de cluster-cooldown in
+  // pickNextForPublish (lib/publisher.ts).
+  for (const col of ['cluster TEXT']) {
+    try { db.exec(`ALTER TABLE publish_meta ADD COLUMN ${col}`); } catch { /* kolom bestaat al */ }
   }
   return {
     async all(q, p = []) { const [s, sp] = toSqlite(q, p); return db.prepare(s).all(...sp); },
@@ -336,6 +343,7 @@ async function initPostgres(): Promise<DB> {
       article_id BIGINT PRIMARY KEY,
       evergreen INTEGER NOT NULL DEFAULT 0,
       event_date TEXT,
+      cluster TEXT,
       classified_at TEXT NOT NULL
     );
   `);
@@ -352,6 +360,10 @@ async function initPostgres(): Promise<DB> {
   // Migratie voor databases van vóór de WP-dedup-index: force-toegevoegde
   // topics slaan de tweede (her)check tegen wp_posts over.
   await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS dedup_override INTEGER NOT NULL DEFAULT 0`);
+  // Migratie voor databases van vóór de cluster-spreiding: een kort clusterlabel
+  // (soort zaak/gebeurtenis) per artikel, gebruikt door de cluster-cooldown in
+  // pickNextForPublish (lib/publisher.ts).
+  await pool.query(`ALTER TABLE publish_meta ADD COLUMN IF NOT EXISTS cluster TEXT`);
   return {
     async all(q, p = []) { return (await pool.query(q, p)).rows; },
     async get(q, p = []) { return (await pool.query(q, p)).rows[0]; },
@@ -1197,6 +1209,11 @@ export async function claimSetting(key: string, oldValue: string | null, newValu
 export interface PublishMetaRow {
   evergreen: boolean;
   event_date: string | null;
+  // Kort clusterlabel (soort zaak/gebeurtenis, 1-2 woorden, lowercase NL) uit de
+  // Haiku-classificatie; null als nog niet geclassificeerd (bv. events die via
+  // de ACF-datum-sneltak zijn opgeslagen). pickNextForPublish valt dan terug op
+  // de primaire categorie.
+  cluster: string | null;
 }
 
 // Haalt de bekende classificatie op voor een set artikel-id's (WP post-id's).
@@ -1208,21 +1225,21 @@ export async function getPublishMetaByIds(ids: number[]): Promise<Map<number, Pu
   const db = await getDb();
   const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
   const rows = await db.all(
-    `SELECT article_id, evergreen, event_date FROM publish_meta WHERE article_id IN (${placeholders})`,
+    `SELECT article_id, evergreen, event_date, cluster FROM publish_meta WHERE article_id IN (${placeholders})`,
     ids
   );
   for (const r of rows) {
-    map.set(Number(r.article_id), { evergreen: Number(r.evergreen) === 1, event_date: r.event_date || null });
+    map.set(Number(r.article_id), { evergreen: Number(r.evergreen) === 1, event_date: r.event_date || null, cluster: r.cluster || null });
   }
   return map;
 }
 
-export async function upsertPublishMeta(articleId: number, evergreen: boolean, eventDate: string | null) {
+export async function upsertPublishMeta(articleId: number, evergreen: boolean, eventDate: string | null, cluster: string | null = null) {
   const db = await getDb();
   await db.run(
-    `INSERT INTO publish_meta (article_id, evergreen, event_date, classified_at) VALUES ($1, $2, $3, $4)
+    `INSERT INTO publish_meta (article_id, evergreen, event_date, cluster, classified_at) VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (article_id) DO UPDATE SET
-       evergreen = EXCLUDED.evergreen, event_date = EXCLUDED.event_date, classified_at = EXCLUDED.classified_at`,
-    [articleId, evergreen ? 1 : 0, eventDate, now()]
+       evergreen = EXCLUDED.evergreen, event_date = EXCLUDED.event_date, cluster = EXCLUDED.cluster, classified_at = EXCLUDED.classified_at`,
+    [articleId, evergreen ? 1 : 0, eventDate, cluster, now()]
   );
 }

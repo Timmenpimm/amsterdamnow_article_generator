@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { listStructures } from '@/lib/db';
+import { listStructures, getPublishMetaByIds } from '@/lib/db';
 import { listArticles, publishArticle } from '@/lib/wp';
 import { articlePhase } from '@/lib/types';
 import {
   getAutoPublishSettingsRaw, getAutoPublishSettings, saveAutoPublishSettings,
-  claimAutoPublishTick, classifyArticles, pickNextForPublish, nextRunAt,
+  claimAutoPublishTick, classifyArticles, pickNextForPublish, publishedCountLast24h, nextRunAt,
 } from '@/lib/publisher';
 
 export const dynamic = 'force-dynamic';
@@ -53,7 +53,9 @@ async function tick() {
 
   // Zelfde bron als /api/board: alle artikelen + lijststructuren, om exact
   // dezelfde "Klaar voor publicatie"-regel te kunnen toepassen als Pipeline.tsx.
-  const [articles, structures] = await Promise.all([listArticles(), listStructures()]);
+  // 50 gepubliceerde artikelen meeladen (i.p.v. de bord-default 15): de
+  // cluster-cooldown en de dagcap hebben een langere terugkijk nodig.
+  const [articles, structures] = await Promise.all([listArticles(50), listStructures()]);
   const ready = articles.filter(a => articlePhase(a, structures[a.id] || null) === 'ready');
 
   // Eén Claude-call per tik (60s-limiet): classificeert max 8 nog-onbekende
@@ -66,7 +68,25 @@ async function tick() {
   }
 
   const published = articles.filter(a => a.status === 'publish');
-  const pick = pickNextForPublish(ready, metaById, published, now);
+
+  // Harde dagcap: al genoeg gepubliceerd in de laatste 24u? Dan deze dag niets
+  // meer (fail-open: cap 0/onbekend = onbeperkt). De claim wordt teruggedraaid
+  // zodat de volgende tik het na het verstrijken van het venster weer probeert.
+  if (settings.maxPerDay > 0) {
+    const last24h = publishedCountLast24h(published, now);
+    if (last24h >= settings.maxPerDay) {
+      await rollbackClaim();
+      return { enabled: true, due: true, published: null, reason: 'daycap', published24h: last24h, maxPerDay: settings.maxPerDay };
+    }
+  }
+
+  // Cluster-cooldown checkt óók de laatste N gepubliceerde artikelen; hun cluster
+  // staat (indien ooit geclassificeerd) in publish_meta. Merge dat in metaById,
+  // zodat de cooldown niet louter op de primaire categorie hoeft terug te vallen.
+  const publishedMeta = await getPublishMetaByIds(published.map(a => a.id));
+  for (const [id, meta] of publishedMeta) if (!metaById.has(id)) metaById.set(id, meta);
+
+  const pick = pickNextForPublish(ready, metaById, published, settings.clusterCooldown, now);
   if (!pick) {
     await rollbackClaim();
     return { enabled: true, due: true, published: null, reason: 'empty' };
