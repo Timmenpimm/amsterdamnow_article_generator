@@ -4,9 +4,11 @@
 uitpluizen. Lees eerst dít bestand, importeer het verse design, diff de
 schermlabels tegen de tabel hieronder, en bouw alléén de delta.
 
-_Laatst bijgewerkt: 21 juli 2026 (TURN 4 — Instagram Carousel-pagina, nieuw
-scherm 4a-4d; daarvoor: scanner-redactionaliseren — gescande bronkoppen worden
-vóór de wachtrij omgezet naar eigen input-topics; daarvoor: auto-publisher).
+_Laatst bijgewerkt: 25 juli 2026 (TURN 5 — Instellingen-redesign: rail + één
+paneel + versielade, schermen 5a/5b vervangen 2a/2b; nieuwe componenten
+`meta.ts`/`PanelHeader.tsx`/`VersionDrawer.tsx`/`PlaceholderPanel.tsx`. Daarvoor:
+TURN 4 — Instagram Carousel-pagina, scherm 4a-4d; scanner-redactionaliseren;
+auto-publisher).
 Klopt er iets niet meer? Werk deze tabel bij in dezelfde PR als de
 codewijziging._
 
@@ -45,9 +47,10 @@ codewijziging._
 | **1e** | Mobiele invoer | `MobileHome`-subcomponent ín `Pipeline.tsx` + `.mobile-only` in `TopBar.tsx` |
 | — | "Nieuw lijstartikel" (modal) | `app/components/ListArticleModal.tsx` |
 | — | "Items controleren" (review, modal) | `app/components/ReviewModal.tsx` |
-| **2a** | Prompt & instellingen (prompt-editor) | `app/app/instellingen/page.tsx` + `app/app/instellingen/PromptEditor.tsx` |
-| **2b** | Instellingen · Criteria (standaard/lijst) | `app/app/instellingen/CriteriaEditor.tsx` + `criteria-fields.ts` |
-| — | Instellingen · Publiceren (auto-publisher) | `app/app/instellingen/AutoPublishPanel.tsx`, tabgroep in `page.tsx`; kolomkopje "auto: aan/uit" in `Pipeline.tsx` (kolom "Klaar voor publicatie") |
+| **5a** (was 2a) | Instellingen — shell: rail links (zoek + groepen Standaard/Lijst/Algemeen, per-item versiebadges) → één paneel rechts → versielade | `app/app/instellingen/page.tsx` (rail, zoekfilter, badges via parallelle GETs, paneel-dispatch) + `meta.ts` (`RailKey`/`RAIL_GROUPS`/`panelMeta`) + `PanelHeader.tsx` + `VersionDrawer.tsx`. Prompt-paneel: `PromptEditor.tsx` (mono-box + variabelen-rij + versielade). **Sinds TURN 5 (juli 2026)**: weg met de dubbele tabrij + vaste versiekolom; versiegeschiedenis is nu een lade (`VersionDrawer`) die op "Versies (N)" over het paneel schuift. Frontend-only, backend (`/api/prompts`, `/api/constraints`, `/api/publish/settings`) ongewijzigd. |
+| **5b** (was 2b) | Instellingen · Criteria (standaard/lijst) — anker-pills per sectie + versielade | `app/app/instellingen/CriteriaEditor.tsx` (herstyled: anker-pills scrollen naar secties via `sectionRefs`) + `criteria-fields.ts` (velddefinities, ongewijzigd) |
+| — | Instellingen · Publiceren (auto-publisher) | `app/app/instellingen/AutoPublishPanel.tsx` (in `PanelHeader`-chrome, rail-item onder "Algemeen"); kolomkopje "auto: aan/uit" in `Pipeline.tsx` (kolom "Klaar voor publicatie") |
+| — | Instellingen · Variabelen & context / Model & koppelingen | `app/app/instellingen/PlaceholderPanel.tsx` — rail-items onder "Algemeen" met "Binnenkort"-paneel; **nog geen backend** |
 | — | Archief | `app/app/archief/page.tsx` |
 | **3a/3b/3c** | Bronnen (agenda-scanner) | `app/app/bronnen/page.tsx`; nav in `TopBar.tsx`; backend §4 |
 | toast | Meldingen | `app/components/toast.tsx` (`toast(...)` + `<ToastHost>` in `layout.tsx`) |
