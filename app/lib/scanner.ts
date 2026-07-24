@@ -88,7 +88,7 @@ export async function editorializeTitles(titles: string[]): Promise<string[]> {
   try {
     const prompt = `Gescande titels:\n${titles.map((t, i) => `${i + 1}. ${t}`).join('\n')}`;
     const data = await askClaudeJson(
-      EDITORIALIZE_SYSTEM, prompt, false, EDITORIALIZE_MODEL, EDITORIALIZE_MAX_TOKENS, SCAN_EDITORIALIZE_SCHEMA,
+      EDITORIALIZE_SYSTEM, prompt, EDITORIALIZE_MODEL, EDITORIALIZE_MAX_TOKENS, SCAN_EDITORIALIZE_SCHEMA,
     );
     const out = Array.isArray((data as any).topics) ? (data as any).topics : [];
     return titles.map((original, i) => {
@@ -134,7 +134,7 @@ async function runScan(source: Source): Promise<ScanResult & { contentHash: stri
 
   const today = amsterdamToday();
   const prompt = `Bron: ${source.name}\nURL: ${source.url}\nVandaag is ${today} (Europe/Amsterdam).\n\nUitgelezen pagina-inhoud:\n---\n${pageText}\n---`;
-  const data = await askClaudeJson(SCAN_SYSTEM, prompt, false, FAST_WRITE_MODEL, 6000, SCAN_SCHEMA);
+  const data = await askClaudeJson(SCAN_SYSTEM, prompt, FAST_WRITE_MODEL, 6000, SCAN_SCHEMA);
 
   const rawItems = Array.isArray((data as any).items) ? (data as any).items : [];
   const items: ScanItem[] = rawItems
