@@ -1,9 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from '@/components/toast';
 import type { ConstraintKind, ConstraintVersion } from '@/lib/types';
 import { STANDAARD_FIELDS, LIST_FIELDS, type FieldDef } from './criteria-fields';
+import PanelHeader from './PanelHeader';
+import VersionDrawer from './VersionDrawer';
 
 const FIELD_GROUPS: Record<ConstraintKind, { section: string; fields: FieldDef<any>[] }[]> = {
   standaard: STANDAARD_FIELDS,
@@ -14,15 +16,35 @@ function parse(content: string): Record<string, any> {
   return JSON.parse(content);
 }
 
-export default function CriteriaEditor({ kind }: { kind: ConstraintKind }) {
+export default function CriteriaEditor({
+  kind,
+  eyebrow,
+  title,
+  description,
+  onChanged,
+}: {
+  kind: ConstraintKind;
+  eyebrow: string;
+  title: string;
+  description: string;
+  onChanged: () => void;
+}) {
+  const groups = FIELD_GROUPS[kind];
   const [versions, setVersions] = useState<ConstraintVersion[]>([]);
   const [draft, setDraft] = useState<Record<string, any> | null>(null);
   const [viewing, setViewing] = useState<ConstraintVersion | null>(null);
   const [busy, setBusy] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [activeSection, setActiveSection] = useState(groups[0].section);
+
+  const sectionRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   const active = versions.find(v => v.active === 1);
   const activeContent = active ? parse(active.content) : null;
-  const dirty = Boolean(!viewing && active && draft && JSON.stringify(draft) !== JSON.stringify(activeContent));
+  const changedCount = draft && activeContent
+    ? Object.keys(draft).filter(k => JSON.stringify(draft[k]) !== JSON.stringify(activeContent[k])).length
+    : 0;
+  const dirty = Boolean(!viewing && active && draft && changedCount > 0);
 
   const load = useCallback(async (k: ConstraintKind) => {
     const res = await fetch(`/api/constraints?kind=${k}`);
@@ -39,6 +61,11 @@ export default function CriteriaEditor({ kind }: { kind: ConstraintKind }) {
     setDraft(prev => (prev ? { ...prev, [key]: value } : prev));
   }
 
+  function scrollToSection(section: string) {
+    setActiveSection(section);
+    sectionRefs.current[section]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
   async function save() {
     if (!dirty || busy || !draft) return;
     const note = prompt('Korte omschrijving van de wijziging (voor de versiegeschiedenis):') || '';
@@ -50,7 +77,8 @@ export default function CriteriaEditor({ kind }: { kind: ConstraintKind }) {
         body: JSON.stringify({ kind, content: draft, note }),
       });
       toast(`Opgeslagen als v${(active?.version || 0) + 1} — geldt vanaf het volgende artikel`);
-      load(kind);
+      await load(kind);
+      onChanged();
     } finally {
       setBusy(false);
     }
@@ -60,57 +88,121 @@ export default function CriteriaEditor({ kind }: { kind: ConstraintKind }) {
     if (!confirm(`v${v.version} terugzetten als actieve versie?`)) return;
     await fetch(`/api/constraints/${v.id}/activate`, { method: 'POST' });
     toast(`v${v.version} is nu actief`);
-    load(kind);
+    await load(kind);
+    onChanged();
   }
 
-  if (!draft) return null;
+  const changeLabel = `${changedCount} wijziging${changedCount === 1 ? '' : 'en'}`;
+
+  const headerRight = (
+    <>
+      {dirty ? (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, color: 'var(--amber-dark)', background: 'var(--amber-bg)', padding: '5px 10px', borderRadius: 999 }}>
+          <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--amber)' }} />
+          {changeLabel}
+        </span>
+      ) : active ? (
+        <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--green-dark)', background: 'var(--green-bg)', padding: '5px 10px', borderRadius: 999 }}>
+          v{active.version} · actief
+        </span>
+      ) : null}
+      <button
+        onClick={() => setDrawerOpen(o => !o)}
+        style={{
+          fontSize: 12.5, fontWeight: drawerOpen ? 700 : 600, padding: '7px 12px', borderRadius: 8,
+          background: drawerOpen ? 'var(--ink)' : 'var(--card)', color: drawerOpen ? '#fff' : 'var(--ink)',
+          border: drawerOpen ? '1px solid var(--ink)' : '1px solid var(--border)',
+        }}
+      >
+        Versies ({versions.length})
+      </button>
+    </>
+  );
+
   const shown = viewing ? parse(viewing.content) : draft;
-  const groups = FIELD_GROUPS[kind];
 
   return (
     <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-      <div style={{ flex: 1, minWidth: 0, padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 18, background: 'var(--card)', overflowY: 'auto' }}>
-        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-          {active && (
-            <span className="chip-green" style={{ fontSize: 12 }}>
-              v{active.version} · actief
-            </span>
-          )}
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', background: 'var(--card)' }}>
+        <PanelHeader eyebrow={eyebrow} title={title} description={description} right={headerRight} divider={false} />
+
+        {/* Anker-pills — smooth-scroll naar de secties binnen de body-scrollcontainer */}
+        <div style={{ display: 'flex', gap: 6, padding: '0 28px 16px', borderBottom: '1px solid var(--border-light)', flexWrap: 'wrap' }}>
+          {groups.map(group => {
+            const on = activeSection === group.section;
+            return (
+              <button
+                key={group.section}
+                onClick={() => scrollToSection(group.section)}
+                style={{
+                  fontSize: 12.5, fontWeight: on ? 700 : 500, padding: '6px 12px', borderRadius: 999, border: 'none',
+                  background: on ? 'var(--soft)' : 'transparent', color: on ? 'var(--ink)' : 'var(--gray)',
+                }}
+              >
+                {group.section}
+              </button>
+            );
+          })}
         </div>
 
-        {viewing && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'var(--soft)', border: '1px solid var(--border-light)', borderRadius: 8, padding: '9px 14px', fontSize: 12.5 }}>
-            <span>Je bekijkt <b>v{viewing.version}</b> (alleen-lezen).</span>
-            <button className="btn-small" style={{ marginLeft: 'auto' }} onClick={() => setViewing(null)}>Terug naar actieve versie</button>
-            <button className="btn-primary" style={{ fontSize: 12.5, padding: '7px 14px' }} onClick={() => rollback(viewing)}>Terugzetten als actief</button>
-          </div>
-        )}
-
-        {groups.map(group => (
-          <div key={group.section} style={{ display: 'flex', flexDirection: 'column', gap: 8, borderTop: '1px solid var(--border-light)', paddingTop: 16 }}>
-            <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--gray)' }}>
-              {group.section}
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '20px 28px 24px', display: 'flex', flexDirection: 'column', gap: 22 }}>
+          {viewing && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'var(--soft)', border: '1px solid var(--border-light)', borderRadius: 8, padding: '9px 14px', fontSize: 12.5 }}>
+              <span>Je bekijkt <b>v{viewing.version}</b> (alleen-lezen).</span>
+              <button className="btn-small" style={{ marginLeft: 'auto' }} onClick={() => setViewing(null)}>Terug naar actieve versie</button>
+              <button className="btn-primary" style={{ fontSize: 12.5, padding: '7px 14px' }} onClick={() => rollback(viewing)}>Terugzetten als actief</button>
             </div>
-            {group.fields.map(field => (
-              <FieldRow
-                key={String(field.key)}
-                field={field}
-                value={shown[field.key as string]}
-                readOnly={Boolean(viewing)}
-                onChange={value => updateField(field.key as string, value)}
-              />
-            ))}
-          </div>
-        ))}
+          )}
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, borderTop: '1px solid var(--border-light)', padding: '14px 0 4px', marginTop: 'auto' }}>
-          <span style={{ fontSize: 12.5, color: 'var(--gray)' }}>
-            {active
-              ? `Laatst gewijzigd ${new Date(active.created_at.replace(' ', 'T')).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short' })} · ${active.author}`
-              : 'Nog geen versie'}
-          </span>
+          {shown && groups.map((group, i) => (
+            <div
+              key={group.section}
+              ref={el => { sectionRefs.current[group.section] = el; }}
+              style={{
+                display: 'flex', flexDirection: 'column', gap: 8,
+                borderTop: i === 0 ? undefined : '1px solid var(--border-light)',
+                paddingTop: i === 0 ? 0 : 18,
+              }}
+            >
+              <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--gray)', paddingBottom: 6 }}>
+                {group.section}
+              </div>
+              {group.fields.map(field => (
+                <FieldRow
+                  key={String(field.key)}
+                  field={field}
+                  value={shown[field.key as string]}
+                  readOnly={Boolean(viewing)}
+                  onChange={value => updateField(field.key as string, value)}
+                />
+              ))}
+            </div>
+          ))}
+        </div>
+
+        <div
+          style={{
+            display: 'flex', alignItems: 'center', gap: 12, borderTop: '1px solid var(--border-light)',
+            background: dirty ? 'var(--amber-col)' : 'var(--panel)', padding: '13px 28px',
+          }}
+        >
+          {dirty ? (
+            <>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12.5, fontWeight: 700, color: 'var(--amber-dark)' }}>
+                <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--amber)' }} />
+                {changedCount} niet-opgeslagen wijziging{changedCount === 1 ? '' : 'en'}
+              </span>
+              <span style={{ fontSize: 12.5, color: 'var(--amber-dark)', minWidth: 0 }}>Geldt vanaf de volgende n8n-run.</span>
+            </>
+          ) : (
+            <span style={{ fontSize: 12.5, color: 'var(--gray)' }}>
+              {active
+                ? `Opgeslagen · ${new Date(active.created_at.replace(' ', 'T')).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short' })} door ${active.author}`
+                : 'Nog geen versie'}
+            </span>
+          )}
           <button className="btn" style={{ marginLeft: 'auto' }} disabled={!dirty} onClick={() => setDraft(activeContent)}>
-            Wijzigingen verwerpen
+            Verwerpen
           </button>
           <button className="btn-primary" disabled={!dirty || busy} onClick={save}>
             {dirty ? `Opslaan als v${(active?.version || 0) + 1}` : 'Geen wijzigingen'}
@@ -118,51 +210,16 @@ export default function CriteriaEditor({ kind }: { kind: ConstraintKind }) {
         </div>
       </div>
 
-      <div
-        style={{
-          width: 340, flexShrink: 0, borderLeft: '1px solid var(--border-light)', background: 'var(--sidebar)',
-          padding: 20, display: 'flex', flexDirection: 'column', gap: 14, overflowY: 'auto',
-        }}
-        className="desktop-only-flex"
-      >
-        <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--gray)' }}>
-          Versiegeschiedenis
-        </div>
-        {versions.map(v => (
-          <div
-            key={v.id}
-            style={{
-              background: 'var(--card)', borderRadius: 8, padding: '12px 14px',
-              border: v.active ? '1.5px solid var(--ink)' : '1px solid var(--border-light)',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontSize: 13, fontWeight: 800 }}>v{v.version}</span>
-              {v.active === 1 && <span style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--green-dark)' }}>actief</span>}
-              <span style={{ marginLeft: 'auto', fontSize: 11.5, color: 'var(--muted)' }}>
-                {new Date(v.created_at.replace(' ', 'T')).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short' })} · {v.author}
-              </span>
-            </div>
-            <div style={{ fontSize: 12.5, color: 'var(--text-soft)', marginTop: 5, lineHeight: 1.45 }}>
-              {v.note || 'Geen omschrijving'}
-            </div>
-            {v.active !== 1 && (
-              <div style={{ display: 'flex', gap: 12, marginTop: 8, fontSize: 12, fontWeight: 600 }}>
-                <span style={{ textDecoration: 'underline', cursor: 'pointer' }} onClick={() => setViewing(v)}>Bekijk</span>
-                <span style={{ textDecoration: 'underline', cursor: 'pointer' }} onClick={() => rollback(v)}>Terugzetten</span>
-              </div>
-            )}
-          </div>
-        ))}
-        <div
-          style={{
-            background: 'var(--amber-bg)', border: '1px solid var(--amber-border)', borderRadius: 8,
-            padding: '12px 14px', fontSize: 12.5, lineHeight: 1.5, color: 'var(--amber-dark)',
-          }}
-        >
-          <span style={{ fontWeight: 800 }}>Let op:</span> deze criteria gelden voor élk volgend artikel. Check na een wijziging het eerstvolgende draft-artikel extra goed.
-        </div>
-      </div>
+      {drawerOpen && (
+        <VersionDrawer
+          subtitle={`Criteria · ${kind === 'lijst' ? 'lijstartikel' : 'standaardartikel'}`}
+          versions={versions}
+          warning="deze criteria gelden voor élk volgend artikel. Check na een wijziging het eerstvolgende draft-artikel extra goed."
+          onClose={() => setDrawerOpen(false)}
+          onView={v => setViewing(v as ConstraintVersion)}
+          onRollback={v => rollback(v as ConstraintVersion)}
+        />
+      )}
     </div>
   );
 }

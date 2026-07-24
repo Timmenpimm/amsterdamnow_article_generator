@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from '@/components/toast';
+import PanelHeader from './PanelHeader';
 
 type AutoPublishSettings = {
   enabled: boolean;
@@ -61,7 +62,17 @@ function fmt(iso: string | null): string {
   return d.toLocaleDateString('nl-NL', { day: 'numeric', month: 'short' }) + ` ${time}`;
 }
 
-export default function AutoPublishPanel() {
+export default function AutoPublishPanel({
+  eyebrow,
+  title,
+  description,
+  onChanged,
+}: {
+  eyebrow: string;
+  title: string;
+  description: string;
+  onChanged: () => void;
+}) {
   const [settings, setSettings] = useState<SettingsResponse | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -83,15 +94,19 @@ export default function AutoPublishPanel() {
       const body = await res.json();
       if (!res.ok) { toast(body.error || 'Opslaan mislukt', { kind: 'error' }); return; }
       setSettings(body);
+      onChanged();
     } finally {
       setBusy(false);
     }
   }
 
-  if (!settings) return null;
-
   return (
-    <div style={{ flex: 1, minWidth: 0, padding: '20px 24px', background: 'var(--card)', overflowY: 'auto' }}>
+    <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', background: 'var(--card)' }}>
+      <PanelHeader eyebrow={eyebrow} title={title} description={description} />
+      {!settings ? (
+        <div style={{ flex: 1 }} />
+      ) : (
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '20px 28px 24px' }}>
       <div className="card" style={{ maxWidth: 560, padding: 18, display: 'flex', flexDirection: 'column', gap: 16 }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
           <Toggle on={settings.enabled} disabled={busy} onClick={() => save({ enabled: !settings.enabled })} />
@@ -186,6 +201,8 @@ export default function AutoPublishPanel() {
           </div>
         </div>
       </div>
+      </div>
+      )}
     </div>
   );
 }
