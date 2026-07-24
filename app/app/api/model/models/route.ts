@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getModelSettings } from '@/lib/modelConfig';
+import { getModelSettings, omnirouteOrigin } from '@/lib/modelConfig';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic';
 export async function GET(req: NextRequest) {
   const override = req.nextUrl.searchParams.get('baseUrl')?.trim();
   const settings = await getModelSettings();
-  const base = (override && /^https?:\/\//i.test(override) ? override : settings.omniroute.baseUrl).replace(/\/+$/, '');
+  const base = omnirouteOrigin(override && /^https?:\/\//i.test(override) ? override : settings.omniroute.baseUrl);
   const url = `${base}/v1/models`;
 
   try {

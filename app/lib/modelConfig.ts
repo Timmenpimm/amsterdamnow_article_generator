@@ -131,8 +131,20 @@ function anthropicProvider(): ActiveProvider {
   };
 }
 
+// Normaliseert een Omniroute-base-URL naar de kale origin. De tool plakt zelf
+// `/v1/messages` resp. `/v1/models` erachter, dus een ingevulde URL die al op
+// `/v1`, `/v1/messages` of `/v1/models` eindigt zou anders `/v1/v1/...` geven.
+// Strip daarom trailing slashes én zo'n afsluitend /v1(-pad). Idempotent.
+export function omnirouteOrigin(baseUrl: string): string {
+  return baseUrl
+    .trim()
+    .replace(/\/+$/, '')
+    .replace(/\/v1(?:\/(?:messages|models))?$/i, '')
+    .replace(/\/+$/, '');
+}
+
 function omnirouteProvider(cfg: OmnirouteConfig): ActiveProvider {
-  const origin = cfg.baseUrl.replace(/\/+$/, '');
+  const origin = omnirouteOrigin(cfg.baseUrl);
   return {
     id: 'omniroute',
     messagesUrl: `${origin}/v1/messages`,
