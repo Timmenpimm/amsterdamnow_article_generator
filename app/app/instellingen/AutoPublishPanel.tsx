@@ -10,8 +10,9 @@ type AutoPublishSettings = {
   lastPublishedAt: string | null;
   maxPerDay: number;
   clusterCooldown: number;
+  schedule: { enabled: boolean; start: string; end: string };
 };
-type SettingsResponse = AutoPublishSettings & { nextAt: string | null };
+type SettingsResponse = AutoPublishSettings & { nextAt: string | null; windowOpen: boolean };
 
 const PRESETS: { minutes: number; label: string }[] = [
   { minutes: 5, label: '5 min' },
@@ -188,9 +189,67 @@ export default function AutoPublishPanel({
           </div>
         </div>
 
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 8 }}>
+            Actief tijdvenster
+          </div>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+            <Toggle
+              on={settings.schedule.enabled}
+              disabled={busy}
+              onClick={() => save({ schedule: { ...settings.schedule, enabled: !settings.schedule.enabled } })}
+            />
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>Alleen publiceren binnen een tijdvenster</div>
+              <div style={{ fontSize: 12, color: 'var(--gray)', marginTop: 2, lineHeight: 1.5 }}>
+                Buiten het venster publiceert de tool niets automatisch; handmatig publiceren blijft altijd mogelijk.
+              </div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginTop: 12 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--muted)' }}>
+              Aan om
+              <input
+                type="time"
+                value={settings.schedule.start}
+                disabled={busy || !settings.schedule.enabled}
+                onChange={e => save({ schedule: { ...settings.schedule, start: e.target.value } })}
+                style={{
+                  fontSize: 13, fontWeight: 600, padding: '8px 12px', borderRadius: 8,
+                  border: '1px solid var(--border)', background: 'var(--card)', color: 'var(--ink)',
+                  opacity: settings.schedule.enabled ? 1 : 0.5,
+                }}
+              />
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--muted)' }}>
+              Uit om
+              <input
+                type="time"
+                value={settings.schedule.end}
+                disabled={busy || !settings.schedule.enabled}
+                onChange={e => save({ schedule: { ...settings.schedule, end: e.target.value } })}
+                style={{
+                  fontSize: 13, fontWeight: 600, padding: '8px 12px', borderRadius: 8,
+                  border: '1px solid var(--border)', background: 'var(--card)', color: 'var(--ink)',
+                  opacity: settings.schedule.enabled ? 1 : 0.5,
+                }}
+              />
+            </label>
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 8, lineHeight: 1.5 }}>
+            Tijden in Europe/Amsterdam. Eindtijd vóór begintijd = nachtvenster (bv. 22:00–06:00). Begin = eind betekent de hele dag.
+          </div>
+        </div>
+
         <div style={{ borderTop: '1px solid var(--border-light)', paddingTop: 14, fontSize: 12.5, color: 'var(--gray)', lineHeight: 1.7 }}>
           <div>Laatst gepubliceerd: <strong style={{ color: 'var(--ink)' }}>{fmt(settings.lastPublishedAt)}</strong></div>
-          <div>Volgende publicatie: <strong style={{ color: 'var(--ink)' }}>{settings.enabled ? fmt(settings.nextAt) : 'gepauzeerd'}</strong></div>
+          <div>Volgende publicatie: <strong style={{ color: 'var(--ink)' }}>{
+            !settings.enabled
+              ? 'gepauzeerd'
+              : (settings.schedule.enabled && !settings.windowOpen)
+                ? `buiten tijdvenster · hervat om ${settings.schedule.start}`
+                : fmt(settings.nextAt)
+          }</strong></div>
           <div style={{ marginTop: 10, color: 'var(--muted)' }}>
             Volgorde: niet-evergreen artikelen met een naderend evenement eerst (dichtstbijzijnde datum voorop), dan
             overige niet-evergreen artikelen, dan evergreen content. Om te voorkomen dat er meerdere gelijksoortige
