@@ -1,4 +1,5 @@
-const API_URL = 'https://api.anthropic.com/v1/messages';
+import { activeProvider, failoverProvider, type ActiveProvider, type ProviderId } from './modelConfig';
+
 // claude-sonnet-4-20250514 is met pensioen (404 sinds juni 2026); Opus 4.8 is
 // het huidige aanbevolen model. Override mogelijk via ANTHROPIC_MODEL.
 const MODEL = process.env.ANTHROPIC_MODEL || 'claude-opus-4-8';
@@ -19,26 +20,87 @@ export const TITLE_MODEL = process.env.ANTHROPIC_TITLE_MODEL || 'claude-sonnet-5
 type ClaudeBlock = { type: string; text?: string };
 type ClaudeResponse = { content?: ClaudeBlock[]; stop_reason?: string; error?: { message?: string } };
 
-function apiKey(): string {
-  const key = process.env.ANTHROPIC_API_KEY;
-  if (!key) throw new Error('Claude is niet geconfigureerd. Voeg ANTHROPIC_API_KEY toe aan de omgevingsvariabelen.');
-  return key;
+// HTTP-fout van een provider (Anthropic of Omniroute). Draagt de status en de
+// provider-id mee zodat de aanroeper kan beslissen of een automatische failover
+// zin heeft (zie isCreditOrRateError + de failover-logica hieronder). De
+// .message behoudt de bestaande Nederlandse label/boodschap-vorm.
+export class ProviderHttpError extends Error {
+  status: number;
+  providerId: ProviderId;
+  constructor(message: string, status: number, providerId: ProviderId) {
+    super(message);
+    this.name = 'ProviderHttpError';
+    this.status = status;
+    this.providerId = providerId;
+  }
 }
 
-async function request(body: Record<string, unknown>): Promise<ClaudeResponse> {
-  const res = await fetch(API_URL, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-api-key': apiKey(),
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify(body),
-    cache: 'no-store',
-  });
+// True als de fout wijst op opgeraakte credits of rate-limiting — de gevallen
+// waarin een automatische failover naar Omniroute zin heeft:
+//   - 429 (rate limit) of 529 (overloaded);
+//   - 400/403 waarvan de boodschap "credit" bevat (Anthropic:
+//     "Your credit balance is too low to access the Anthropic API").
+// Duck-typed op { status, message } zodat het zowel een ProviderHttpError als
+// een los foutobject herkent.
+export function isCreditOrRateError(e: unknown): boolean {
+  const err = e as { status?: unknown; message?: unknown } | null;
+  const status = err && typeof err.status === 'number' ? err.status : 0;
+  const msg = err && typeof err.message === 'string' ? err.message : '';
+  if (status === 429 || status === 529) return true;
+  if ((status === 400 || status === 403) && msg.toLowerCase().includes('credit')) return true;
+  return false;
+}
+
+// Verstuurt de call naar de actieve provider (Anthropic direct of Omniroute).
+// `prov` bepaalt endpoint, headers en — via de aanroeper — welk model en welke
+// capability-vlaggen gelden. Zie lib/modelConfig.ts.
+async function request(body: Record<string, unknown>, prov: ActiveProvider): Promise<ClaudeResponse> {
+  if (prov.id === 'anthropic' && !prov.headers['x-api-key']) {
+    throw new Error('Claude is niet geconfigureerd. Voeg ANTHROPIC_API_KEY toe aan de omgevingsvariabelen.');
+  }
+  let res: Response;
+  try {
+    res = await fetch(prov.messagesUrl, {
+      method: 'POST',
+      headers: prov.headers,
+      body: JSON.stringify(body),
+      cache: 'no-store',
+    });
+  } catch (e) {
+    // Meest voorkomende Omniroute-fout: de gateway draait niet of is (op
+    // Vercel) onbereikbaar op localhost. Geef een duidelijke melding i.p.v.
+    // een kale "fetch failed".
+    if (prov.id === 'omniroute') {
+      throw new Error(`Omniroute onbereikbaar op ${prov.messagesUrl}. Draait de gateway? (${(e as Error).message})`);
+    }
+    throw e;
+  }
   const data = await res.json().catch(() => ({})) as ClaudeResponse;
-  if (!res.ok) throw new Error(`Claude ${res.status}: ${data.error?.message || 'onbekende fout'}`);
+  if (!res.ok) {
+    const label = prov.id === 'omniroute' ? 'Omniroute' : 'Claude';
+    throw new ProviderHttpError(`${label} ${res.status}: ${data.error?.message || 'onbekende fout'}`, res.status, prov.id);
+  }
   return data;
+}
+
+// Draait `run(prov)` tegen de actieve provider. Faalt die op een credit-/rate-
+// fout terwijl Anthropic direct actief is én automatische failover aan staat,
+// dan draait dezelfde call éénmalig opnieuw via de Omniroute-provider. `run`
+// leidt zijn model/capability-vlaggen af uit de meegegeven `prov`, dus bij de
+// retry gelden automatisch de Omniroute-capabilities (geen output_config, geen
+// web_search, model-override incl. vision). Er wordt maximaal één keer
+// omgeschakeld: mislukt ook de Omniroute-poging, dan propageert die fout.
+async function withFailover<T>(run: (prov: ActiveProvider) => Promise<T>): Promise<T> {
+  const prov = await activeProvider();
+  try {
+    return await run(prov);
+  } catch (e) {
+    if (prov.id === 'anthropic' && isCreditOrRateError(e)) {
+      const fallback = await failoverProvider();
+      if (fallback) return run(fallback);
+    }
+    throw e;
+  }
 }
 
 function textFrom(response: ClaudeResponse): string {
@@ -107,6 +169,18 @@ export async function askClaudeJsonWithImages(
   system: string, prompt: string, images: ClaudeImage[], model = FAST_WRITE_MODEL,
   schema?: Record<string, unknown>
 ): Promise<Record<string, unknown>> {
+  // De provider (incl. model + capability-vlaggen) wordt binnen askImagesWith
+  // opnieuw afgeleid, zodat een failover-retry de Omniroute-capabilities krijgt.
+  return withFailover(prov => askImagesWith(prov, system, prompt, images, model, schema));
+}
+
+// Eén beeld-call tegen een concrete provider. Alle provider-afhankelijke
+// waarden (activeModel, useStructured, format) worden hier uit `prov` bepaald,
+// zodat withFailover dit bij een retry ongewijzigd tegen Omniroute kan draaien.
+async function askImagesWith(
+  prov: ActiveProvider, system: string, prompt: string, images: ClaudeImage[],
+  model: string, schema?: Record<string, unknown>
+): Promise<Record<string, unknown>> {
   const content: unknown[] = images.flatMap((img, i) => ([
     { type: 'text', text: `Beeld ${i + 1}:` },
     { type: 'image', source: { type: 'base64', media_type: img.media_type, data: img.data } },
@@ -114,13 +188,20 @@ export async function askClaudeJsonWithImages(
   content.push({ type: 'text', text: prompt });
   const messages: Array<{ role: 'user' | 'assistant'; content: unknown }> = [{ role: 'user', content }];
 
-  const response = await request({ model, max_tokens: 4000, system, messages, ...thinkingConfig(false), ...outputConfig(schema) });
+  const activeModel = prov.modelFor(model, true); // vision-call
+  // Alleen structured outputs sturen als de provider ze ondersteunt (Anthropic
+  // wel, Omniroute niet — die valt op het schemaloze pad terug).
+  const useStructured = Boolean(schema) && prov.supportsStructuredOutputs;
+  const format = useStructured ? outputConfig(schema) : {};
+
+  const response = await request({ model: activeModel, max_tokens: 4000, system, messages, ...thinkingConfig(false), ...format }, prov);
   if (response.stop_reason === 'max_tokens') {
     throw new Error('Claude-respons afgekapt op max_tokens (4000) bij het beoordelen van de beelden.');
   }
   const raw = textFrom(response);
-  // Met schema is het text-block gegarandeerd geldige JSON: direct parsen.
-  if (schema) return JSON.parse(raw);
+  // Met (ondersteunde) structured outputs is het text-block gegarandeerd
+  // geldige JSON: direct parsen.
+  if (useStructured) return JSON.parse(raw);
   const parsed = extractJson(raw);
   if (parsed) return parsed;
 
@@ -131,7 +212,7 @@ export async function askClaudeJsonWithImages(
     role: 'user',
     content: 'Dit is geen geldig JSON-object. Antwoord nu ALLEEN met het JSON-object uit de instructie hierboven — geen uitleg, geen tekst ervoor of erna, geen markdown-codeblok.',
   });
-  const retry = await request({ model, max_tokens: 4000, system, messages });
+  const retry = await request({ model: activeModel, max_tokens: 4000, system, messages }, prov);
   const retryParsed = extractJson(textFrom(retry));
   if (retryParsed) return retryParsed;
   throw new Error('Claude gaf geen geldige JSON terug bij het beoordelen van de beelden.');
@@ -144,7 +225,22 @@ export async function askClaudeJson(
   system: string, prompt: string, model = MODEL, maxTokens = 6000,
   schema?: Record<string, unknown>, withThinking = false
 ): Promise<Record<string, unknown>> {
-  const format = outputConfig(schema);
+  // Provider (incl. model + capability-vlaggen) wordt binnen askJsonWith
+  // afgeleid, zodat een failover-retry de Omniroute-capabilities krijgt.
+  return withFailover(prov => askJsonWith(prov, system, prompt, model, maxTokens, schema, withThinking));
+}
+
+// Eén JSON-call tegen een concrete provider. Alle provider-afhankelijke waarden
+// (activeModel, useStructured, format) worden hier uit `prov` bepaald, zodat
+// withFailover dit bij een retry ongewijzigd tegen Omniroute kan draaien.
+async function askJsonWith(
+  prov: ActiveProvider, system: string, prompt: string, model: string, maxTokens: number,
+  schema?: Record<string, unknown>, withThinking = false
+): Promise<Record<string, unknown>> {
+  const activeModel = prov.modelFor(model, false);
+  // Structured outputs alleen als de provider ze ondersteunt (zie modelConfig).
+  const useStructured = Boolean(schema) && prov.supportsStructuredOutputs;
+  const format = useStructured ? outputConfig(schema) : {};
   const thinking = thinkingConfig(withThinking);
   // Prompt caching op de systeem-prompt. Dezelfde prompt wordt binnen één
   // artikel vaak herhaald (bv. de verificatie-prompt bij elk item, de
@@ -156,7 +252,7 @@ export async function askClaudeJson(
   const messages: Array<{ role: 'user' | 'assistant'; content: unknown }> = [{ role: 'user', content: prompt }];
 
   async function requestUntilDone(): Promise<string> {
-    const response = await request({ model, max_tokens: maxTokens, system: systemBlocks, messages, ...thinking, ...format });
+    const response = await request({ model: activeModel, max_tokens: maxTokens, system: systemBlocks, messages, ...thinking, ...format }, prov);
     // Bij max_tokens is de respons per definitie afgekapt (onvolledige JSON) —
     // gezien op productie: het model liep hier soms tot 58s over voordat de
     // limiet werd geraakt, wat de 60s-functielimiet in gevaar bracht. Direct
@@ -169,9 +265,11 @@ export async function askClaudeJson(
   }
 
   const raw = await requestUntilDone();
-  // Met schema is de respons gegarandeerd geldige JSON conform het schema:
-  // direct parsen, geen extractie en geen herkansing.
-  if (schema) return JSON.parse(raw);
+  // Met (ondersteunde) structured outputs is de respons gegarandeerd geldige
+  // JSON conform het schema: direct parsen, geen extractie en geen herkansing.
+  // Bij Omniroute (geen structured outputs) valt dit door naar het schemaloze
+  // pad hieronder, ook als er een schema was meegegeven.
+  if (useStructured) return JSON.parse(raw);
   const parsed = extractJson(raw);
   if (parsed) return parsed;
 

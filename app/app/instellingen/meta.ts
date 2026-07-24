@@ -75,7 +75,7 @@ const DESCRIPTIONS: Record<RailKey, string> = {
   lijst: 'Vaste regels die Claude bovenop de prompt krijgt. Losse velden i.p.v. vrije tekst, zodat je niets per ongeluk sloopt.',
   publiceren: 'Publiceert zelf artikelen uit "Klaar voor publicatie" op een instelbaar interval — één artikel per keer.',
   variabelen: 'Beheer de {{variabelen}} die n8n elke run bij de prompts invult.',
-  model: 'Kies het Claude-model en beheer de koppelingen (WordPress, n8n).',
+  model: 'Kies waar de AI draait: rechtstreeks naar Claude (Anthropic) of via je eigen Omniroute-gateway om tokens te sparen.',
 };
 
 export interface PanelMeta {
