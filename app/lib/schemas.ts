@@ -85,8 +85,23 @@ export const ARTICLE_SCHEMA: Record<string, unknown> = {
     },
     quote: {
       type: 'string',
-      description: 'Pull-quote van 15-25 woorden die LETTERLIJK in de content voorkomt. Een krachtige zin met een concreet feit, geen vraag en geen meta-taal.',
+      description: 'Pull-quote van 25-40 woorden die LETTERLIJK in de content voorkomt. Een krachtige zin met een concreet feit, geen vraag en geen meta-taal.',
     },
+  },
+};
+
+// entiteitsverificatie → writer.ts stepResearch (verifyEntity). Controleert dat
+// naam_locatie, adres en website bij één en dezelfde echte entiteit horen,
+// gegeven de gecrawlde officiële homepage. Alle velden verplicht; lege string is
+// toegestaan (bv. geen waarschuwing).
+export const ENTITY_VERIFY_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['canonical_naam_locatie', 'entiteit_consistent', 'waarschuwing'],
+  properties: {
+    canonical_naam_locatie: { type: 'string', description: 'De echte, beknopte merk-/organisatienaam. Strip Google-Maps-achtige toevoegingen (keukentype, gerecht, plaatsnaam, "Museum"). Leeg laten als je de naam niet betrouwbaar kunt bepalen.' },
+    entiteit_consistent: { type: 'boolean', description: 'True als naam, adres en website aantoonbaar bij dezelfde zaak horen.' },
+    waarschuwing: { type: 'string', description: 'Korte NL-zin als er een probleem is (bv. adres en website horen niet bij elkaar), anders lege string.' },
   },
 };
 

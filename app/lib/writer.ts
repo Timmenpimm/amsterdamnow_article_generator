@@ -1,6 +1,6 @@
 import { activeConstraints, activePrompt, completeTopic, failTopic, saveTopicProgress } from './db';
 import { askClaudeJson, FAST_WRITE_MODEL, TITLE_MODEL } from './claude';
-import { RESEARCH_SCHEMA, ARTICLE_SCHEMA, SEO_SCHEMA } from './schemas';
+import { RESEARCH_SCHEMA, ARTICLE_SCHEMA, SEO_SCHEMA, ENTITY_VERIFY_SCHEMA } from './schemas';
 import { createDraft, taxonomyChoices } from './wp';
 import { checkTopicAgainstWp } from './dedup';
 import { researchWithTavily } from './tavily';
@@ -30,6 +30,12 @@ const MAX_SCHRIJF_HERKANSINGEN = 2;
 function string(value: unknown, label: string): string {
   if (typeof value !== 'string' || !value.trim()) throw new Error(`Claude liet ${label} leeg.`);
   return value.trim();
+}
+
+// Als string(), maar leeg is toegestaan (nooit gooien). Voor velden die
+// legitiem leeg mogen zijn als er geen betrouwbaar gegeven is (adres, website).
+function optionalString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 function strings(value: unknown, label: string): string[] {
@@ -197,7 +203,7 @@ async function polishTitle(article: GeneratedArticle, s: StandaardState, naam: s
 
 async function stepResearch(topic: Topic, s: StandaardState): Promise<StandaardStepResult> {
   const [researchPrompt, taxonomies] = await Promise.all([activePrompt('research'), taxonomyChoices()]);
-  const sources = await researchWithTavily(topic.title);
+  const { sources, officialUrl } = await researchWithTavily(topic.title);
   // Research = feiten extraheren uit aangeleverde bronnen, geen creatief werk:
   // Sonnet 5 volstaat en kost een fractie van Opus (zie FAST_WRITE_MODEL in
   // lib/claude.ts). Bronnen worden hier ook getrimd op 8000 tekens — relevante
@@ -215,9 +221,62 @@ async function stepResearch(topic: Topic, s: StandaardState): Promise<StandaardS
     (research as Record<string, unknown>).start_datum = s.seedStartDatum;
     (research as Record<string, unknown>).eind_datum = s.seedEindDatum || s.seedStartDatum;
   }
+  // De homepage/origin is de betrouwbaarste bron voor de website: overschrijf
+  // altijd met de gedetecteerde origin (de site-root, geen diepe link) wanneer
+  // die bekend is. Alleen zonder officialUrl vertrouwen we op wat het model gaf.
+  if (officialUrl) (research as Record<string, unknown>).website = officialUrl;
   s.research = research;
+  // Entiteitsverificatie: controleer dat naam_locatie, adres en website bij
+  // dezelfde echte zaak horen (en canoniseer de naam) op basis van de gecrawlde
+  // officiële homepage. Fail-open: bij een hapering blijven de originele waarden
+  // staan. Moet vóór saveTopicProgress zodat de gecorrigeerde staat wordt bewaard.
+  const homepageContent = officialUrl ? (sources.find(src => src.url === officialUrl)?.content ?? '') : '';
+  await verifyEntity(s, officialUrl, homepageContent);
   await saveTopicProgress(topic.id, { status: 'queued', phase: 'schrijf', state: s });
   return { topic, phase: 'schrijf', done: false, progress: 'Research klaar · schrijven start' };
+}
+
+// Eén goedkope Claude-call (FAST_WRITE_MODEL) die controleert of naam_locatie,
+// adres en website bij één en dezelfde echte entiteit horen, gegeven de
+// gecrawlde officiële homepage. Canoniseert de naam (strip Google-Maps-achtige
+// toevoegingen) en bewaart consistentie + waarschuwing op de topic-state.
+// FAIL-OPEN: bij een fout gaan we door met de originele waarden en een lege
+// waarschuwing. Logt niets gevoeligs.
+async function verifyEntity(s: StandaardState, officialUrl: string | null, homepageContent: string): Promise<void> {
+  const r = s.research as Record<string, unknown> | undefined;
+  if (!r) return;
+  const naam = optionalString(r.naam_locatie);
+  const adres = optionalString(r.adres);
+  const website = optionalString(r.website);
+  const rubriek = optionalString(r.rubriek);
+  try {
+    const system = 'Je bent verificatieredacteur voor amsterdamnow.com. Je controleert of de naam, het adres en de website die de research opleverde bij ÉÉN en dezelfde echte zaak of instelling horen, op basis van de aangeleverde officiële homepage-tekst. Je verzint niets.';
+    const prompt = [
+      'Controleer de onderstaande entiteit en geef ALLEEN JSON terug.',
+      '',
+      `Rubriek: ${rubriek || '(onbekend)'}`,
+      `naam_locatie: ${naam || '(leeg)'}`,
+      `adres: ${adres || '(leeg)'}`,
+      `website: ${website || '(leeg)'}`,
+      officialUrl ? `Officiële homepage-URL: ${officialUrl}` : 'Geen officiële homepage gevonden.',
+      '',
+      'Officiële homepage-tekst (kan leeg zijn):',
+      homepageContent ? homepageContent.slice(0, 8000) : '(geen homepage-tekst beschikbaar)',
+      '',
+      'Bepaal:',
+      '- canonical_naam_locatie: de echte, beknopte merk-/organisatienaam zoals die op de officiële site staat. Strip Google-Maps-achtige toevoegingen (keukentype, gerecht, plaatsnaam, "Museum"), bv. "Jinweide Lanzhou Beef Noodles Amsterdam Museum" wordt "Jinweide". Bij een evenement is dit de organiserende plek/instelling, niet de titel van het evenement. Leeg laten als je het niet betrouwbaar kunt bepalen.',
+      '- entiteit_consistent: horen naam, adres en website bij dezelfde zaak?',
+      '- waarschuwing: korte NL-zin bij een probleem, anders lege string.',
+    ].join('\n');
+    const payload = await askClaudeJson(system, prompt, false, FAST_WRITE_MODEL, 1000, ENTITY_VERIFY_SCHEMA);
+    const canonical = optionalString(payload.canonical_naam_locatie);
+    if (canonical) r.naam_locatie = canonical;
+    s.entiteitConsistent = payload.entiteit_consistent === true;
+    s.entiteitWaarschuwing = optionalString(payload.waarschuwing);
+  } catch {
+    // FAIL-OPEN: originele waarden behouden, geen waarschuwing.
+    s.entiteitWaarschuwing = '';
+  }
 }
 
 async function stepSchrijf(topic: Topic, s: StandaardState): Promise<StandaardStepResult> {
@@ -319,9 +378,11 @@ async function stepSeo(topic: Topic, s: StandaardState): Promise<StandaardStepRe
     tags: strings(s.research.tags, 'tags'),
     rubriek: string(s.research.rubriek, 'rubriek'),
     naamLocatie: string(s.research.naam_locatie, 'naam_locatie'),
-    adres: string(s.research.adres, 'adres'),
+    // adres en website mogen leeg zijn: niet elk onderwerp heeft een betrouwbaar
+    // adres of homepage, en een verzonnen invulling is erger dan een leeg veld.
+    adres: optionalString(s.research.adres),
     stad: string(s.research.stad, 'stad'),
-    website: string(s.research.website, 'website'),
+    website: optionalString(s.research.website),
     startDatum: optionalIsoDate(s.research.start_datum),
     eindDatum: optionalIsoDate(s.research.eind_datum),
   });

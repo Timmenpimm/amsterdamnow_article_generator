@@ -3,6 +3,12 @@ type TavilyResponse = { results?: TavilyResult[]; detail?: string; message?: str
 
 export type ResearchSource = { title: string; url: string; content: string };
 
+// Resultaat van researchWithTavily: de bronnen én de gedetecteerde officiële
+// origin (site-root) van het onderwerp, of null als die niet te bepalen was.
+// De caller (writer.ts) gebruikt officialUrl om research.website te overschrijven
+// met de homepage.
+export type ResearchResult = { sources: ResearchSource[]; officialUrl: string | null };
+
 // Hosts die vrijwel nooit de officiële site van het onderwerp zijn maar wél
 // hoog scoren in een zoekopdracht: agenda's, ticketverkoop, social, reviews.
 // Een match hierop diskwalificeert een URL als "officiële site".
@@ -22,21 +28,40 @@ function topicTokens(topic: string): string[] {
     .filter(w => w.length >= 4 && !TOKEN_STOPWORDS.has(w));
 }
 
+// Is deze host een aggregator (agenda/tickets/social/reviews)? Dan nooit "de
+// officiële site". Een onbereikbare/ongeldige URL behandelen we defensief als
+// aggregator, zodat 'ie de homepage-detectie niet vervuilt.
+function isAggregatorHost(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, '').toLowerCase();
+    return AGGREGATOR_HOSTS.some(a => host.includes(a));
+  } catch {
+    return true;
+  }
+}
+
 // Is dit waarschijnlijk de eigen site van het onderwerp? Geen aggregator, en het
-// domeinlabel (bv. "paradiso" in paradiso.nl) deelt een token met de titel.
+// domeinlabel (bv. "paradiso" in paradiso.nl) bevat de naam van het onderwerp.
+// STRIKT en éénrichting (alleen label.includes(needle), nooit needle.includes
+// (label)): het domeinlabel moet óf de samengetrokken volledige onderwerpnaam
+// bevatten (alle tokens aaneen zonder spaties, bv. topic "ClubWST" -> "clubwst",
+// "Club West" -> "clubwest"), óf minstens twee losse tokens van >=4 tekens. Zo
+// matcht een losse token "club" niet langer met domein "clubwest".
 function looksOfficial(url: string, tokens: string[]): boolean {
   try {
     const host = new URL(url).hostname.replace(/^www\./, '').toLowerCase();
     if (AGGREGATOR_HOSTS.some(a => host.includes(a))) return false;
     const parts = host.split('.');
     const label = parts.length >= 2 ? parts[parts.length - 2] : parts[0];
-    return tokens.some(t => label.includes(t) || t.includes(label));
+    const full = tokens.join('');
+    if (full.length >= 4 && label.includes(full)) return true;
+    return tokens.filter(t => t.length >= 4 && label.includes(t)).length >= 2;
   } catch {
     return false;
   }
 }
 
-export async function researchWithTavily(topic: string): Promise<ResearchSource[]> {
+export async function researchWithTavily(topic: string): Promise<ResearchResult> {
   const apiKey = process.env.TAVILY_API_KEY;
   if (!apiKey) throw new Error('Tavily is niet geconfigureerd. Voeg TAVILY_API_KEY toe aan de omgevingsvariabelen.');
 
@@ -67,12 +92,22 @@ export async function researchWithTavily(topic: string): Promise<ResearchSource[
   // Eén extra call (bounded i.v.m. de 60s-limiet), best-effort: mislukt het,
   // dan gewoon de zoekresultaten. Vervangt het oude n8n-gedrag dat de tool
   // kwijt was — zie writer.ts stepResearch.
+  // Harde eis: de officiële homepage moet ALTIJD bekeken worden voor basale
+  // info (adres, openingstijden, canonieke naam). Eerst een resultaat dat
+  // looksOfficial haalt; haalt niets dat, dan tóch de origin van het eerste
+  // niet-aggregator zoekresultaat (best passende kandidaat) — die mag nooit
+  // gemist worden. De gekozen origin geven we ook naar buiten (officialUrl).
   const tokens = topicTokens(topic);
-  const officialUrl = results.map(r => r.url).find((u): u is string => !!u && looksOfficial(u, tokens));
+  const resultUrls = results.map(r => r.url).filter((u): u is string => !!u);
+  const chosen = resultUrls.find(u => looksOfficial(u, tokens))
+    ?? resultUrls.find(u => !isAggregatorHost(u))
+    ?? null;
+  let officialUrl: string | null = null;
   let homepage: ResearchSource | null = null;
-  if (officialUrl) {
+  if (chosen) {
     try {
-      const origin = new URL(officialUrl).origin;
+      const origin = new URL(chosen).origin;
+      officialUrl = origin;
       const text = (await extractPageText(origin)).trim();
       if (text) homepage = { title: `Officiële site — ${new URL(origin).hostname.replace(/^www\./, '')}`, url: origin, content: text.slice(0, 12_000) };
     } catch { /* best-effort: val terug op de zoekresultaten */ }
@@ -90,7 +125,7 @@ export async function researchWithTavily(topic: string): Promise<ResearchSource[
     sources.push(s);
   }
   if (!sources.length) throw new Error('Tavily vond geen bruikbare bronnen voor dit onderwerp.');
-  return sources.slice(0, 6);
+  return { sources: sources.slice(0, 6), officialUrl };
 }
 
 // Leest de tekst van één specifieke pagina uit voor de bronscanner. Eerst via
