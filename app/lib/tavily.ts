@@ -1,4 +1,5 @@
 import { competitorInHost } from './competitors';
+import { amsterdamToday } from './eventDate';
 
 type TavilyResult = { title?: string; url?: string; content?: string; raw_content?: string };
 type TavilyResponse = { results?: TavilyResult[]; detail?: string; message?: string };
@@ -25,7 +26,33 @@ const AGGREGATOR_HOSTS = [
   'tripadvisor', 'google', 'youtube', 'wikipedia', 'timeout', 'reddit', 'tiktok',
   'spotify', 'bandsintown', 'residentadvisor', 'ra.co', 'paylogic', 'eventix',
   'ticketswap', 'linkedin', 'x.com', 'twitter', 'booking', 'yelp',
+  // Festival-verzamelsites: tonen de line-up van de láátst bekende (vorige)
+  // editie. Draft 87452 (NO ART) kreeg zo musicfestivalwizard.com als
+  // "officiële site" en 25 verouderde acts als line-up.
+  'musicfestivalwizard', 'partyflock', 'festivalinfo', 'festileaks',
 ];
+
+// Is de wachtrijtitel zelf een URL? Redacteuren (en de scanner, vóór 21-07)
+// plakken soms een kale link als onderwerp. Als tekst behandeld breekt zo'n
+// titel twee dingen tegelijk: de Tavily-query wordt letterlijk
+// "https://… Amsterdam", en topicTokens/looksOfficial matchen nooit op het
+// aaneengeschreven domein — waarna een verzamelsite tot "officiële site" wordt
+// verklaard (draft 87452). De geplakte URL ís de officiële site; gebruik hem zo.
+export function topicAsUrl(topic: string): URL | null {
+  const t = topic.trim();
+  if (!/^https?:\/\/\S+$/i.test(t)) return null;
+  try {
+    return new URL(t);
+  } catch {
+    return null;
+  }
+}
+
+// Domeinlabel als zoeknaam: "https://www.noartfestival.com/" -> "noartfestival".
+export function hostLabel(url: URL): string {
+  const parts = url.hostname.replace(/^www\./, '').toLowerCase().split('.');
+  return parts.length >= 2 ? parts[parts.length - 2] : parts[0];
+}
 
 // Betekenisvolle tokens uit de onderwerptitel (≥4 tekens), voor de domein-match.
 // "amsterdam" wordt uitgesloten: het staat in bijna elke titel (en in de query)
@@ -39,7 +66,7 @@ function topicTokens(topic: string): string[] {
 // Is deze host een aggregator (agenda/tickets/social/reviews)? Dan nooit "de
 // officiële site". Een onbereikbare/ongeldige URL behandelen we defensief als
 // aggregator, zodat 'ie de homepage-detectie niet vervuilt.
-function isAggregatorHost(url: string): boolean {
+export function isAggregatorHost(url: string): boolean {
   try {
     const host = new URL(url).hostname.replace(/^www\./, '').toLowerCase();
     return AGGREGATOR_HOSTS.some(a => host.includes(a));
@@ -81,12 +108,25 @@ export async function researchWithTavily(
   const apiKey = process.env.TAVILY_API_KEY;
   if (!apiKey) throw new Error('Tavily is niet geconfigureerd. Voeg TAVILY_API_KEY toe aan de omgevingsvariabelen.');
 
+  // Een URL als onderwerp zoekt op het domeinlabel, niet op de letterlijke
+  // link: "https://www.noartfestival.com/ Amsterdam" levert andere (slechtere)
+  // treffers dan "noartfestival Amsterdam".
+  const topicUrl = topicAsUrl(topic);
+  const zoeknaam = topicUrl ? hostLabel(topicUrl) : topic;
+  // Het jaartal altijd in de query: Tavily kent geen instructieprompt, dus
+  // actualiteit stuur je via de zoekterm zelf. Zonder jaartal ranken bij
+  // terugkerende events de pagina's van de vórige editie het hoogst — zo kreeg
+  // draft 87452 de line-up van vorig jaar. Alleen het jaartal, geen harde
+  // publicatiedatum-filter: officiële homepages van vaste zaken zijn vaak
+  // oudere pagina's en moeten blijven meekomen.
+  const jaar = amsterdamToday().slice(0, 4);
+
   const res = await fetch('https://api.tavily.com/search', {
     method: 'POST',
     signal: AbortSignal.timeout(TAVILY_TIMEOUT_MS),
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
-      query: opts?.query || `${topic} Amsterdam`,
+      query: `${opts?.query || `${zoeknaam} Amsterdam`} ${jaar}`,
       topic: 'general',
       search_depth: 'advanced',
       max_results: opts?.maxResults ?? 5,
@@ -126,11 +166,17 @@ export async function researchWithTavily(
   // in ronde 1 al gecrawld en staat al bij de bewaarde bronnen, dus een tweede
   // extract-call zou alleen tijd kosten binnen dezelfde 60s-tik. officialUrl
   // blijft dan null; de caller heeft die in ronde 2 niet meer nodig.
-  const tokens = topicTokens(topic);
+  // Is het onderwerp zelf een URL, dan is DÁT de officiële site — geen
+  // detectie nodig (mits geen aggregator of concurrent, dan gedraagt de
+  // pipeline zich als voorheen en zoekt de detectie de echte site).
+  const tokens = topicTokens(zoeknaam);
   const resultUrls = results.map(r => r.url).filter((u): u is string => !!u);
+  const geplakteUrl = topicUrl && !isAggregatorHost(topicUrl.href) && !competitorInHost(topicUrl.href)
+    ? topicUrl.href : null;
   const chosen = opts?.query
     ? null
-    : resultUrls.find(u => looksOfficial(u, tokens))
+    : geplakteUrl
+      ?? resultUrls.find(u => looksOfficial(u, tokens))
       ?? resultUrls.find(u => !isAggregatorHost(u))
       ?? null;
   let officialUrl: string | null = null;

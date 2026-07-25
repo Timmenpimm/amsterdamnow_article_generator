@@ -9,7 +9,7 @@
 // stond in minstens elf gepubliceerde artikelen, waaronder een sportwinkel en
 // een theater.
 import assert from 'node:assert/strict';
-import { extractPromptExamples, findPromptExampleLeak, validateArticle } from '../lib/validation.ts';
+import { extractPromptExamples, findPromptExampleLeak, findStockPhrase, validateArticle } from '../lib/validation.ts';
 
 let passed = 0;
 const failures = [];
@@ -154,14 +154,38 @@ test('validateArticle: eigen quote komt gewoon door de keuring', () => {
   validateArticle(article(), 'Dekmantel', CONFIG, extractPromptExamples(PROMPT));
 });
 
-test('validateArticle: zonder voorbeeldlijst blijft het gedrag ongewijzigd', () => {
-  // Bestaande aanroepers die de vierde parameter niet meegeven (backfills,
-  // tests) mogen niet opeens gaan afkeuren.
+test('validateArticle: de wijnzin sneuvelt óók zonder voorbeeldlijst', () => {
+  // De wijnzin dook op in gepubliceerde artikelen terwijl de actieve prompt
+  // het voorbeeld al niet meer letterlijk bevatte (bakkerij Kometen Brood,
+  // artikel 87333: "De wijnkaart is hier net zo serieus als de keuken" bij een
+  // zaak zonder wijnkaart). De sjabloonzin-check is daarom onvoorwaardelijk:
+  // ook een aanroeper zonder voorbeeldlijst keurt deze zinnen af.
   const besmet = article({
     content: `DARKSIDE staat op het affiche. ${WIJNZIN}`,
     quote: WIJNZIN,
   });
-  validateArticle(besmet, 'Dekmantel', CONFIG);
+  assert.throws(() => validateArticle(besmet, 'Dekmantel', CONFIG), /Verboden sjabloonzin/);
+});
+
+// ---------- findStockPhrase ----------
+
+test('findStockPhrase: vangt de verboden formules ongeacht leestekens', () => {
+  assert.ok(findStockPhrase('De espressobar draait goed. En dat is precies de bedoeling!'));
+  assert.ok(findStockPhrase('Wie zuurdesem zoekt, weet waar hij moet zijn.'));
+  assert.ok(findStockPhrase('Een zaak om in de gaten te houden dus.'));
+});
+
+test('findStockPhrase: vangt elke ombuiging van de wijnzin', () => {
+  // De kern "net zo serieus als de keuken" is verboden, onafhankelijk van wat
+  // eromheen staat — ook varianten die de lek-check (8 woorden overlap met een
+  // promptvoorbeeld) net ontglippen.
+  assert.ok(findStockPhrase('De koffiekaart is bij Kometen net zo serieus als de keuken.'));
+  assert.ok(findStockPhrase('De wijnkaart is hier net zo serieus als de keuken'));
+});
+
+test('findStockPhrase: gewone tekst blijft gewoon staan', () => {
+  assert.equal(findStockPhrase('De wijnkaart telt veertig flessen, allemaal Frans, en de sommelier kiest ze zelf.'), null);
+  assert.equal(findStockPhrase(''), null);
 });
 
 // ---------- samenvatting ----------

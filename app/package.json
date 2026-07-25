@@ -13,6 +13,7 @@
     "test:medianame": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/medianame.test.mjs",
     "test:imagename": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/imagename.test.mjs",
     "test:promptexample": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/promptexample.test.mjs",
+    "test:tavily": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/tavily.test.mjs",
     "test:research": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/research.test.mjs",
     "test:auditor": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/auditor.test.mjs",
     "test:competitors": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/competitors.test.mjs",
