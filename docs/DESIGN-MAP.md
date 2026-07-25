@@ -77,6 +77,25 @@ codewijziging._
 
 ## 4. Backend-patronen (voor schermen met eigen data/acties)
 
+- **Beeldnaamconventie (juli 2026)**: elk beeld dat de tool naar WordPress
+  uploadt heet `{venue-slug}-{type}-{plaats}_{n}` — bijv.
+  `stadsbakkerij-as-winkel-amsterdam_2`. Bestandsnaam, media-slug, media-titel
+  en **alt-tekst** zijn exact dezelfde string (zo doet AmsterdamNOW het al op
+  ~2.000 oudere media-items). Puur rekenwerk in `lib/mediaName.ts`
+  (`imageBaseName` / `imageAltName` / `imageFileName` / `venueTypeFor` /
+  `listItemNameContext`, getest via `npm run test:imagename`); de brug naar
+  `Article` staat in `lib/imageNaming.ts` (`nameContext` + `attachedImageCount`).
+  `uploadMediaFromBuffer`/`uploadMediaFromUrl` accepteren een optionele
+  `naming: { ctx, index }` en schrijven de metadata daarna weg met
+  `setMediaMeta` (POST `/wp/v2/media/{id}`, `{alt_text, title, slug}`). Het
+  type-token volgt de wérkelijke aard van de zaak (afgeleid uit de artikel-slug,
+  dan titel/`naam_locatie`, dan de WP-categorie) — **niet** de categorie, want
+  post 85844 staat in "Restaurants" maar heet `…-winkel-…`. `_n` is 1-based per
+  basiswoord; itemfoto's van lijstartikelen hebben hun eigen basiswoord (de
+  itemnaam) en vaste index `itemIndex + 1`, zodat vervangen geen gaten slaat.
+  De inline-`<figure>` en de itemfoto's in `lib/listHtml.ts` krijgen dezelfde
+  string als `alt`; `updateImages` leest de alt van bestaand beeld op via
+  `mediaAltTexts` zodat de media-library de bron van waarheid blijft.
 - **Datalaag**: `app/lib/db.ts` — twee drivers: Postgres zodra `DATABASE_URL`
   (`SUPABASE_DB_URL`/`POSTGRES_URL`) is gezet, anders SQLite (lokaal `data/`,
   op Vercel `/tmp`, niet-persistent). Query's in **Postgres-stijl `$1,$2`**;
