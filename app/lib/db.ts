@@ -7,7 +7,8 @@ import type {
   ImageCandidate, ImageCandidateDraft, CandidateStatus,
   AuditRun, AuditStatus, AuditScope, AuditFinding, AuditFindingInput,
 } from './types';
-import { DEFAULT_STANDAARD_CONSTRAINTS, DEFAULT_LIST_CONSTRAINTS } from './types';
+import type { AuditVerdict } from './types';
+import { DEFAULT_STANDAARD_CONSTRAINTS, DEFAULT_LIST_CONSTRAINTS, worstVerdict } from './types';
 import { PROMPT_SEEDS } from './prompt-seeds';
 
 // Vóór dit bestand werden prompts vanuit losse .txt-bestanden onder
@@ -1414,7 +1415,14 @@ export async function listAuditFindings(runId: number): Promise<AuditFinding[]> 
     'SELECT * FROM audit_findings WHERE run_id = $1 ORDER BY post_id ASC, id ASC',
     [runId]
   );
-  return rows.map(r => ({
+  return rows.map(toAuditFinding);
+}
+
+// Zelfde snake_case → camelCase-vertaling als toAuditRun, apart gezet omdat
+// zowel listAuditFindings als de per-artikel-leesfuncties hieronder dezelfde
+// rijen omzetten. Number() overal: Postgres levert INTEGER soms als string.
+function toAuditFinding(r: any): AuditFinding {
+  return {
     id: Number(r.id),
     runId: Number(r.run_id),
     postId: Number(r.post_id),
@@ -1424,7 +1432,7 @@ export async function listAuditFindings(runId: number): Promise<AuditFinding[]> 
     bevinding: String(r.bevinding ?? ''),
     bron: String(r.bron ?? ''),
     createdAt: String(r.created_at),
-  })) as AuditFinding[];
+  } as AuditFinding;
 }
 
 // Claimt het volgende nog niet opgepakte artikel van een run, atomisch.
@@ -1508,4 +1516,114 @@ export async function recentlyAuditedPostIds(days: number): Promise<number[]> {
   const out = new Set<number>();
   for (const r of rows) for (const id of parseAuditIds(r.post_ids)) out.add(id);
   return [...out];
+}
+
+// ---------- auditbevindingen per artikel (bord + artikeldetail) ----------
+
+// Hoe ver het bord en het artikeldetail terugkijken. Dezelfde diepte als het
+// auditpaneel (RUNS in /api/audit), en bewust voor beide leesfuncties gelijk:
+// zag het bord een oordeel, dan vindt het detailscherm dezelfde bevindingen.
+// Zou het detail verder terugkijken, dan zou een artikel wél bevindingen tonen
+// maar geen chip op het bord hebben — en andersom.
+const AUDIT_LOOKBACK_RUNS = 10;
+
+// Geëxporteerd omdat latestAuditForPost() dit teruggeeft: het artikeldetail kan
+// het type importeren zonder de vorm over te typen.
+export interface AuditPostOordeel {
+  postId: number;
+  verdict: AuditVerdict;
+  runId: number;
+  geauditeerdOp: string;
+  findings: AuditFinding[];
+}
+
+// Het gedeelde hart van beide leesfuncties: twee query's, de rest in TS.
+//
+// Query 1 haalt de laatste runs op, query 2 in één klap alle bevindingen van
+// die runs (eventueel gefilterd op één artikel). Per artikel per run groeperen
+// gebeurt hier, niet in SQL: de artikellijsten van een run staan als JSON-tekst
+// in post_ids/done_post_ids — zie de toelichting bij parseAuditIds — en dat is
+// in geen van beide dialecten te joinen. Een query per artikel (N+1) is voor
+// het bord geen optie: dat zijn tientallen rondjes naar Supabase per paginaload.
+async function laatsteAuditOordelen(postId?: number): Promise<Map<number, AuditPostOordeel>> {
+  const db = await getDb();
+  const runRows = await db.all(
+    `SELECT id, started_at, finished_at, done_post_ids FROM audits ORDER BY id DESC LIMIT ${AUDIT_LOOKBACK_RUNS}`
+  );
+  const out = new Map<number, AuditPostOordeel>();
+  if (!runRows.length) return out;
+
+  // De run-ids komen uit de vorige query, maar gaan alsnog als parameters mee:
+  // deze codebase bouwt nergens waarden in SQL-tekst, ook niet als ze "veilig"
+  // zijn. $1..$n werkt zo in beide drivers (toSqlite vertaalt naar ?).
+  const runIds = runRows.map(r => Number(r.id));
+  const params: unknown[] = [...runIds];
+  let sql = `SELECT * FROM audit_findings WHERE run_id IN (${runIds.map((_, i) => `$${i + 1}`).join(', ')})`;
+  if (postId !== undefined) {
+    params.push(postId);
+    sql += ` AND post_id = $${params.length}`;
+  }
+  sql += ' ORDER BY post_id ASC, id ASC';
+  const findingRows = await db.all(sql, params);
+
+  const perRun = new Map<number, Map<number, AuditFinding[]>>();
+  for (const row of findingRows) {
+    const f = toAuditFinding(row);
+    let perPost = perRun.get(f.runId);
+    if (!perPost) { perPost = new Map(); perRun.set(f.runId, perPost); }
+    const bucket = perPost.get(f.postId);
+    if (bucket) bucket.push(f);
+    else perPost.set(f.postId, [f]);
+  }
+
+  for (const r of runRows) {
+    const runId = Number(r.id);
+    // Een afgebroken of nog lopende run heeft geen finished_at; started_at is
+    // dan het enige tijdstip dat we hebben, en nauwkeurig genoeg voor "wanneer".
+    const geauditeerdOp = String(r.finished_at || r.started_at);
+    const perPost = perRun.get(runId) || new Map<number, AuditFinding[]>();
+
+    // Alleen artikelen die de run daadwerkelijk verwerkt heeft. Een artikel dat
+    // wél getrokken is (post_ids) maar nooit aan de beurt kwam, heeft geen
+    // oordeel — dat mag niet als 'ok' naar buiten komen, want dan lijkt een
+    // ongecontroleerd artikel goedgekeurd. Vandaar done_post_ids als basis, plus
+    // artikelen met bevindingen: een tik die na het wegschrijven sneuvelde heeft
+    // wél gecontroleerd, en dat oordeel is echt.
+    const verwerkt = new Set<number>([...parseAuditIds(r.done_post_ids), ...perPost.keys()]);
+
+    for (const pid of verwerkt) {
+      if (postId !== undefined && pid !== postId) continue;
+      // runRows staat nieuwste eerst, dus wie hier al in staat komt uit een
+      // nieuwere run: een ouder oordeel overschrijft een nieuwer nooit.
+      if (out.has(pid)) continue;
+      const eigen = perPost.get(pid) || [];
+      // Geen bevindingen = 'ok' (worstVerdict), en dat is een geldige uitkomst:
+      // de controle liep, er was niets aan de hand.
+      out.set(pid, { postId: pid, verdict: worstVerdict(eigen), runId, geauditeerdOp, findings: eigen });
+    }
+  }
+  return out;
+}
+
+// Voor het bord: per artikel het oordeel uit de meest recente run waarin dat
+// artikel zat. Bewust zonder bevindingsteksten — het bord haalt dit in één
+// verzoek voor álle artikelen op, en heeft alleen een chip nodig; `aantal`
+// vertelt of er iets achter zit om open te klappen in het artikeldetail.
+export async function latestAuditByPost(): Promise<Record<number, {
+  verdict: AuditVerdict; runId: number; aantal: number; geauditeerdOp: string;
+}>> {
+  const oordelen = await laatsteAuditOordelen();
+  const out: Record<number, { verdict: AuditVerdict; runId: number; aantal: number; geauditeerdOp: string }> = {};
+  for (const [pid, o] of oordelen) {
+    out[pid] = { verdict: o.verdict, runId: o.runId, aantal: o.findings.length, geauditeerdOp: o.geauditeerdOp };
+  }
+  return out;
+}
+
+// Voor het artikeldetail: alle bevindingen van één artikel uit de meest recente
+// run waarin het zat. null = nooit geauditeerd (of buiten de terugkijkvensters);
+// een leeg findings-array met verdict 'ok' is juist wél een uitslag.
+export async function latestAuditForPost(postId: number): Promise<AuditPostOordeel | null> {
+  const oordelen = await laatsteAuditOordelen(postId);
+  return oordelen.get(postId) || null;
 }

@@ -54,6 +54,17 @@ test('fileNameTokens: WordPress-revisiesuffix telt niet als onderwerp', () => {
   assert.deepEqual(fileNameTokens('kometen-brood-e1612345678.jpg'), ['kometen', 'brood']);
 });
 
+test('fileNameTokens: een screenshot-bestandsnaam levert GEEN losse termen op', () => {
+  // Regressie voor de eerste echte auditrun: deze bestandsnaam gaf twee
+  // bevindingen met de "termen" screenshot2025 en 23at16 — ruis die het
+  // rapport onleesbaar maakte. Alles met een cijfer erin is een tijdstempel of
+  // een formaat, geen onderwerp.
+  assert.deepEqual(fileNameTokens('Screenshot2025-10-23at16.47.02-852x1024.webp'), []);
+  assert.deepEqual(fileNameTokens('Screenshot2025-10-23at16.46.50-813x1024.webp'), []);
+  assert.deepEqual(fileNameTokens('IMG_20240101_120000.jpg'), []);
+  assert.deepEqual(fileNameTokens('DSC_0043-1024x682.jpg'), []);
+});
+
 test('fileNameTokens: stockleveranciers en gewone woorden tellen niet mee', () => {
   assert.deepEqual(fileNameTokens('shutterstock_12345.jpg'), []);
   assert.deepEqual(fileNameTokens('grote-zaal-screenshot.png'), []);

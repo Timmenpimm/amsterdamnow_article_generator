@@ -5,13 +5,72 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Article, BoardData, Topic } from '@/lib/types';
 import { articlePhase, imageCount, listImagesReady, parseListState, REQUIRED_IMAGES } from '@/lib/types';
 import TopBar from './TopBar';
-import AuditPanel from './AuditPanel';
+import AuditPanel, { runTime, verdictStyle } from './AuditPanel';
 import BulkModal from './BulkModal';
 import ListArticleModal from './ListArticleModal';
 import ReviewModal from './ReviewModal';
 import { toast } from './toast';
 
 const AUTO_WRITE_STORAGE_KEY = 'artikel-tool:auto-write';
+
+// Het laatste auditoordeel per artikel, zoals /api/audit/by-post het teruggeeft.
+// Alleen `verdict` is hard nodig; de rest mag ontbreken zonder dat de badge valt.
+interface PostVerdict {
+  verdict: 'ok' | 'twijfel' | 'fout';
+  runId: number | null;
+  aantal: number | null;
+  geauditeerdOp: string | null;
+}
+
+// De route mag { verdicts: {...} } of de map zelf teruggeven; sleutels zonder
+// geldig oordeel vallen af. Een artikel zonder oordeel krijgt dus géén badge —
+// "niet geauditeerd" is nadrukkelijk iets anders dan "goedgekeurd".
+function normalizeVerdicts(body: any): Record<string, PostVerdict> {
+  const raw = body && typeof body === 'object' && !Array.isArray(body)
+    ? (body.verdicts && typeof body.verdicts === 'object' ? body.verdicts : body)
+    : null;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out: Record<string, PostVerdict> = {};
+  for (const [postId, value] of Object.entries(raw as Record<string, any>)) {
+    const v = value?.verdict;
+    if (v !== 'ok' && v !== 'twijfel' && v !== 'fout') continue;
+    out[String(postId)] = {
+      verdict: v,
+      runId: typeof value.runId === 'number' ? value.runId : null,
+      aantal: typeof value.aantal === 'number' ? value.aantal : null,
+      geauditeerdOp: typeof value.geauditeerdOp === 'string' ? value.geauditeerdOp : null,
+    };
+  }
+  return out;
+}
+
+// Compacte badge op de artikelkaart. Zelfde chipvorm als .chip-green/.chip-amber
+// (er is geen .chip-red, dus rood gaat inline — net als in AuditPanel). Klikken
+// opent het auditpaneel direct op dít artikel.
+function AuditBadge({ v, onOpen }: { v: PostVerdict; onOpen: () => void }) {
+  const s = verdictStyle(v.verdict);
+  const n = v.aantal;
+  const label = v.verdict === 'ok' ? '✓ ok' : `${s.label}${n != null ? ` · ${n}` : ''}`;
+  const when = runTime(v.geauditeerdOp);
+  return (
+    <span
+      role="button"
+      tabIndex={0}
+      title={
+        `Auditor${when ? ` · ${when}` : ''}: oordeel ${s.label}`
+        + `${n != null ? ` · ${n} bevinding${n === 1 ? '' : 'en'}` : ''} — klik voor de bevindingen`
+      }
+      onClick={onOpen}
+      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } }}
+      style={{
+        fontSize: 10.5, fontWeight: 700, color: s.color, background: s.bg,
+        padding: '3px 8px', borderRadius: 999, whiteSpace: 'nowrap', flexShrink: 0, cursor: 'pointer',
+      }}
+    >
+      🔎 {label}
+    </span>
+  );
+}
 
 function ListBadge() {
   return (
@@ -147,6 +206,11 @@ export default function Pipeline() {
   const [auditOpen, setAuditOpen] = useState(false);
   const [auditRefresh, setAuditRefresh] = useState(0);
   const [auditFocusRun, setAuditFocusRun] = useState<number | null>(null);
+  const [auditFocusPost, setAuditFocusPost] = useState<number | null>(null);
+  // Laatste oordeel per artikel, voor de badges op de kaarten. Eén keer laden
+  // bij het openen van het bord, daarna alleen opnieuw ná een auditrun — er
+  // wordt niet gepolld.
+  const [verdicts, setVerdicts] = useState<Record<string, PostVerdict>>({});
 
   // Volgnummer per board-load. De poll (elke 12s) en de load() ná een actie
   // lopen door elkaar heen; zonder deze guard kan een trager antwoord van een
@@ -175,6 +239,27 @@ export default function Pipeline() {
     const t = setInterval(load, 12000);
     return () => clearInterval(t);
   }, [load]);
+
+  // Auditoordelen ophalen. Faalt dit (route bestaat niet, 500, rare body), dan
+  // blijven de badges gewoon weg: het bord moet er niet van omvallen.
+  const loadVerdicts = useCallback(async () => {
+    try {
+      const res = await fetch('/api/audit/by-post');
+      if (!res.ok) return;
+      const body = await res.json().catch(() => null);
+      setVerdicts(normalizeVerdicts(body));
+    } catch { /* geen badges, verder niets aan de hand */ }
+  }, []);
+
+  useEffect(() => { loadVerdicts(); }, [loadVerdicts]);
+
+  // Vanaf een badge het paneel openen op dát artikel, in plaats van bovenaan de
+  // runlijst.
+  const openAuditFor = useCallback((postId: number, v: PostVerdict) => {
+    setAuditFocusRun(v.runId);
+    setAuditFocusPost(postId);
+    setAuditOpen(true);
+  }, []);
 
   // Automatisch-schrijven-status overleeft een refresh: laden bij opstarten,
   // bewaren bij elke wijziging (de allereerste render — de starttoestand
@@ -557,6 +642,9 @@ export default function Pipeline() {
         if (tb.done) break;
       }
       setAuditRefresh(n => n + 1);
+      // Verse oordelen: de badges op de kaarten moeten de nieuwe run tonen.
+      loadVerdicts();
+      setAuditFocusPost(null);
       setAuditOpen(true);
       if (findings === 0) toast(`Audit klaar — ${done} artikel${done === 1 ? '' : 'en'} gecontroleerd, geen bevindingen`);
       else {
@@ -569,6 +657,8 @@ export default function Pipeline() {
     } catch (e: any) {
       toast(e.message || 'Audit mislukt', { kind: 'error' });
       setAuditRefresh(n => n + 1);
+      // Een halverwege afgebroken run kan al oordelen hebben opgeleverd.
+      loadVerdicts();
     } finally {
       auditRef.current = false;
       setAuditBusy(false);
@@ -813,9 +903,11 @@ export default function Pipeline() {
                   )}
                   <div style={{ padding: '10px 12px 12px' }}>
                     <div style={{ fontSize: 13.5, fontWeight: 600, lineHeight: 1.35 }}>{a.title}</div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 9 }}>
+                    {/* flexWrap + ellipsis: de badge mag de kaart niet breder maken. */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, rowGap: 6, marginTop: 9, flexWrap: 'wrap' }}>
                       <span className="chip-amber">{labelFor(a)}</span>
-                      <span style={{ fontSize: 11, color: 'var(--muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {verdicts[a.id] && <AuditBadge v={verdicts[a.id]} onOpen={() => openAuditFor(a.id, verdicts[a.id])} />}
+                      <span style={{ fontSize: 11, color: 'var(--muted)', flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {[a.category, a.district.replace('Amsterdam ', '')].filter(Boolean).join(' · ')}
                       </span>
                     </div>
@@ -908,8 +1000,8 @@ export default function Pipeline() {
                   role="button"
                   tabIndex={0}
                   style={{ marginLeft: 'auto', textDecoration: 'underline', cursor: 'pointer' }}
-                  onClick={() => setAuditOpen(true)}
-                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setAuditOpen(true); } }}
+                  onClick={() => { setAuditFocusPost(null); setAuditOpen(true); }}
+                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setAuditFocusPost(null); setAuditOpen(true); } }}
                 >
                   Bevindingen →
                 </span>
@@ -923,9 +1015,10 @@ export default function Pipeline() {
                 )}
                 <div style={{ padding: '10px 12px 12px' }}>
                   <div style={{ fontSize: 13.5, fontWeight: 600, lineHeight: 1.35 }}>{a.title}</div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 9 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, rowGap: 6, marginTop: 9, flexWrap: 'wrap' }}>
                     <span className="chip-green">✓ {countFor(a)} beelden</span>
-                    <span style={{ fontSize: 11, color: 'var(--muted)' }}>
+                    {verdicts[a.id] && <AuditBadge v={verdicts[a.id]} onOpen={() => openAuditFor(a.id, verdicts[a.id])} />}
+                    <span style={{ fontSize: 11, color: 'var(--muted)', flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {[a.category, a.district.replace('Amsterdam ', '')].filter(Boolean).join(' · ')}
                     </span>
                   </div>
@@ -951,10 +1044,11 @@ export default function Pipeline() {
             {publishedShown.map(a => (
               <div key={a.id} className="card" style={{ padding: '10px 12px' }}>
                 <div style={{ fontSize: 13.5, fontWeight: 600, lineHeight: 1.35 }}>{a.title}</div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, rowGap: 6, marginTop: 8, flexWrap: 'wrap' }}>
                   <a href={a.link} target="_blank" rel="noreferrer" style={{ fontSize: 12, fontWeight: 600, textDecoration: 'underline' }}>
                     Bekijk live ↗
                   </a>
+                  {verdicts[a.id] && <AuditBadge v={verdicts[a.id]} onOpen={() => openAuditFor(a.id, verdicts[a.id])} />}
                   <span style={{ fontSize: 11, color: 'var(--muted)', marginLeft: 'auto' }}>
                     {new Date(a.date).toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' })}
                   </span>
@@ -1023,6 +1117,8 @@ export default function Pipeline() {
           onToggleAuto={() => setAutoOn(v => !v)}
           autoOn={autoOn}
           writingNow={writingNow}
+          verdicts={verdicts}
+          onOpenAudit={openAuditFor}
         />
       </div>
 
@@ -1043,6 +1139,7 @@ export default function Pipeline() {
         onClose={() => setAuditOpen(false)}
         refreshKey={auditRefresh}
         focusRunId={auditFocusRun}
+        focusPostId={auditFocusPost}
       />
       {reviewTopic && (
         <ReviewModal
@@ -1057,6 +1154,7 @@ export default function Pipeline() {
 
 function MobileHome({
   queued, writing, failed, needImages, ready, phaseOf, labelOf, onChanged, onPushToTop, reorderingId, onBulk, onToggleAuto, autoOn, writingNow,
+  verdicts, onOpenAudit,
 }: {
   queued: Topic[]; writing: Topic[]; failed: Topic[];
   needImages: Article[]; ready: Article[];
@@ -1064,6 +1162,7 @@ function MobileHome({
   labelOf: (a: Article) => string;
   onChanged: () => void; onPushToTop: (t: Topic) => void; reorderingId: number | null; onBulk: () => void;
   onToggleAuto: () => void; autoOn: boolean; writingNow: boolean;
+  verdicts: Record<string, PostVerdict>; onOpenAudit: (postId: number, v: PostVerdict) => void;
 }) {
   const [value, setValue] = useState('');
   const [busy, setBusy] = useState(false);
@@ -1177,15 +1276,18 @@ function MobileHome({
         ))}
         {[...needImages, ...ready].map(a => (
           <div key={a.id} className="card" style={{ borderRadius: 10, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div style={{ flex: 1 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 13.5, fontWeight: 600, lineHeight: 1.35 }}>{a.title}</div>
-              <div
-                style={{
-                  fontSize: 11, fontWeight: 700, marginTop: 3,
-                  color: phaseOf(a) === 'ready' ? 'var(--green-dark)' : 'var(--amber-dark)',
-                }}
-              >
-                {phaseOf(a) === 'ready' ? '✓ klaar voor publicatie' : `Beelden nodig · ${labelOf(a)}`}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 7, rowGap: 5, marginTop: 3, flexWrap: 'wrap' }}>
+                <span
+                  style={{
+                    fontSize: 11, fontWeight: 700,
+                    color: phaseOf(a) === 'ready' ? 'var(--green-dark)' : 'var(--amber-dark)',
+                  }}
+                >
+                  {phaseOf(a) === 'ready' ? '✓ klaar voor publicatie' : `Beelden nodig · ${labelOf(a)}`}
+                </span>
+                {verdicts[a.id] && <AuditBadge v={verdicts[a.id]} onOpen={() => onOpenAudit(a.id, verdicts[a.id])} />}
               </div>
             </div>
             <span className="dot" style={{ background: phaseOf(a) === 'ready' ? 'var(--green)' : 'var(--amber)' }} />

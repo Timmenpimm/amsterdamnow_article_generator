@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 // De auditor-API is bewust losgekoppeld van de rest van de tool (eigen tabellen,
 // eigen routes). Deze types beschrijven alléén wat dit paneel van de respons
@@ -22,7 +22,7 @@ interface AuditRunRow {
   verdictPerPost?: Record<string, string | null> | { postId?: number; verdict?: string | null }[] | null;
 }
 
-interface AuditFinding {
+export interface AuditFinding {
   kind?: string | null;
   verdict?: string | null;
   onderwerp?: string | null;
@@ -49,7 +49,9 @@ function isVerdict(v: unknown): v is Verdict {
   return v === 'ok' || v === 'twijfel' || v === 'fout';
 }
 
-function verdictStyle(v: string | null | undefined): { label: string; color: string; bg: string } {
+// Geëxporteerd zodat het bord en het artikeldetail exact dezelfde kleuren en
+// woorden gebruiken als dit paneel — één plek waar het oordeel vorm krijgt.
+export function verdictStyle(v: string | null | undefined): { label: string; color: string; bg: string } {
   if (v === 'fout') return { label: 'fout', color: 'var(--red-dark)', bg: 'var(--red-bg)' };
   if (v === 'twijfel') return { label: 'twijfel', color: 'var(--amber-dark)', bg: 'var(--amber-bg)' };
   if (v === 'ok') return { label: 'ok', color: 'var(--green-dark)', bg: 'var(--green-bg)' };
@@ -58,7 +60,7 @@ function verdictStyle(v: string | null | undefined): { label: string; color: str
 
 // Zelfde chipvorm als .chip-amber/.chip-green in globals.css, maar met een
 // verdict-afhankelijke kleur (er is geen .chip-red).
-function VerdictBadge({ verdict, small }: { verdict: string | null | undefined; small?: boolean }) {
+export function VerdictBadge({ verdict, small }: { verdict: string | null | undefined; small?: boolean }) {
   const s = verdictStyle(verdict);
   return (
     <span
@@ -78,7 +80,7 @@ function scopeLabel(scope: string | null | undefined): string {
   return scope || 'steekproef';
 }
 
-function runTime(iso: string | null | undefined): string {
+export function runTime(iso: string | null | undefined): string {
   if (!iso) return '';
   const d = new Date(iso.includes('T') || iso.includes(' ') ? iso.replace(' ', 'T') : iso);
   if (isNaN(d.getTime())) return '';
@@ -89,7 +91,7 @@ function runTime(iso: string | null | undefined): string {
   return `${d.toLocaleDateString('nl-NL', { day: 'numeric', month: 'short' })} ${time}`;
 }
 
-function hostOf(url: string): string {
+export function hostOf(url: string): string {
   return url.replace(/^https?:\/\/(www\.)?/, '').split('/')[0] || url;
 }
 
@@ -122,7 +124,7 @@ function verdictCounts(run: AuditRunRow): { fout: number; twijfel: number; ok: n
   return counts;
 }
 
-function sortFindings(findings: AuditFinding[]): AuditFinding[] {
+export function sortFindings(findings: AuditFinding[]): AuditFinding[] {
   // fout eerst, dan twijfel, dan ok/onbekend — stabiel binnen dezelfde groep.
   return [...findings].sort((a, b) => {
     const av = VERDICT_ORDER[String(a?.verdict)] ?? 3;
@@ -132,7 +134,7 @@ function sortFindings(findings: AuditFinding[]): AuditFinding[] {
 }
 
 export default function AuditPanel({
-  open, onClose, refreshKey = 0, focusRunId = null,
+  open, onClose, refreshKey = 0, focusRunId = null, focusPostId = null,
 }: {
   open: boolean;
   onClose: () => void;
@@ -140,11 +142,18 @@ export default function AuditPanel({
   refreshKey?: number;
   /** Run die direct uitgeklapt moet staan (de net afgeronde run). */
   focusRunId?: number | null;
+  /**
+   * Artikel waarop het paneel moet openen: dat artikel wordt gemarkeerd en in
+   * beeld gescrold binnen de uitgeklapte run. Zonder deze prop gedraagt het
+   * paneel zich precies zoals voorheen (lijst bovenaan, niets gemarkeerd).
+   */
+  focusPostId?: number | null;
 }) {
   const [runs, setRuns] = useState<AuditRunRow[] | null>(null);
   const [error, setError] = useState('');
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [details, setDetails] = useState<Record<number, DetailState>>({});
+  const focusedPostEl = useRef<HTMLDivElement | null>(null);
 
   const loadRuns = useCallback(async () => {
     try {
@@ -196,6 +205,16 @@ export default function AuditPanel({
     // details bewust niet in de deps: dat zou na elke setDetails opnieuw vuren.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, expandedId, loadDetail]);
+
+  // Kom je binnen via een badge op een artikelkaart, dan is de kop van de lijst
+  // niet interessant: scroll naar dát artikel zodra de bevindingen geladen zijn.
+  // `details` staat in de deps omdat het element pas bestaat ná het laden.
+  useEffect(() => {
+    if (!open || focusPostId == null) return;
+    const el = focusedPostEl.current;
+    if (!el) return;
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, [open, focusPostId, expandedId, details]);
 
   if (!open) return null;
 
@@ -335,10 +354,15 @@ export default function AuditPanel({
                     )}
                     {detail?.status === 'ok' && detail.posts.map((post, pi) => {
                       const findings = sortFindings(Array.isArray(post.findings) ? post.findings.filter(Boolean) : []);
+                      const focused = focusPostId != null && post.postId === focusPostId;
                       return (
                         <div
                           key={post.postId ?? pi}
-                          style={{ border: '1px solid var(--border-light)', borderRadius: 8, background: 'var(--card)', padding: '10px 12px' }}
+                          ref={focused ? focusedPostEl : undefined}
+                          style={{
+                            border: '1px solid var(--border-light)', borderRadius: 8, background: 'var(--card)', padding: '10px 12px',
+                            outline: focused ? '1.5px solid var(--ink)' : undefined, outlineOffset: focused ? -1.5 : undefined,
+                          }}
                         >
                           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
                             <span style={{ fontSize: 13, fontWeight: 700, lineHeight: 1.35, flex: 1, minWidth: 0 }}>
