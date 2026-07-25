@@ -775,6 +775,61 @@ export async function uploadMediaFromBuffer(buf: Buffer, filename: string, mime:
   return { id: m.id, url: m.media_details?.sizes?.large?.source_url || m.source_url };
 }
 
+const MIME_EXT: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/jpg': 'jpg',
+  'image/pjpeg': 'jpg',
+  'image/png': 'png',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+  'image/avif': 'avif',
+  'image/heic': 'heic',
+};
+
+/** filename uit een Content-Disposition-header (filename* heeft voorrang op filename). */
+function filenameFromDisposition(disposition: string | null): string | null {
+  if (!disposition) return null;
+  const star = disposition.match(/filename\*\s*=\s*[^']*'[^']*'([^;]+)/i);
+  if (star) {
+    try {
+      return decodeURIComponent(star[1].trim());
+    } catch {
+      return star[1].trim();
+    }
+  }
+  const plain = disposition.match(/filename\s*=\s*"([^"]+)"|filename\s*=\s*([^;]+)/i);
+  const name = plain?.[1] ?? plain?.[2];
+  return name ? name.trim() : null;
+}
+
+/**
+ * Maakt een bestandsnaam die WordPress accepteert. Veel CDN's (bijv. Rosewood's
+ * picasso-transform-URLs) serveren afbeeldingen zonder extensie in het pad; zonder
+ * extensie weigert WP de upload met `rest_upload_sideload_error`.
+ */
+export function mediaFilenameFor(url: string, mime: string, disposition?: string | null): string {
+  const ext = MIME_EXT[mime.toLowerCase()] || '';
+  let base = filenameFromDisposition(disposition ?? null) || '';
+  if (!base) {
+    try {
+      base = decodeURIComponent(new URL(url).pathname.split('/').pop() || '');
+    } catch {
+      base = '';
+    }
+  }
+  base = base.split('?')[0].split('#')[0].replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[.-]+/, '');
+  if (!base) base = 'afbeelding';
+  const current = base.includes('.') ? base.slice(base.lastIndexOf('.') + 1).toLowerCase() : '';
+  const knownExts = new Set(Object.values(MIME_EXT).concat(['jpeg']));
+  if (ext && current !== ext && !(ext === 'jpg' && current === 'jpeg')) {
+    // Geen (of verkeerde) extensie: hang de extensie van het echte mime-type eraan.
+    base = current && knownExts.has(current) ? `${base.slice(0, base.lastIndexOf('.'))}.${ext}` : `${base}.${ext}`;
+  } else if (!ext && !current) {
+    base = `${base}.jpg`;
+  }
+  return base;
+}
+
 export async function uploadMediaFromUrl(url: string): Promise<MediaRef> {
   if (!LIVE) {
     // Demo-modus: valideer alleen en verwijs direct naar de bron-URL.
@@ -785,9 +840,9 @@ export async function uploadMediaFromUrl(url: string): Promise<MediaRef> {
   }
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Afbeelding ophalen mislukt (${res.status})`);
-  const mime = res.headers.get('content-type') || 'image/jpeg';
+  const mime = (res.headers.get('content-type') || 'image/jpeg').split(';')[0].trim().toLowerCase();
   if (!mime.startsWith('image/')) throw new Error('URL is geen afbeelding');
   const buf = Buffer.from(await res.arrayBuffer());
-  const name = (new URL(url).pathname.split('/').pop() || 'upload.jpg').split('?')[0];
+  const name = mediaFilenameFor(url, mime, res.headers.get('content-disposition'));
   return uploadMediaFromBuffer(buf, name, mime);
 }
