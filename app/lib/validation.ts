@@ -122,6 +122,38 @@ export function findPromptExampleLeak(text: string, examples: string[]): string 
   return null;
 }
 
+// ---------- brontekst-lek (marketingcopy uit de bron overgenomen) ----------
+
+// Anders dan findPromptExampleLeak hierboven (korte stijlvoorbeelden) is
+// brontekst vaak honderden woorden lang én bevat 'm legitiem herbruikbare
+// feiten (adres, openingstijden, aantallen) die WEL letterlijk mogen matchen —
+// describeSources in writer.ts eist juist dat elk detail herleidbaar is tot de
+// bron. Een langere shingle (12 i.p.v. 8 woorden) onderscheidt een overgenomen
+// volzin (marketingcopy) van toevallig overlappende feiten, die zelden meer dan
+// een paar woorden aaneengesloten matchen.
+const SOURCE_LEAK_SHINGLE_WORDS = 12;
+
+// Zoekt of `text` een aaneengesloten stuk van >= SOURCE_LEAK_SHINGLE_WORDS
+// woorden uit een van de `sources` bevat. `quoteTekst` (de geaccepteerde
+// bronQuote) hoort letterlijk in de tekst te staan — quoteMustBeVerbatimInContent
+// eist dat — en telt dus niet als lek; die knippen we uit elke bron vóór de
+// vergelijking. Artikel 87441 (Clash Bar & Bites) had zo'n lek: een zin uit de
+// eigen homepage-tekst kwam ook los in de lopende tekst terecht, náást de
+// (foutief geaccepteerde) quote — zie ook acceptBronQuote in writer.ts.
+export function findSourceProseLeak(text: string, sources: { content: string }[], quoteTekst?: string): string | null {
+  const haystack = normal(text);
+  if (!haystack) return null;
+  for (const source of sources) {
+    const content = quoteTekst ? source.content.split(quoteTekst).join(' ') : source.content;
+    const parts = normal(content).split(' ').filter(Boolean);
+    for (let i = 0; i + SOURCE_LEAK_SHINGLE_WORDS <= parts.length; i++) {
+      const shingle = parts.slice(i, i + SOURCE_LEAK_SHINGLE_WORDS).join(' ');
+      if (haystack.includes(shingle)) return shingle;
+    }
+  }
+  return null;
+}
+
 // ---------- lijstartikelen ----------
 
 export interface ListItemDraft {
@@ -277,7 +309,7 @@ export function validateArticle(
   topic: string,
   config: StandaardConstraints,
   promptExamples: string[] = [],
-  opts?: { sparse?: boolean },
+  opts?: { sparse?: boolean; sources?: { content: string }[]; quoteTekst?: string },
 ) {
   range('Titel', article.title, config.titleWords.min, config.titleWords.max);
   if (article.title.length > config.titleMaxChars) {
@@ -306,6 +338,15 @@ export function validateArticle(
   const leak = findPromptExampleLeak([article.quote, article.content, article.introductie_tekst, article.subregel].join('\n'), promptExamples);
   if (leak) {
     throw new Error(`Voorbeeldzin uit de prompt letterlijk overgenomen: "${leak}". De voorbeelden tonen alleen stijl; schrijf een eigen zin over dit onderwerp, op basis van de research.`);
+  }
+  if (opts?.sources?.length) {
+    const bronLeak = findSourceProseLeak(
+      [article.title, article.subregel, article.introductie_tekst, article.content, article.quote].join('\n'),
+      opts.sources, opts.quoteTekst,
+    );
+    if (bronLeak) {
+      throw new Error(`Zin bijna woordelijk overgenomen uit de brontekst: "${bronLeak}…". Gebruik de bron alleen voor feiten, schrijf de zin zelf in eigen woorden.`);
+    }
   }
   if (config.noDashInText && [article.title, article.subregel, article.introductie_tekst, article.content, article.quote].some(v => /[—–]/.test(v))) {
     throw new Error('Een artikel mag geen em dash of en dash bevatten.');

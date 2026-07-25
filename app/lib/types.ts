@@ -100,6 +100,10 @@ export interface StandaardState {
   // entiteitConsistent undefined en de waarschuwing leeg.
   entiteitConsistent?: boolean;
   entiteitWaarschuwing?: string;
+  // De door tavily.ts gedetecteerde officiële homepage-origin (of null), bewaard
+  // voor de aanvullende researchronde: acceptBronQuote moet ook dáár een quote
+  // kunnen afwijzen die van de eigen site van de zaak komt (zie bronQuote).
+  officialUrl?: string | null;
   // De getrimde Tavily-bronnen van de research, bewaard tot in de schrijffase.
   // De schrijver kreeg tot nu toe alleen de research-JSON en vulde de gaten
   // daartussen met verzinsels (plafondhoogtes, nationaliteiten, sectienamen);

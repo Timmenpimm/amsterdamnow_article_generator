@@ -157,11 +157,25 @@ function trimSources(sources: ResearchSource[]): { title: string; url: string; c
   }));
 }
 
+// Is deze bron-URL dezelfde site als de officiële homepage van het onderwerp?
+// Vergelijkt op hostname (zonder www.), niet op het volledige pad — de "quote"
+// kan van een andere pagina van dezelfde site komen dan de gecrawlde homepage.
+function sameOfficialHost(bronUrl: string, officialUrl: string | null | undefined): boolean {
+  if (!officialUrl) return false;
+  try {
+    const a = new URL(bronUrl).hostname.replace(/^www\./, '').toLowerCase();
+    const b = new URL(officialUrl).hostname.replace(/^www\./, '').toLowerCase();
+    return a === b;
+  } catch {
+    return false;
+  }
+}
+
 // Neemt de quote uit de research alleen over als er écht een uitspraak mét
 // bron staat én die bron niet op de blacklist staat (concurrerende stadsgidsen
 // citeren is de facto overschrijven). Alles wat niet aan die vorm voldoet
 // wordt null: geen quote is beter dan een quote van onduidelijke herkomst.
-function acceptBronQuote(value: unknown, constraints: StandaardConstraints): StandaardState['bronQuote'] {
+function acceptBronQuote(value: unknown, constraints: StandaardConstraints, officialUrl?: string | null): StandaardState['bronQuote'] {
   if (!value || typeof value !== 'object') return null;
   const q = value as Record<string, unknown>;
   const tekst = optionalString(q.tekst);
@@ -174,6 +188,14 @@ function acceptBronQuote(value: unknown, constraints: StandaardConstraints): Sta
   // "mislukt" zetten. Krantencitaten bevatten die streepjes regelmatig.
   if (/[—–]/.test(tekst)) return null;
   if (!quoteSourceAllowed(bron, constraints.quoteSourceBlacklist, herkomst)) return null;
+  // Een "quote" die letterlijk van de eigen website van de zaak komt is geen
+  // uitspraak van een betrokkene maar marketingcopy die het model per ongeluk
+  // als citaat aanmerkte — precies wat er bij artikel 87441 (Clash Bar & Bites)
+  // gebeurde: een zin uit de eigen homepage-tekst werd "quote" en kwam zo dubbel
+  // in het artikel terecht (lopende tekst + blockquote). Een échte quote van een
+  // betrokkene staat vrijwel nooit op de homepage van de zaak zelf, maar in een
+  // interview, recensie of ander extern stuk.
+  if (sameOfficialHost(bron, officialUrl)) return null;
   return { tekst, bron, herkomst };
 }
 
@@ -423,6 +445,20 @@ async function stepResearch(topic: Topic, s: StandaardState): Promise<StandaardS
   // staan. Moet vóór saveTopicProgress zodat de gecorrigeerde staat wordt bewaard.
   const homepageContent = officialUrl ? (sources.find(src => src.url === officialUrl)?.content ?? '') : '';
   await verifyEntity(s, officialUrl, homepageContent, topic.id);
+  // Entiteitsconsistentie-poort. verifyEntity berekende tot nu toe wel
+  // entiteitConsistent/entiteitWaarschuwing, maar niets las het ooit terug —
+  // een expliciete "false" (naam/adres/website horen NIET bij dezelfde zaak)
+  // ging gewoon door naar de schrijffase. Precies zo kreeg artikel 87441 (Clash
+  // Bar & Bites) het adres van de Johan Cruijff ArenA: de research wees een
+  // ander adres aan dan de echte zaak, en niets hield dat tegen. Strikt op
+  // `=== false` (niet `!== true`): undefined betekent dat verifyEntity zelf
+  // faalde (fail-open, zie verifyEntity) en mag de topic niet blokkeren — alleen
+  // een expliciete, geslaagde afkeuring doet dat.
+  if (s.entiteitConsistent === false) {
+    throw new Error(
+      `Entiteitscontrole faalt: ${s.entiteitWaarschuwing || 'naam, adres en website lijken niet bij dezelfde zaak te horen'}. Controleer het onderwerp handmatig.`
+    );
+  }
   // Poort 2 — de entiteit. tavily.ts weert concurrent-bronnen al, maar de
   // research kan een concurrent nog steeds als onderwerp aanwijzen (hun naam
   // staat in een citaat, een tip-vermelding of een tweedehands bron). Dan is
@@ -447,7 +483,8 @@ async function stepResearch(topic: Topic, s: StandaardState): Promise<StandaardS
   s.missingFacts = missingFactsOf(research);
   s.factScore = researchFactScore(research);
   s.researchRounds = 1;
-  s.bronQuote = acceptBronQuote(research.quote, constraints);
+  s.officialUrl = officialUrl;
+  s.bronQuote = acceptBronQuote(research.quote, constraints, officialUrl);
   // Sufficiëntie-poort: te dunne research ging tot nu toe gewoon door naar de
   // schrijffase, waar het model het tekort opvulde met verzonnen details. Nu
   // is er een weg terug naar Tavily — hooguit één keer (researchRounds).
@@ -518,7 +555,7 @@ async function stepResearchAanvullend(topic: Topic, s: StandaardState): Promise<
       // missing_facts van de tweede ronde is de actuelere lijst: die is
       // opgesteld tegen álle bronnen samen.
       s.missingFacts = missingFactsOf(extra);
-      if (!s.bronQuote) s.bronQuote = acceptBronQuote(extra.quote, constraints);
+      if (!s.bronQuote) s.bronQuote = acceptBronQuote(extra.quote, constraints, s.officialUrl);
       // Bewaarde bronnen blijven begrensd op MAX_WRITE_SOURCES (tokenruimte van
       // de schrijfcall). De eerste twee van ronde 1 blijven staan — daar zit de
       // officiële homepage bij, de betrouwbaarste bron — daarna krijgen de
@@ -678,7 +715,7 @@ async function stepSchrijf(topic: Topic, s: StandaardState): Promise<StandaardSt
     const candidate = buildCandidate(payload);
     // Voorbeeldzinnen uit de actieve prompt zelf: het model mag ze niet
     // letterlijk overnemen (zie validation.ts extractPromptExamples).
-    validateArticle(candidate, subjectName(topic, s), constraints, extractPromptExamples(writePrompt.content), { sparse });
+    validateArticle(candidate, subjectName(topic, s), constraints, extractPromptExamples(writePrompt.content), { sparse, sources: s.researchSources, quoteTekst: s.bronQuote?.tekst });
     // Titel apart, vrij (her)genereren voor meer punch — zie polishTitle. Nooit
     // slechter: valt terug op de zojuist gevalideerde titel als geen kandidaat
     // de keuring haalt.
@@ -711,7 +748,7 @@ async function stepSchrijfRetry(topic: Topic, s: StandaardState): Promise<Standa
   let checked: GeneratedArticle;
   try {
     checked = buildCandidate(payload);
-    validateArticle(checked, subjectName(topic, s), constraints, extractPromptExamples(writePrompt.content), { sparse });
+    validateArticle(checked, subjectName(topic, s), constraints, extractPromptExamples(writePrompt.content), { sparse, sources: s.researchSources, quoteTekst: s.bronQuote?.tekst });
   } catch (e: any) {
     // Elke herkansing is sinds de fase-opsplitsing een eigen serverless-tick,
     // dus meerdere rondes kunnen veilig (zelfde patroon als composeAttempts in
