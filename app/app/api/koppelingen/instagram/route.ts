@@ -28,9 +28,12 @@ async function fetchEngineConnection(): Promise<{ connection: EngineConnection |
     const res = await engineFetch('/api/settings/instagram');
     const data = await res.json().catch(() => null);
     if (!data || typeof data !== 'object') return { connection: null };
-    const igUsername = typeof data.igUsername === 'string' ? data.igUsername : '';
-    const businessAccountId = typeof data.businessAccountId === 'string' ? data.businessAccountId : '';
-    const hasToken = Boolean(data.hasAccessToken ?? data.hasToken ?? data.accessToken);
+    // Engine-respons is { connection: {...} | null }; val terug op het
+    // buitenste object voor het geval de engine ooit plat gaat antwoorden.
+    const conn = (data.connection && typeof data.connection === 'object') ? data.connection : data;
+    const igUsername = typeof conn.igUsername === 'string' ? conn.igUsername : '';
+    const businessAccountId = typeof conn.businessAccountId === 'string' ? conn.businessAccountId : '';
+    const hasToken = Boolean(conn.hasAccessToken ?? conn.hasToken ?? conn.accessToken ?? conn.accessTokenMasked);
     if (!igUsername && !businessAccountId && !hasToken) return { connection: null };
     return { connection: { igUsername, businessAccountId, hasToken } };
   } catch (err) {
@@ -90,12 +93,19 @@ export async function POST(req: NextRequest) {
   const businessAccountId = typeof body.businessAccountId === 'string' ? body.businessAccountId.trim() : '';
   const igUsername = typeof body.igUsername === 'string' ? body.igUsername.trim() : '';
   if (accessToken || businessAccountId) {
+    // De engine slaat token + business-ID als één geheel op (beide verplicht).
+    if (!accessToken || !businessAccountId) {
+      return NextResponse.json(
+        { ...(await status()), error: 'Vul zowel het access token als het business-account-ID in; de engine slaat ze samen op.' },
+        { status: 400 },
+      );
+    }
     try {
       await engineFetch('/api/settings/instagram', {
         method: 'POST',
         body: JSON.stringify({
-          ...(accessToken ? { accessToken } : {}),
-          ...(businessAccountId ? { businessAccountId } : {}),
+          accessToken,
+          businessAccountId,
           ...(igUsername ? { igUsername } : {}),
         }),
       });

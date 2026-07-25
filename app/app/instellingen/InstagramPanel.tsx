@@ -86,10 +86,11 @@ export default function InstagramPanel({
   }
 
   async function saveInstagram() {
-    if (!accessToken.trim() && !businessAccountId.trim()) return;
+    // Engine eist token + business-ID samen; knop staat pas aan als beide gevuld zijn.
+    if (!accessToken.trim() || !businessAccountId.trim()) return;
     await save({
-      ...(accessToken.trim() ? { accessToken: accessToken.trim() } : {}),
-      ...(businessAccountId.trim() ? { businessAccountId: businessAccountId.trim() } : {}),
+      accessToken: accessToken.trim(),
+      businessAccountId: businessAccountId.trim(),
     });
     setAccessToken('');
   }
@@ -214,7 +215,7 @@ export default function InstagramPanel({
                   />
                   <button
                     className="btn btn-small"
-                    disabled={busy || (!accessToken.trim() && !businessAccountId.trim())}
+                    disabled={busy || !accessToken.trim() || !businessAccountId.trim()}
                     onClick={saveInstagram}
                     style={{ whiteSpace: 'nowrap' }}
                   >
