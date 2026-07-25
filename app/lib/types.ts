@@ -18,7 +18,7 @@ export type ListPhase = 'select' | 'verify' | 'review' | 'compose' | 'finalize';
 // weinig harde feiten op, dan haalt deze fase gericht bronnen bij op de dingen
 // die ontbraken. Ook dat is een eigen fase-stap, om dezelfde reden: extra
 // Tavily-calls plus een tweede extractie passen niet meer in de research-tik.
-export type StandaardPhase = 'research' | 'research-aanvullend' | 'schrijf' | 'schrijf-retry' | 'seo';
+export type StandaardPhase = 'research' | 'research-aanvullend' | 'invalshoek' | 'schrijf' | 'schrijf-retry' | 'curator' | 'seo';
 
 export interface ListItemState {
   naam: string;
@@ -127,6 +127,16 @@ export interface StandaardState {
   // het zei; null als er geen echte quote in de bronnen stond. Alleen gevuld
   // als de bron door de quote-blacklist komt.
   bronQuote?: { tekst: string; bron: string; herkomst?: string } | null;
+  // Uitkomst van de invalshoek-fase (writer.ts stepInvalshoek): de local-tip-
+  // hoek waarmee de schrijffase het artikel ophangt, plus de twee à drie
+  // story beats die de hoek dragen. Alleen gevuld als de poort het topic
+  // publicabel achtte; anders is het topic al mislukt vóór de schrijffase.
+  invalshoek?: { hoek: string; beats: string[] };
+  // Aantal keren dat de stijlcurator dit artikel al terugstuurde. Bewaakt dat
+  // curator → herschrijven → curator geen lus wordt: na één curatorronde gaat
+  // de beste versie fail-open door naar seo (het blijft een draft die de
+  // redactie zelf nog beoordeelt).
+  curatorRounds?: number;
 }
 
 export function parseStandaardState(topic: Topic): StandaardState | null {

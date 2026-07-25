@@ -1,6 +1,6 @@
 import { activeConstraints, activePrompt, completeTopic, failTopic, saveTopicProgress } from './db';
 import { askClaudeJson, FAST_WRITE_MODEL, TITLE_MODEL } from './claude';
-import { RESEARCH_SCHEMA, ARTICLE_SCHEMA, SEO_SCHEMA, ENTITY_VERIFY_SCHEMA, QUOTE_REWRITE_SCHEMA } from './schemas';
+import { RESEARCH_SCHEMA, SEO_SCHEMA, ENTITY_VERIFY_SCHEMA, QUOTE_REWRITE_SCHEMA, INVALSHOEK_SCHEMA, CURATOR_SCHEMA } from './schemas';
 import { createDraft, singleTag, taxonomyChoices } from './wp';
 import { checkTopicAgainstWp } from './dedup';
 import { researchWithTavily, type ResearchSource } from './tavily';
@@ -291,14 +291,16 @@ export interface StandaardStepResult {
 export async function processStandaardStep(topic: Topic): Promise<StandaardStepResult> {
   const s = parseStandaardState(topic) ?? {};
   const phase: StandaardPhase =
-    topic.phase === 'research-aanvullend' || topic.phase === 'schrijf' || topic.phase === 'schrijf-retry' || topic.phase === 'seo'
+    topic.phase === 'research-aanvullend' || topic.phase === 'invalshoek' || topic.phase === 'schrijf' || topic.phase === 'schrijf-retry' || topic.phase === 'curator' || topic.phase === 'seo'
       ? topic.phase : 'research';
   try {
     switch (phase) {
       case 'research': return await stepResearch(topic, s);
       case 'research-aanvullend': return await stepResearchAanvullend(topic, s);
+      case 'invalshoek': return await stepInvalshoek(topic, s);
       case 'schrijf': return await stepSchrijf(topic, s);
       case 'schrijf-retry': return await stepSchrijfRetry(topic, s);
+      case 'curator': return await stepCurator(topic, s);
       case 'seo': return await stepSeo(topic, s);
     }
   } catch (error: any) {
@@ -588,14 +590,78 @@ async function stepResearchAanvullend(topic: Topic, s: StandaardState): Promise<
   } catch {
     // FAIL-OPEN: we schrijven met de research van ronde 1.
   }
-  // Altijd door naar schrijven, nooit een derde ronde.
+  // Altijd door naar de invalshoek-poort, nooit een derde researchronde.
   s.researchRounds = 2;
   s.factScore = researchFactScore(s.research as Record<string, unknown>);
-  await saveTopicProgress(topic.id, { status: 'queued', phase: 'schrijf', state: s });
+  await saveTopicProgress(topic.id, { status: 'queued', phase: 'invalshoek', state: s });
   return {
-    topic, phase: 'schrijf', done: false,
-    progress: `Aanvullende research (${gevonden} extra bron${gevonden === 1 ? '' : 'nen'}, score ${s.factScore}) · schrijven start`,
+    topic, phase: 'invalshoek', done: false,
+    progress: `Aanvullende research (${gevonden} extra bron${gevonden === 1 ? '' : 'nen'}, score ${s.factScore}) · invalshoek bepalen`,
   };
+}
+
+// Invalshoek-fase: bepaalt vóór de schrijffase waaróm de ene Amsterdammer de
+// andere dit zou tippen, en fungeert als poort. De kalibratie van 25-07 liet
+// zien dat de pijplijn zonder deze stap feiten formatteert in plaats van een
+// verhaal vertelt: research verzamelt, de schrijver vult het sjabloon, en
+// niets beslist of er eigenlijk wel iets te vertellen valt (Circoloco zonder
+// line-up, Veganees zonder één concreet gerecht). Drie uitkomsten:
+// - hoek gevonden → de hoek en story beats gaan als blok mee de schrijffase in;
+// - geen hoek te halen uit de feiten → topic mislukt mét leesbare reden,
+//   vóór er een draft of beeldzoektocht aan wordt uitgegeven;
+// - de research spreekt zichzelf tegen op een kernpunt (draft 87452: "line-up
+//   wordt niet onthuld" naast een volledige line-up van de verzamelsite) →
+//   idem, want doorschrijven betekent gokken welke helft klopt.
+async function stepInvalshoek(topic: Topic, s: StandaardState): Promise<StandaardStepResult> {
+  if (!s.research) throw new Error('Research ontbreekt voor de invalshoek-fase.');
+  const naam = subjectName(topic, s);
+  const system = 'Je bent chef-redactie van amsterdamnow.com, een stadsgids door en voor Amsterdammers. Jij beslist of een onderwerp een artikel waard is en met welke invalshoek. De maatstaf: zou een Amsterdammer dit uit zichzelf aan een vriend vertellen, en wát dan precies? Je verzint niets: hoek en beats steunen uitsluitend op de aangeleverde research en brontekst.';
+  const prompt = [
+    `Onderwerp: ${naam}`,
+    '',
+    'Beoordeel de research hieronder en geef ALLEEN JSON terug.',
+    '',
+    'Bepaal:',
+    '- publicabel: is hier een concreet, niet-generiek verhaal uit te halen? "Een nieuwe plek met een fijne sfeer" is GEEN verhaal; "de chef van restaurant X begint voor zichzelf in het pand van Y" wel. Te dun of alleen marketingtaal: false.',
+    '- hoek: de local-tip in één zin. Niet wat de zaak over zichzelf zegt, maar wat een Amsterdammer erover doorvertelt.',
+    '- beats: twee à drie concrete feiten uit de research die de hoek dragen.',
+    '- tegenspraak: spreekt de research zichzelf tegen op een kernpunt (datum, line-up, wie erachter zit)? Noem het kort; anders lege string.',
+    '- reden: alleen bij publicabel false één leesbare zin waarom niet.',
+    '',
+    `Research-JSON:\n${JSON.stringify(s.research)}`,
+    describeSources(s),
+  ].join('\n');
+  const payload = await askClaudeJson(system, prompt, FAST_WRITE_MODEL, 1500, INVALSHOEK_SCHEMA, false, `invalshoek#${topic.id}`);
+  const tegenspraak = optionalString(payload.tegenspraak);
+  if (tegenspraak) {
+    throw new Error(`Research spreekt zichzelf tegen: ${tegenspraak}. Controleer het onderwerp handmatig voordat het opnieuw de wachtrij in gaat.`);
+  }
+  if (payload.publicabel !== true) {
+    throw new Error(`Geen artikel waard volgens de invalshoek-poort: ${optionalString(payload.reden) || 'de research bevat te weinig concreet verhaal'}.`);
+  }
+  const hoek = optionalString(payload.hoek);
+  const beats = Array.isArray(payload.beats) ? payload.beats.filter((b): b is string => typeof b === 'string' && !!b.trim()).slice(0, 3) : [];
+  // Publicabel zonder hoek is een halfslachtig antwoord; dan schrijven we
+  // zoals voorheen, zonder invalshoek-blok, in plaats van een leeg blok mee
+  // te sturen dat de schrijver in verwarring brengt.
+  if (hoek) s.invalshoek = { hoek, beats };
+  await saveTopicProgress(topic.id, { status: 'queued', phase: 'schrijf', state: s });
+  return { topic, phase: 'schrijf', done: false, progress: hoek ? `Invalshoek: ${hoek.slice(0, 70)} · schrijven start` : 'Invalshoek onbepaald · schrijven start' };
+}
+
+// Het invalshoek-blok voor de schrijffase: de hoek als kapstok, de beats als
+// verplichte dragers. Leeg als de invalshoek-fase geen hoek opleverde (of voor
+// topics van vóór deze fase die al in de schrijffase hangen).
+export function describeInvalshoek(s: StandaardState): string {
+  const i = s.invalshoek;
+  if (!i?.hoek) return '';
+  return [
+    '',
+    'INVALSHOEK (door de chef-redactie bepaald, verplicht aanhouden):',
+    i.hoek,
+    ...(i.beats.length ? ['Draag de invalshoek met deze story beats, verspreid over het artikel:', ...i.beats.map(b => `- ${b}`)] : []),
+    'Open het artikel vanuit deze invalshoek, niet met een algemene beschrijving van de zaak.',
+  ].join('\n');
 }
 
 // Merge-regel van de aanvullende ronde: AANVULLEN, nooit overschrijven. De
@@ -728,10 +794,18 @@ async function stepSchrijf(topic: Topic, s: StandaardState): Promise<StandaardSt
   const [writePrompt, constraints] = await Promise.all([activePrompt('schrijf'), standaardConstraints()]);
   const sparse = isSparseResearch(s, constraints);
   const rules = describeStandaardConstraints(constraints, subjectName(topic, s), { sparse });
+  // Bewust GEEN output-schema (constrained decoding) meer op de schrijfcall.
+  // Token-voor-token grammatica-dwang slaat juist het creatieve werk plat —
+  // precies waarom polishTitle bestaat: de titel werd al vrij hergenereerd
+  // omdat de constrained versie vlak was. Nu krijgt het hele artikel die vrije
+  // generatie; het extractJson-vangnet in claude.ts (incl. corrigerende
+  // herkansing) vangt kapotte JSON op. Thinking blijft uit: op productie
+  // getest (2026-07-20) liep de schrijfcall daarmee tegen afkap en de
+  // 60s-functielimiet aan — zie de toelichting bij WRITE_MAX_TOKENS.
   const payload = await askClaudeJson(
     writePrompt.content,
-    `Onderwerp: ${topic.title}\n\nGebruik uitsluitend deze gecontroleerde research van Tavily. Schrijf het artikel als geldige JSON volgens de actieve prompt.\n\nHoud je aan deze regels:\n${rules}\n\n${JSON.stringify(s.research)}${describeSources(s)}${describeQuoteInstruction(s, constraints)}`,
-    FAST_WRITE_MODEL, WRITE_MAX_TOKENS, ARTICLE_SCHEMA, false, `schrijf#${topic.id}`,
+    `Onderwerp: ${topic.title}\n\nGebruik uitsluitend deze gecontroleerde research van Tavily. Schrijf het artikel als geldige JSON volgens de actieve prompt.\n\nHoud je aan deze regels:\n${rules}\n\n${JSON.stringify(s.research)}${describeSources(s)}${describeInvalshoek(s)}${describeQuoteInstruction(s, constraints)}`,
+    FAST_WRITE_MODEL, WRITE_MAX_TOKENS, undefined, false, `schrijf#${topic.id}`,
   );
   try {
     const candidate = buildCandidate(payload);
@@ -743,8 +817,8 @@ async function stepSchrijf(topic: Topic, s: StandaardState): Promise<StandaardSt
     // de keuring haalt.
     candidate.title = await polishTitle(candidate, s, subjectName(topic, s), constraints, topic.id);
     s.article = candidate;
-    await saveTopicProgress(topic.id, { status: 'queued', phase: 'seo', state: s });
-    return { topic, phase: 'seo', done: false, progress: 'Artikel geschreven en gevalideerd · SEO en draft' };
+    await saveTopicProgress(topic.id, { status: 'queued', phase: 'curator', state: s });
+    return { topic, phase: 'curator', done: false, progress: 'Artikel geschreven en gevalideerd · stijlcurator' };
   } catch (e: any) {
     // Herkansing als eigen fase-stap (niet meer als 2e Claude-call binnen
     // dezelfde aanroep): een validatiefout (te weinig woorden, dash, quote
@@ -764,8 +838,8 @@ async function stepSchrijfRetry(topic: Topic, s: StandaardState): Promise<Standa
   const rules = describeStandaardConstraints(constraints, subjectName(topic, s), { sparse });
   const payload = await askClaudeJson(
     writePrompt.content,
-    `Je vorige versie van dit artikel is afgekeurd door de eindredactie.\n\nOnderwerp: ${topic.title}\nAfkeurreden: ${s.rejectReason}\n\nLever het VOLLEDIGE artikel opnieuw aan als JSON met exact dezelfde velden (title, subregel, introductie_tekst, content, quote). Los de afkeurreden op en houd de rest zoveel mogelijk intact. Alle regels blijven gelden:\n${rules}\n\nJe vorige versie:\n${JSON.stringify(s.draftPayload)}${describeSources(s)}${describeQuoteInstruction(s, constraints)}`,
-    FAST_WRITE_MODEL, WRITE_MAX_TOKENS, ARTICLE_SCHEMA, false, `schrijf-retry#${topic.id}`,
+    `Je vorige versie van dit artikel is afgekeurd door de eindredactie.\n\nOnderwerp: ${topic.title}\nAfkeurreden: ${s.rejectReason}\n\nLever het VOLLEDIGE artikel opnieuw aan als JSON met exact dezelfde velden (title, subregel, introductie_tekst, content, quote). Los de afkeurreden op en houd de rest zoveel mogelijk intact. Alle regels blijven gelden:\n${rules}\n\nJe vorige versie:\n${JSON.stringify(s.draftPayload)}${describeSources(s)}${describeInvalshoek(s)}${describeQuoteInstruction(s, constraints)}`,
+    FAST_WRITE_MODEL, WRITE_MAX_TOKENS, undefined, false, `schrijf-retry#${topic.id}`,
   );
   let checked: GeneratedArticle;
   try {
@@ -792,8 +866,61 @@ async function stepSchrijfRetry(topic: Topic, s: StandaardState): Promise<Standa
   s.draftPayload = undefined;
   s.rejectReason = undefined;
   s.schrijfAttempts = undefined;
+  await saveTopicProgress(topic.id, { status: 'queued', phase: 'curator', state: s });
+  return { topic, phase: 'curator', done: false, progress: 'Artikel geschreven en gevalideerd · stijlcurator' };
+}
+
+// Stijlcurator-fase: één beoordelingscall op het af-gevalideerde artikel,
+// vóór SEO en de WordPress-draft. validateArticle toetst de harde regels
+// (woordaantallen, dashes, sjabloonzinnen, lekken); wat daar doorheen komt
+// kan alsnog nietszeggend zijn — de kalibratie van 25-07 vond drie soorten
+// artikelen die formeel geldig waren maar niets vertelden. De curator toetst
+// wat regels niet kunnen: staat er in elke alinea iets dat niet ook op de
+// homepage van de zaak staat, is de toon local-to-local, en is er geen
+// opgeblazen vulling. Afkeuring gaat mét concrete instructie de bestaande
+// schrijf-retry in; hooguit één curatorronde (curatorRounds), daarna gaat de
+// beste versie fail-open door — het blijft een draft die de redactie ziet.
+async function stepCurator(topic: Topic, s: StandaardState): Promise<StandaardStepResult> {
+  if (!s.research || !s.article) throw new Error('Onvolledige staat voor de curator-fase.');
+  const a = s.article;
+  const rondes = s.curatorRounds ?? 0;
+  try {
+    const system = 'Je bent stijlcurator van amsterdamnow.com, een stadsgids door en voor Amsterdammers. Je beoordeelt of een artikel écht iets vertelt, in de toon waarmee de ene local de andere tipt. Je herschrijft niet zelf; je keurt en geeft concrete aanwijzingen.';
+    const prompt = [
+      'Beoordeel dit artikel en geef ALLEEN JSON terug.',
+      '',
+      'Keur af ("herschrijven") bij een of meer van deze problemen:',
+      '- een alinea die alleen sfeer- of marketingtaal bevat, zonder één concreet feit (naam, aantal, gerecht, jaartal, plek);',
+      '- zinnen die de zaak naspreken zoals de zaak zichzelf verkoopt ("een unieke beleving", "voor ieder wat wils", opgeblazen missietaal);',
+      '- VVV-toon: uitleggen wat een buurt of fenomeen is alsof de lezer geen Amsterdammer is;',
+      '- vulling: zinnen die niets toevoegen aan wat er al stond, of hetzelfde punt twee keer maken;',
+      '- een opening of afsluiting die boven elk willekeurig artikel zou kunnen staan.',
+      '',
+      'Keur goed ("goed") als het artikel concreet, specifiek en nuchter is. Wees streng op inhoud, niet op smaak: een sobere maar feitelijke tekst is goed; een zwierige maar lege tekst niet.',
+      '',
+      `TITEL: ${a.title}`,
+      `SUBREGEL: ${a.subregel}`,
+      `INTRODUCTIE: ${a.introductie_tekst}`,
+      `ARTIKELTEKST:\n${a.content}`,
+      `QUOTE: ${a.quote}`,
+      '',
+      `Ter referentie de research (het artikel mag hier niets aan toevoegen):\n${JSON.stringify(s.research)}`,
+    ].join('\n');
+    const payload = await askClaudeJson(system, prompt, FAST_WRITE_MODEL, 1200, CURATOR_SCHEMA, false, `curator#${topic.id}`);
+    const problemen = Array.isArray(payload.problemen) ? payload.problemen.filter((p): p is string => typeof p === 'string' && !!p.trim()) : [];
+    if (payload.oordeel === 'herschrijven' && problemen.length && rondes < 1) {
+      s.curatorRounds = rondes + 1;
+      s.draftPayload = { ...a };
+      s.rejectReason = `Stijlcurator: ${problemen.join(' · ')}${optionalString(payload.herschrijfinstructie) ? ` — ${optionalString(payload.herschrijfinstructie)}` : ''}`;
+      await saveTopicProgress(topic.id, { status: 'queued', phase: 'schrijf-retry', state: s });
+      return { topic, phase: 'schrijf-retry', done: false, progress: `Curator keurt af (${problemen.length} punt${problemen.length === 1 ? '' : 'en'}) · herschrijven` };
+    }
+  } catch {
+    // FAIL-OPEN: de curator is een kwaliteitspoort op een draft, geen reden om
+    // een verder afgerond topic te laten mislukken.
+  }
   await saveTopicProgress(topic.id, { status: 'queued', phase: 'seo', state: s });
-  return { topic, phase: 'seo', done: false, progress: 'Artikel geschreven en gevalideerd · SEO en draft' };
+  return { topic, phase: 'seo', done: false, progress: rondes ? 'Curator klaar (na herschrijfronde) · SEO en draft' : 'Curator akkoord · SEO en draft' };
 }
 
 async function stepSeo(topic: Topic, s: StandaardState): Promise<StandaardStepResult> {

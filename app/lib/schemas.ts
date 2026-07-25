@@ -138,6 +138,36 @@ export const ENTITY_VERIFY_SCHEMA: Record<string, unknown> = {
   },
 };
 
+// invalshoek-fase → writer.ts stepInvalshoek. Bepaalt de local-tip-hoek van
+// het artikel vóór de schrijffase, en fungeert als poort: research zonder
+// bruikbare hoek (of met interne tegenspraak) levert geen artikel op.
+export const INVALSHOEK_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['publicabel', 'hoek', 'beats', 'tegenspraak', 'reden'],
+  properties: {
+    publicabel: { type: 'boolean', description: 'True als er uit de research een concrete local-tip-hoek te halen is. False als de feiten te dun of te generiek zijn voor een artikel met inhoud, of als de research zichzelf tegenspreekt op een kernpunt.' },
+    hoek: { type: 'string', description: 'De invalshoek in één zin: waaróm tipt de ene Amsterdammer de andere dit? Leeg als publicabel false is.' },
+    beats: { type: 'array', items: { type: 'string' }, description: 'Twee à drie concrete story beats (elk één zin) uit de research die de hoek dragen. Alleen feiten die letterlijk in de research of bronnen staan.' },
+    tegenspraak: { type: 'string', description: 'Korte NL-zin als de research zichzelf tegenspreekt op een kernpunt (bv. "line-up wordt niet onthuld" naast een volledige line-up-lijst), anders lege string.' },
+    reden: { type: 'string', description: 'Alleen bij publicabel false: één leesbare NL-zin waarom dit onderwerp (nu) geen artikel oplevert.' },
+  },
+};
+
+// stijlcurator-fase → writer.ts stepCurator. Keurt het geschreven artikel op
+// inhoud en toon (local-to-local, geen marketingcopy) en levert bij afkeuring
+// een concrete herschrijfinstructie voor de bestaande schrijf-retry-fase.
+export const CURATOR_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['oordeel', 'problemen', 'herschrijfinstructie'],
+  properties: {
+    oordeel: { type: 'string', enum: ['goed', 'herschrijven'], description: '"goed" als het artikel concreet en local-to-local is; "herschrijven" bij vulzinnen, marketingtaal of alinea\'s zonder inhoud.' },
+    problemen: { type: 'array', items: { type: 'string' }, description: 'Per gevonden probleem één korte NL-zin met het letterlijke tekstfragment erbij. Leeg bij oordeel "goed".' },
+    herschrijfinstructie: { type: 'string', description: 'Alleen bij "herschrijven": concrete instructie wat er anders moet, gericht op de gevonden problemen. Leeg bij "goed".' },
+  },
+};
+
 // quote-herschrijf-backfill → writer.ts rewriteQuote (backfill-quote-length-
 // route). Herschrijft een te korte pull-quote (< 25 woorden, uit oudere
 // "Klaar"-drafts van vóór de quoteWords-regel) naar 25-40 woorden, en levert
