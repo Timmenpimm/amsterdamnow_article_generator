@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getArticle, updateArticleContent, updateImages, uploadMediaFromUrl } from '@/lib/wp';
+import type { ImageUpdate } from '@/lib/wp';
 import { searchImageCandidates } from '@/lib/imageSearch';
 import { assembleListHtml } from '@/lib/listHtml';
 import {
@@ -52,9 +53,26 @@ function unfilledItemIndexes(list: ListArticleStructure): number[] {
 // beelden én nog geen kandidaat die door de redactie gebruikt of afgewezen
 // is. De itemfoto-fase vult uitsluitend lege item-slots (nooit overschrijven)
 // en draait dus ook als de redactie featured/slider al zelf zette.
-export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+//
+// HANDMATIG OPNIEUW LATEN DRAAIEN (body `{ force: true }`) — voor artikelen
+// waarbij de automatische ronde halverwege strandde (token-/timeoutgedoe) of
+// niets opleverde. Dan geldt:
+//   - de onaangeraakt-eis vervalt; in plaats van "alles of niets" vult de
+//     fase A alléén de nog lége slots (featured / 1× slider / inline). Wat de
+//     redactie zelf al plaatste blijft staan — nooit overschrijven.
+//   - is de kandidatenpool leeg óf niets bruikbaars meer over (alles gebruikt,
+//     afgewezen of onder de drempel), dan zoekt de route opnieuw. De db dedupt
+//     op URL, dus eerder afgewezen beelden komen niet terug.
+//   - `{ force: true, reset: true }` (alleen de éérste tik van zo'n ronde)
+//     wist bij lijstartikelen de "geen itemfoto gevonden"-meldingen, zodat
+//     eerder overgeslagen items opnieuw worden geprobeerd.
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   try {
+    const body = await req.json().catch(() => ({} as any));
+    const force = body?.force === true;
+    const reset = force && body?.reset === true;
+
     const article = await getArticle(Number(id));
     if (!article) return NextResponse.json({ error: 'Artikel niet gevonden.' }, { status: 404 });
     if (article.status !== 'draft') {
@@ -66,23 +84,52 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     const touched = candidates.some(c => c.status === 'used' || c.status === 'dismissed');
     const untouched = imageCount(article, list) === 0 && !touched;
 
-    if (!list && !untouched) {
+    // Bij een geforceerde ronde: welke artikel-brede slots zijn nog leeg?
+    const needFeatured = !article.featured;
+    const needSlider = article.slider.length < 1;
+    const needInline = !list && !article.inline;
+    const gaps = [needFeatured, needSlider, needInline].filter(Boolean).length;
+
+    // 'fresh' = de normale automatische ronde (alles of niets),
+    // 'gaps'  = geforceerde ronde die alleen de lege slots aanvult.
+    const fillMode: 'fresh' | 'gaps' | null =
+      untouched ? 'fresh' : (force && gaps > 0 ? 'gaps' : null);
+
+    if (!list && !fillMode) {
       return NextResponse.json({ done: true, eligible: false, placed: 0 });
     }
 
+    // Eerder overgeslagen items opnieuw in de running brengen.
+    if (reset && list) {
+      const kept = (list.meldingen || []).filter(m => !m.startsWith(NO_ITEM_PHOTO_PREFIX));
+      if (kept.length !== (list.meldingen || []).length) {
+        list.meldingen = kept;
+        await saveListStructure(article.id, null, list);
+      }
+    }
+
     // ---------- fase A: featured + slider (+ inline bij standaard) ----------
-    if (untouched) {
-      // Stap 1: zoeken.
-      if (!candidates.length) {
+    if (fillMode) {
+      // Stap 1: zoeken. Bij een geforceerde ronde ook wanneer er wél
+      // kandidaten zijn maar niets bruikbaars meer tussen zit.
+      const usable = candidates.some(
+        c => c.status === 'new' || (c.status === 'scored' && (c.score ?? 0) >= AUTO_MIN_SCORE)
+      );
+      if (!candidates.length || (fillMode === 'gaps' && !usable)) {
+        const before = candidates.length;
         const { drafts, errors } = await searchImageCandidates(article);
         await addImageCandidates(article.id, drafts);
         candidates = await listImageCandidates(article.id);
-        if (candidates.length) {
+        if (candidates.length > before) {
           return NextResponse.json({ done: false, step: 'search', found: candidates.length, errors });
         }
-        if (!list) return NextResponse.json({ done: true, eligible: true, placed: 0, errors });
-        // Lijst zonder artikel-brede vondsten: door naar de itemfoto-fase —
-        // de item-zoektermen (naam + buurt) vinden vaak wél iets.
+        if (!candidates.length) {
+          if (!list) return NextResponse.json({ done: true, eligible: true, placed: 0, errors });
+          // Lijst zonder artikel-brede vondsten: door naar de itemfoto-fase —
+          // de item-zoektermen (naam + buurt) vinden vaak wél iets.
+        }
+        // Geforceerd, maar de zoekronde leverde niets nieuws op (alles al eens
+        // gezien/afgewezen): doorgaan met wat er ligt i.p.v. blijven zoeken.
       }
 
       // Stap 2: scoren, één batch per tik.
@@ -107,10 +154,13 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
       }
 
       if (ordered.length) {
-        // Dode bron-URL? Schuif door naar de volgende kandidaat tot er 3 staan.
+        // Verse ronde: featured + slider + inline. Geforceerde ronde: precies
+        // zoveel beelden als er lege slots zijn.
+        const need = fillMode === 'fresh' ? 3 : gaps;
+        // Dode bron-URL? Schuif door naar de volgende kandidaat tot er `need` staan.
         const uploaded: { candidate: ImageCandidate; media: MediaRef }[] = [];
         for (const c of ordered) {
-          if (uploaded.length >= 3) break;
+          if (uploaded.length >= need) break;
           try {
             uploaded.push({ candidate: c, media: await uploadMediaFromUrl(c.url) });
           } catch {
@@ -126,17 +176,40 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
           // Standaardartikel: featured + 1 slider + 1 inline. Lijstartikel heeft
           // geen inline-beeld (eigen itemfoto-flow, content wordt
           // her-geassembleerd) → de resterende beelden gaan naar de slider.
-          const placement = list
-            ? { sliderIds: uploaded.slice(1).map(u => u.media.id) }
-            : { sliderIds: uploaded[1] ? [uploaded[1].media.id] : [], inlineId: uploaded[2] ? uploaded[2].media.id : undefined };
+          let placement: ImageUpdate;
+          if (fillMode === 'fresh') {
+            placement = list
+              ? { featuredId: uploaded[0].media.id, sliderIds: uploaded.slice(1).map(u => u.media.id) }
+              : {
+                  featuredId: uploaded[0].media.id,
+                  sliderIds: uploaded[1] ? [uploaded[1].media.id] : [],
+                  inlineId: uploaded[2] ? uploaded[2].media.id : undefined,
+                };
+          } else {
+            // Geforceerde ronde: verdeel de nieuwe beelden over de lege slots
+            // en laat bestaande beelden ongemoeid (slider wordt aangevuld,
+            // niet vervangen).
+            placement = {};
+            let k = 0;
+            if (needFeatured && uploaded[k]) placement.featuredId = uploaded[k++].media.id;
+            if (needSlider && uploaded[k]) {
+              placement.sliderIds = [...article.slider.map(m => m.id), uploaded[k++].media.id];
+            }
+            if (needInline && uploaded[k]) placement.inlineId = uploaded[k++].media.id;
+          }
+          const known = [
+            ...(article.featured ? [article.featured] : []),
+            ...article.slider,
+            ...(article.inline ? [article.inline] : []),
+            ...uploaded.map(u => u.media),
+          ];
           const updated = await updateImages(
             article.id,
             {
-              featuredId: uploaded[0].media.id,
               ...placement,
               ...(article.fotograaf ? {} : { fotograaf: credit }),
             },
-            uploaded.map(u => u.media)
+            known
           );
           for (const u of uploaded) await setImageCandidateStatus(article.id, u.candidate.id, 'used');
 
@@ -162,7 +235,8 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
     const unfilled = unfilledItemIndexes(list);
     if (!unfilled.length) {
-      return NextResponse.json({ done: true, eligible: true, placed: 0, remainingItems: 0 });
+      // Niets meer te vullen (of alles al gemarkeerd als "niets gevonden").
+      return NextResponse.json({ done: true, eligible: false, placed: 0, remainingItems: 0 });
     }
     const idx = unfilled[0];
     const item = list.items[idx];

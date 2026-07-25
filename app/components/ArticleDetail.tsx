@@ -92,46 +92,68 @@ export default function ArticleDetail({ id }: { id: number }) {
     const itemsMissing = Boolean(list && list.items.some(i => !i.media));
     if (imageCount(article, list) > 0 && !itemsMissing) return;
     autofillTried.current = true;
-    (async () => {
-      try {
-        // Zoeken + scorebatches + plaatsen (±6 tikken) plus bij een lijst
-        // één tik per itemfoto.
-        const maxTicks = 10 + (list ? list.items.length + 2 : 0);
-        let placedTotal = 0;
-        let itemsFilled = 0;
-        let label = 'Claude vult alvast beelden in… (zoeken)';
-        for (let tick = 0; tick < maxTicks; tick++) {
-          setSuggestPhase(label);
-          const res = await fetch(`/api/articles/${article.id}/candidates/autofill`, { method: 'POST' });
-          const body = await res.json();
-          if (!res.ok) throw new Error(body.error);
-          if (body.placed > 0) placedTotal += body.placed;
-          if (body.filledItem) itemsFilled += 1;
-          if (body.filledItem || body.skippedItem || body.step === 'place') await load();
-          label = body.step === 'place' || body.step === 'item'
-            ? `Claude zoekt itemfoto's… nog ${body.remainingItems ?? '?'} item${body.remainingItems === 1 ? '' : 's'}`
-            : 'Claude vult alvast beelden in… (beoordelen)';
-          if (body.done) {
-            if (body.eligible === false) return; // redactie was hier al — niets doen
-            if (placedTotal > 0) {
-              toast(itemsFilled > 0
-                ? `Beelden ingevuld — waarvan ${itemsFilled} itemfoto${itemsFilled > 1 ? "'s" : ''}. Vervang of vul aan waar nodig`
-                : `${placedTotal} beelden alvast ingevuld — vervang of vul aan waar nodig`);
-              await load();
-            }
-            const cRes = await fetch(`/api/articles/${article.id}/candidates`);
-            const cData = await cRes.json();
-            if (Array.isArray(cData.candidates)) setCandidates(cData.candidates);
-            return;
-          }
-        }
-      } catch (e: any) {
-        toast(e.message, { kind: 'error' });
-      } finally {
-        setSuggestPhase('');
-      }
-    })();
+    runAutofill();
   }, [article, list, load]);
+
+  // De autofill-tikken zelf. De server doet per aanroep één stap (zoeken →
+  // beoordelen → plaatsen, daarna per lijstitem maximaal één foto i.v.m. de
+  // 60s-limiet), dus we blijven aanroepen tot done.
+  // opts.force = handmatige herkansing via de knop: de server slaat dan zijn
+  // "redactie was hier al"-bewaking over en vult alleen de nog lege slots
+  // (bestaande beelden blijven staan). Op de eerste tik gaat reset mee, zodat
+  // eerder overgeslagen lijstitems opnieuw worden geprobeerd.
+  async function runAutofill(opts?: { force?: boolean }) {
+    if (!article || suggestPhase) return;
+    const force = Boolean(opts?.force);
+    try {
+      // Zoeken + scorebatches + plaatsen (±6 tikken) plus bij een lijst
+      // één tik per itemfoto.
+      const maxTicks = 10 + (list ? list.items.length + 2 : 0);
+      const base = force ? 'Claude zoekt beelden…' : 'Claude vult alvast beelden in…';
+      let placedTotal = 0;
+      let itemsFilled = 0;
+      let label = `${base} (zoeken)`;
+      for (let tick = 0; tick < maxTicks; tick++) {
+        setSuggestPhase(label);
+        const res = await fetch(`/api/articles/${article.id}/candidates/autofill`, force
+          ? {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ force: true, ...(tick === 0 ? { reset: true } : {}) }),
+          }
+          : { method: 'POST' });
+        const body = await res.json();
+        if (!res.ok || body.error) throw new Error(body.error || 'Beelden zoeken mislukt');
+        if (body.placed > 0) placedTotal += body.placed;
+        if (body.filledItem) itemsFilled += 1;
+        if (body.filledItem || body.skippedItem || body.step === 'place') await load();
+        label = body.step === 'place' || body.step === 'item'
+          ? `Claude zoekt itemfoto's… nog ${body.remainingItems ?? '?'} item${body.remainingItems === 1 ? '' : 's'}`
+          : `${base} (beoordelen)`;
+        if (body.done) {
+          if (body.eligible === false) {
+            if (!force) return; // redactie was hier al — niets doen
+            toast('Niets meer te vullen — alle beeldslots zijn al bezet.');
+          } else if (placedTotal > 0) {
+            toast(itemsFilled > 0
+              ? `Beelden ingevuld — waarvan ${itemsFilled} itemfoto${itemsFilled > 1 ? "'s" : ''}. Vervang of vul aan waar nodig`
+              : `${placedTotal} beelden ingevuld — vervang of vul aan waar nodig`);
+            await load();
+          } else if (force) {
+            toast('Geen bruikbare beelden gevonden — kies hieronder zelf een kandidaat.');
+          }
+          const cRes = await fetch(`/api/articles/${article.id}/candidates`);
+          const cData = await cRes.json();
+          if (Array.isArray(cData.candidates)) setCandidates(cData.candidates);
+          return;
+        }
+      }
+    } catch (e: any) {
+      toast(e.message, { kind: 'error' });
+    } finally {
+      setSuggestPhase('');
+    }
+  }
 
   // Zoeken + scoren. Scoren gaat in tikken van max 12 beelden (één
   // Claude-call per request i.v.m. de serverless-limiet).
@@ -810,14 +832,25 @@ export default function ArticleDetail({ id }: { id: number }) {
                   4 · Voorgestelde beelden
                 </span>
                 <span style={{ fontSize: 11, color: 'var(--gray)' }}>rechtenvrij · minimaal 1000×1000</span>
-                <button
-                  className="btn-small"
-                  style={{ marginLeft: 'auto', fontSize: 11.5, padding: '5px 10px', opacity: suggestPhase ? 0.6 : 1 }}
-                  disabled={!!suggestPhase}
-                  onClick={suggestImages}
-                >
-                  {suggestPhase ? 'Bezig…' : visibleCandidates.length ? '↻ Meer alternatieven' : 'Zoek kandidaten'}
-                </button>
+                <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
+                  <button
+                    className="btn-small"
+                    style={{ fontSize: 11.5, padding: '5px 10px', opacity: suggestPhase ? 0.6 : 1 }}
+                    disabled={!!suggestPhase}
+                    onClick={suggestImages}
+                  >
+                    {suggestPhase ? 'Bezig…' : visibleCandidates.length ? '↻ Meer alternatieven' : 'Zoek kandidaten'}
+                  </button>
+                  <button
+                    className="btn-small"
+                    title="Automatisch zoeken + plaatsen opnieuw laten draaien"
+                    style={{ fontSize: 11.5, padding: '5px 10px', opacity: suggestPhase ? 0.6 : 1 }}
+                    disabled={!!suggestPhase}
+                    onClick={() => runAutofill({ force: true })}
+                  >
+                    ↻ Beeldzoeker opnieuw
+                  </button>
+                </div>
               </div>
 
               {suggestPhase && (
