@@ -10,7 +10,8 @@
     "test:wpsync": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/wpsync.db.test.mjs",
     "test:eventdate": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/eventdate.test.mjs",
     "test:tag": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/tag.test.mjs",
-    "test:medianame": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/medianame.test.mjs"
+    "test:medianame": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/medianame.test.mjs",
+    "test:research": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/research.test.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",
