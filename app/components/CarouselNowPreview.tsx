@@ -15,8 +15,9 @@ import {
 // beeld geven. Daarom haalt dit component de échte PNG's op via de proxy
 // `POST /api/carousel/[articleId]/render` en toont die.
 //
-// Cache & verversen: `renders` bewaart per slide-`index` de dataUrl. Bij de
-// eerste render halen we alles in één call op (zonder slideIndex). Daarna
+// Cache & verversen: `renders` bewaart per slide-`index` de dataUrl. Er gaat
+// altijd één call per slide uit, achter elkaar — een hele carousel in één call
+// loopt tegen de 60s-limiet van de engine aan. Daarna
 // vergelijken we per slide een vingerafdruk van `slideType` + `values`; wat
 // verandert wordt (gedebounced) opnieuw gerenderd. Vóór het renderen dwingen we
 // met flushCarouselSave() de openstaande autosave af, want de engine rendert
@@ -135,44 +136,41 @@ export default function CarouselNowPreview({
         // autosave is fire-and-forget; renderen mag toch geprobeerd worden
       }
 
-      try {
-        const res = await fetch(`/api/carousel/${articleId}/render`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(targets.length === 1 ? { slideIndex: targets[0] } : {}),
-        });
-        const body = await res.json().catch(() => null);
-        if (gen !== runRef.current) return; // verouderd antwoord
-
-        if (!res.ok) {
-          const error: string = body?.error || `Renderen mislukt (HTTP ${res.status}).`;
-          const issues: string[] | undefined = Array.isArray(body?.issues) ? body.issues.map(String) : undefined;
-          setRenders(prev => {
-            const next = { ...prev };
-            for (const i of targets) next[i] = { ...next[i], loading: false, error, issues };
-            return next;
+      // Altijd één call per slide, netjes achter elkaar. Een carousel van 8
+      // slides in één call zou tegen de 60s-limiet van de engine aanlopen; zo
+      // verschijnt elke slide bovendien zodra hij klaar is in plaats van pas
+      // aan het eind, en kost een mislukte slide niet de hele reeks.
+      for (const index of targets) {
+        try {
+          const res = await fetch(`/api/carousel/${articleId}/render`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ slideIndex: index }),
           });
-          return;
-        }
+          const body = await res.json().catch(() => null);
+          if (gen !== runRef.current) return; // verouderd antwoord
 
-        const out: { index: number; dataUrl: string }[] = Array.isArray(body?.slides) ? body.slides : [];
-        setRenders(prev => {
-          const next = { ...prev };
-          for (const i of targets) next[i] = { ...next[i], loading: false };
-          for (const s of out) {
-            if (typeof s?.dataUrl !== 'string') continue;
-            next[s.index] = { dataUrl: s.dataUrl, loading: false };
+          if (!res.ok) {
+            const error: string = body?.error || `Renderen mislukt (HTTP ${res.status}).`;
+            const issues: string[] | undefined = Array.isArray(body?.issues) ? body.issues.map(String) : undefined;
+            setRenders(prev => ({ ...prev, [index]: { ...prev[index], loading: false, error, issues } }));
+            continue;
           }
-          return next;
-        });
-      } catch (e: any) {
-        if (gen !== runRef.current) return;
-        const error = e?.message || 'Renderen mislukt — probeer het opnieuw.';
-        setRenders(prev => {
-          const next = { ...prev };
-          for (const i of targets) next[i] = { ...next[i], loading: false, error };
-          return next;
-        });
+
+          const out: { index: number; dataUrl: string }[] = Array.isArray(body?.slides) ? body.slides : [];
+          const hit = out.find(s => s?.index === index) || out[0];
+          setRenders(prev => ({
+            ...prev,
+            [index]:
+              typeof hit?.dataUrl === 'string'
+                ? { dataUrl: hit.dataUrl, loading: false }
+                : { ...prev[index], loading: false, error: 'Renderen leverde geen beeld op.' },
+          }));
+        } catch (e: any) {
+          if (gen !== runRef.current) return;
+          const error = e?.message || 'Renderen mislukt — probeer het opnieuw.';
+          setRenders(prev => ({ ...prev, [index]: { ...prev[index], loading: false, error } }));
+        }
       }
     },
     [articleId]
