@@ -4,6 +4,8 @@ import type { ImageUpdate } from '@/lib/wp';
 import { searchImageCandidates, isLandscapeEnough } from '@/lib/imageSearch';
 import { scoreOneBatch } from '@/lib/imageScore';
 import { assembleListHtml } from '@/lib/listHtml';
+import { listItemNameContext } from '@/lib/mediaName';
+import { nameContext } from '@/lib/imageNaming';
 import {
   getListStructure, saveListStructure, addImageCandidates, listImageCandidates, setImageCandidateStatus,
 } from '@/lib/db';
@@ -67,6 +69,25 @@ interface ArticleAudit {
   hasBad: boolean;
 }
 
+// 1-based positie van elk beeldslot in de artikel-brede nummering: featured,
+// daarna de slider op volgorde, dan inline. Dubbel geplaatst beeld (featured
+// dat óók in de slider staat) krijgt één index, net als bij het uploaden.
+//
+// Deze backfill vervángt beeld, dus het nieuwe beeld erft de index van het
+// beeld dat eruit gaat. Zou het de eerstvolgende hoogste index krijgen, dan
+// liep de nummering op terwijl het aantal beelden gelijk blijft — en dat geeft
+// gaten in de `_n`-reeks van het artikel.
+function slotIndexes(a: Article): { featured: number; slider: number[]; inline: number } {
+  const seen = new Map<number, number>();
+  let n = 0;
+  const pos = (m: MediaRef | null): number => {
+    if (!m) return 0;
+    if (!seen.has(m.id)) seen.set(m.id, ++n);
+    return seen.get(m.id)!;
+  };
+  return { featured: pos(a.featured), slider: a.slider.map(pos), inline: pos(a.inline) };
+}
+
 function slotOk(dims: Map<number, { width: number; height: number }>, media: MediaRef | null): boolean {
   if (!media) return true; // leeg slot is niets om te vervangen
   const d = dims.get(media.id);
@@ -127,11 +148,25 @@ async function fixFeaturedSlider(audit: ArticleAudit): Promise<boolean> {
     .filter(c => urlSet.has(urlKey(c.url)) && c.status === 'scored' && (c.score ?? 0) >= AUTO_MIN_SCORE)
     .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
 
+  // Vervangende beelden krijgen de index van het slot dat ze overnemen, in
+  // dezelfde volgorde waarin de uploads hieronder over de slots verdeeld worden
+  // (eerst featured, dan de niet-liggende slider-indexen).
+  const slots = slotIndexes(article);
+  const targetIndexes = [
+    ...(featuredBad ? [slots.featured] : []),
+    ...sliderBadIdx.map(i => slots.slider[i]),
+  ];
+
   const uploaded: { candidate: ImageCandidate; media: MediaRef }[] = [];
   for (const c of picks) {
     if (uploaded.length >= needed) break;
     try {
-      uploaded.push({ candidate: c, media: await uploadMediaFromUrl(c.url) });
+      uploaded.push({
+        candidate: c,
+        media: await uploadMediaFromUrl(c.url, {
+          ctx: nameContext(article), index: targetIndexes[uploaded.length],
+        }),
+      });
     } catch {
       await setImageCandidateStatus(article.id, c.id, 'dismissed'); // dode bron-URL, niet nóg eens proberen
     }
@@ -193,11 +228,19 @@ async function fixOneListItem(audit: ArticleAudit): Promise<boolean> {
     .filter(c => itemUrls.has(urlKey(c.url)) && c.status === 'scored' && (c.score ?? 0) >= AUTO_MIN_SCORE)
     .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
 
+  // Vervangende itemfoto houdt de index van het item (idx + 1) — elk item heeft
+  // precies één foto, dus die nummering hoort bij het item en niet bij de
+  // volgorde van uploaden. Een nieuwe hoogste index zou de reeks laten oplopen
+  // terwijl er niets bijkomt.
+  const itemNaming = {
+    ctx: listItemNameContext(nameContext(article), item.naam, item.buurt),
+    index: idx + 1,
+  };
   for (const c of picks) {
     try {
-      const media = await uploadMediaFromUrl(c.url);
+      const media = await uploadMediaFromUrl(c.url, itemNaming);
       list.items[idx].media = media;
-      await updateArticleContent(article.id, assembleListHtml(list));
+      await updateArticleContent(article.id, assembleListHtml(list, nameContext(article)));
       await saveListStructure(article.id, null, list);
       await setImageCandidateStatus(article.id, c.id, 'used');
       return true;

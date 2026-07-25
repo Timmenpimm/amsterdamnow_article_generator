@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getArticle, updateImages, uploadMediaFromBuffer, uploadMediaFromUrl } from '@/lib/wp';
 import type { MediaRef } from '@/lib/types';
+import { attachedImageCount, nameContext } from '@/lib/imageNaming';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,6 +13,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const { id } = await params;
   const role = req.nextUrl.searchParams.get('role'); // featured | slider | inline | null
   try {
+    // Artikel vóór de uploads ophalen: de conventienaam heeft de artikelcontext
+    // én het aantal bestaande beelden nodig om de `_n`-teller te vervolgen.
+    const article = await getArticle(Number(id));
+    if (!article) return NextResponse.json({ error: 'artikel niet gevonden' }, { status: 404 });
+    const ctx = nameContext(article);
+    let index = attachedImageCount(article);
+
     const uploaded: MediaRef[] = [];
     const contentType = req.headers.get('content-type') || '';
     if (contentType.includes('multipart/form-data')) {
@@ -19,16 +27,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       for (const entry of form.getAll('files')) {
         if (!(entry instanceof File)) continue;
         const buf = Buffer.from(await entry.arrayBuffer());
-        uploaded.push(await uploadMediaFromBuffer(buf, entry.name || 'upload.jpg', entry.type || 'image/jpeg'));
+        uploaded.push(await uploadMediaFromBuffer(
+          buf, entry.name || 'upload.jpg', entry.type || 'image/jpeg', { ctx, index: ++index }
+        ));
       }
     } else {
       const { url } = await req.json();
-      if (url) uploaded.push(await uploadMediaFromUrl(String(url)));
+      if (url) uploaded.push(await uploadMediaFromUrl(String(url), { ctx, index: ++index }));
     }
     if (!uploaded.length) return NextResponse.json({ error: 'geen beelden ontvangen' }, { status: 400 });
-
-    const article = await getArticle(Number(id));
-    if (!article) return NextResponse.json({ error: 'artikel niet gevonden' }, { status: 404 });
 
     let featuredId = article.featured?.id ?? null;
     let inlineId = article.inline?.id ?? null;

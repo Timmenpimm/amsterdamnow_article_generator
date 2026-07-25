@@ -1,4 +1,6 @@
 import type { ListArticleStructure } from './types';
+import type { ImageNameContext } from './mediaName';
+import { imageAltName, listItemNameContext } from './mediaName';
 
 function escapeHtml(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -25,17 +27,30 @@ function linkedDescription(naam: string, beschrijving: string, link?: string): s
 // Buurt</em>", itemfoto's als eigen alinea in WordPress-classic markup
 // (wp-image-{id} class voor srcset/responsive), quotes als eenregelige
 // blockquote (cursieve quote — bron) ertussen.
-export function assembleListHtml(s: ListArticleStructure): string {
+//
+// `ctx` is de naamcontext van het artikel (categorie/stad); is die er, dan
+// krijgen title en alt van de itemfoto's de AmsterdamNOW-conventienaam
+// ({venue-slug}-{type}-{plaats}_{n}) in plaats van de kale itemnaam. De
+// parameter is optioneel zodat aanroepers die de context niet bij de hand
+// hebben (lib/listWriter.ts assembleert vóór het beeldwerk) hun huidige
+// gedrag houden.
+export function assembleListHtml(s: ListArticleStructure, ctx?: ImageNameContext): string {
   const parts: string[] = [];
   if (s.inleiding.trim()) parts.push(`<p>${escapeHtml(s.inleiding.trim())}</p>`);
-  for (const item of s.items) {
+  for (const [itemIndex, item] of s.items.entries()) {
     parts.push(`<h2>${escapeHtml(item.naam)}</h2>`);
     const adres = [item.adres, item.buurt].filter(Boolean).join(', ') + (item.extra_info ? `. ${item.extra_info}` : '');
     parts.push(`<p>${linkedDescription(item.naam, item.beschrijving, item.interne_link)} &#8212; <em>${escapeHtml(adres)}</em></p>`);
     if (item.media) {
       const media = item.media;
+      // Zelfde index als waarmee de itemfoto geüpload is (itemIndex + 1), zodat
+      // de alt-tekst in de content exact gelijk blijft aan de mediatitel/-slug
+      // in WordPress, ook nadat een foto vervangen is.
+      const naam = ctx
+        ? imageAltName(listItemNameContext(ctx, item.naam, item.buurt), itemIndex + 1)
+        : item.naam;
       parts.push(
-        `<p><img class="alignnone wp-image-${media.id} size-full" title="${escapeAttr(item.naam)}" src="${escapeAttr(media.url)}" alt="${escapeAttr(item.naam)}" /></p>`
+        `<p><img class="alignnone wp-image-${media.id} size-full" title="${escapeAttr(naam)}" src="${escapeAttr(media.url)}" alt="${escapeAttr(naam)}" /></p>`
       );
     }
     if (item.quote) {
