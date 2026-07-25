@@ -35,6 +35,13 @@ export const RAIL_GROUPS: RailGroup[] = [
     ],
   },
   {
+    label: 'Auditor',
+    items: [
+      { key: 'audit-claims', label: 'Claimcheck-prompt' },
+      { key: 'audit-beeld', label: 'Beeldcheck-prompt' },
+    ],
+  },
+  {
     label: 'Algemeen',
     items: [
       { key: 'variabelen', label: 'Variabelen & context' },
@@ -56,6 +63,8 @@ const TITLES: Record<RailKey, string> = {
   'lijst-research': 'Verificatie-prompt',
   'lijst-schrijf': 'Schrijf-prompt',
   'lijst-seo': 'SEO-prompt',
+  'audit-claims': 'Claimcheck-prompt',
+  'audit-beeld': 'Beeldcheck-prompt',
   standaard: 'Criteria',
   lijst: 'Criteria',
   publiceren: 'Publiceren',
@@ -71,6 +80,11 @@ const DESCRIPTIONS: Record<RailKey, string> = {
   'lijst-research': 'Verifieert per item adres, buurt en bronnen vóór het schrijven begint.',
   'lijst-schrijf': 'Zet de geverifieerde items om in een volledig lijstartikel met ACF-velden.',
   'lijst-seo': 'Bepaalt de RankMath-velden (titel, meta description, focus keyword, slug) voor het lijstartikel.',
+  // De auditor (docs/auditor-ontwerp.md) staat los van de generatie en wordt
+  // vanaf het bord aangeroepen, maar zijn prompts zijn wél bij te stellen —
+  // vandaar de eigen rail-groep hierboven.
+  'audit-claims': 'Rekent de harde claims uit een gepubliceerd artikel na tegen verse zoekresultaten (Serper), los van de research waarmee het geschreven is.',
+  'audit-beeld': 'Beoordeelt per beeld of het aantoonbaar bij het onderwerp, de locatie en het type ruimte hoort.',
   standaard: 'Vaste regels die Claude bovenop de standaard-prompt krijgt. Losse velden i.p.v. vrije tekst, zodat je niets per ongeluk sloopt.',
   lijst: 'Vaste regels die Claude bovenop de prompt krijgt. Losse velden i.p.v. vrije tekst, zodat je niets per ongeluk sloopt.',
   publiceren: 'Publiceert zelf artikelen uit "Klaar voor publicatie" op een instelbaar interval — één artikel per keer.',

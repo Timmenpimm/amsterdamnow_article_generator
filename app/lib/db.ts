@@ -5,6 +5,7 @@ import type {
   ConstraintKind, ConstraintVersion, StandaardConstraints, ListConstraints,
   Source, SourceSummary, SourceFinding, FindingState,
   ImageCandidate, ImageCandidateDraft, CandidateStatus,
+  AuditRun, AuditStatus, AuditScope, AuditFinding, AuditFindingInput,
 } from './types';
 import { DEFAULT_STANDAARD_CONSTRAINTS, DEFAULT_LIST_CONSTRAINTS } from './types';
 import { PROMPT_SEEDS } from './prompt-seeds';
@@ -179,6 +180,33 @@ async function initSqlite(): Promise<DB> {
       cluster TEXT,
       classified_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS audits (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      started_at TEXT NOT NULL,
+      finished_at TEXT,
+      status TEXT NOT NULL DEFAULT 'running',
+      scope TEXT NOT NULL,
+      sample_size INTEGER NOT NULL,
+      post_ids TEXT NOT NULL DEFAULT '[]',
+      done_post_ids TEXT NOT NULL DEFAULT '[]',
+      -- Geclaimd = een tik is met dit artikel begonnen. Los van done_post_ids,
+      -- want "begonnen" en "afgerond" zijn hier niet hetzelfde: een tik die
+      -- halverwege sneuvelt mag het artikel niet als gecontroleerd achterlaten.
+      claimed_post_ids TEXT NOT NULL DEFAULT '[]',
+      error TEXT
+    );
+    CREATE TABLE IF NOT EXISTS audit_findings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      run_id INTEGER NOT NULL,
+      post_id INTEGER NOT NULL,
+      kind TEXT NOT NULL,
+      verdict TEXT NOT NULL,
+      onderwerp TEXT NOT NULL DEFAULT '',
+      bevinding TEXT NOT NULL DEFAULT '',
+      bron TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_audit_findings_run ON audit_findings (run_id);
   `);
   // Migratie voor databases van vóór de lijstpipeline.
   for (const col of ["type TEXT NOT NULL DEFAULT 'standaard'", 'phase TEXT', 'list_state TEXT', 'locked_at TEXT', 'lock_owner TEXT']) {
@@ -347,6 +375,39 @@ async function initPostgres(): Promise<DB> {
       classified_at TEXT NOT NULL
     );
   `);
+  // Auditor-tabellen (docs/auditor-ontwerp.md). Bewust eigen tabellen, los van
+  // topics/list_state: de auditor schrijft nooit in de generatiestaat.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS audits (
+      id SERIAL PRIMARY KEY,
+      started_at TEXT NOT NULL,
+      finished_at TEXT,
+      status TEXT NOT NULL DEFAULT 'running',
+      scope TEXT NOT NULL,
+      sample_size INTEGER NOT NULL,
+      post_ids TEXT NOT NULL DEFAULT '[]',
+      done_post_ids TEXT NOT NULL DEFAULT '[]',
+      -- Geclaimd = een tik is met dit artikel begonnen. Los van done_post_ids,
+      -- want "begonnen" en "afgerond" zijn hier niet hetzelfde: een tik die
+      -- halverwege sneuvelt mag het artikel niet als gecontroleerd achterlaten.
+      claimed_post_ids TEXT NOT NULL DEFAULT '[]',
+      error TEXT
+    );
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS audit_findings (
+      id SERIAL PRIMARY KEY,
+      run_id INTEGER NOT NULL,
+      post_id BIGINT NOT NULL,
+      kind TEXT NOT NULL,
+      verdict TEXT NOT NULL,
+      onderwerp TEXT NOT NULL DEFAULT '',
+      bevinding TEXT NOT NULL DEFAULT '',
+      bron TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_audit_findings_run ON audit_findings (run_id)`);
   // Migratie voor databases van vóór de lijstpipeline.
   await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'standaard'`);
   await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS phase TEXT`);
@@ -394,6 +455,8 @@ async function seedPrompts(db: DB) {
     ['lijst-research', 'Per lijstitem verifiëren en researchen (o.b.v. de redactionele instructie).'],
     ['lijst-schrijf', 'Lijstartikel componeren uit geverifieerde items (o.b.v. de redactionele instructie).'],
     ['lijst-seo', 'RankMath-velden voor lijstartikelen (titel eindigt op | Amsterdam Now).'],
+    ['audit-claims', 'Auditor: harde claims uit een gepubliceerd artikel narekenen tegen verse zoekresultaten.'],
+    ['audit-beeld', 'Auditor: per beeld beoordelen of het aantoonbaar bij onderwerp, locatie en type ruimte hoort.'],
   ] as [PromptKind, string][]) {
     const seed = PROMPT_SEEDS[kind];
     const row = await db.get('SELECT COUNT(*) AS c FROM prompts WHERE kind = $1', [kind]);
@@ -1258,4 +1321,191 @@ export async function upsertPublishMeta(articleId: number, evergreen: boolean, e
        evergreen = EXCLUDED.evergreen, event_date = EXCLUDED.event_date, cluster = EXCLUDED.cluster, classified_at = EXCLUDED.classified_at`,
     [articleId, evergreen ? 1 : 0, eventDate, cluster, now()]
   );
+}
+
+// ---------- auditor (steekproefcontrole, docs/auditor-ontwerp.md) ----------
+
+// De twee id-lijsten van een run (`post_ids`, `done_post_ids`) staan als
+// JSON-tekst in één TEXT-kolom, precies zoals list_articles.json en
+// wp_posts.categories dat al doen. Dat is bewust: Postgres heeft jsonb en
+// int[], SQLite heeft geen van beide, en de query's in dit bestand zijn in één
+// dialect geschreven (Postgres-stijl $n, vertaald door toSqlite). JSON-tekst is
+// de enige vorm die in beide drivers identiek werkt — de parse gebeurt hier in
+// TypeScript, niet in SQL. Timestamps volgen hetzelfde patroon: ISO-strings in
+// TEXT via now(), zodat een reeksvergelijking (>=) tekstueel klopt.
+function parseAuditIds(raw: unknown): number[] {
+  try {
+    const parsed = JSON.parse(String(raw ?? '[]'));
+    return Array.isArray(parsed) ? parsed.map(Number).filter(n => Number.isFinite(n)) : [];
+  } catch { return []; }
+}
+
+// Postgres levert BIGINT/SERIAL soms als string en SQLite altijd als number;
+// daarom overal expliciet Number(). De rij is snake_case (SQL) en het type
+// camelCase (TS) — die vertaling zit hier, zodat B/C/D alleen AuditRun zien.
+function toAuditRun(r: any): AuditRun {
+  return {
+    id: Number(r.id),
+    startedAt: String(r.started_at),
+    finishedAt: r.finished_at ? String(r.finished_at) : null,
+    status: String(r.status) as AuditStatus,
+    scope: String(r.scope) as AuditScope,
+    sampleSize: Number(r.sample_size),
+    postIds: parseAuditIds(r.post_ids),
+    donePostIds: parseAuditIds(r.done_post_ids),
+    error: r.error ? String(r.error) : null,
+  };
+}
+
+export async function createAuditRun(scope: AuditScope, sampleSize: number, postIds: number[]): Promise<number> {
+  const db = await getDb();
+  const row = await db.get(
+    `INSERT INTO audits (started_at, finished_at, status, scope, sample_size, post_ids, done_post_ids, error)
+     VALUES ($1, NULL, 'running', $2, $3, $4, '[]', NULL) RETURNING id`,
+    [now(), scope, sampleSize, JSON.stringify(postIds)]
+  );
+  return Number(row.id);
+}
+
+export async function getAuditRun(id: number): Promise<AuditRun | null> {
+  const db = await getDb();
+  const row = await db.get('SELECT * FROM audits WHERE id = $1', [id]);
+  return row ? toAuditRun(row) : null;
+}
+
+// Nieuwste eerst, op id: audits worden nooit teruggedateerd, dus id is hier een
+// betrouwbaardere (en indexeerbare) sortering dan de started_at-tekst.
+export async function listAuditRuns(limit = 10): Promise<AuditRun[]> {
+  const db = await getDb();
+  const rows = await db.all(
+    `SELECT * FROM audits ORDER BY id DESC LIMIT ${Math.max(1, Math.floor(limit))}`
+  );
+  return rows.map(toAuditRun);
+}
+
+// Slaat de bevindingen van één artikel op en markeert dat artikel als
+// afgehandeld. Een LEGE findings-lijst is een geldige — en gewenste — uitkomst:
+// een artikel zonder bevindingen moet wél als done gelden, anders blijft de
+// tick-lus hem eeuwig opnieuw pakken en loopt de run nooit af.
+export async function saveAuditFindings(runId: number, postId: number, findings: AuditFindingInput[]): Promise<void> {
+  const db = await getDb();
+  const ts = now();
+  for (const f of findings) {
+    await db.run(
+      `INSERT INTO audit_findings (run_id, post_id, kind, verdict, onderwerp, bevinding, bron, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [runId, postId, f.kind, f.verdict, f.onderwerp.slice(0, 400), f.bevinding.slice(0, 800), f.bron.slice(0, 500), ts]
+    );
+  }
+  const row = await db.get('SELECT done_post_ids FROM audits WHERE id = $1', [runId]);
+  if (!row) return;
+  const done = parseAuditIds(row.done_post_ids);
+  if (done.includes(postId)) return;
+  done.push(postId);
+  await db.run('UPDATE audits SET done_post_ids = $1 WHERE id = $2', [JSON.stringify(done), runId]);
+}
+
+// Gegroepeerd per artikel, binnen een artikel in vondstvolgorde (de prompts
+// leveren de zwaarste claim al vooraan). Het eindoordeel per artikel bepaalt de
+// UI zelf met worstVerdict() uit types.ts, niet deze query.
+export async function listAuditFindings(runId: number): Promise<AuditFinding[]> {
+  const db = await getDb();
+  const rows = await db.all(
+    'SELECT * FROM audit_findings WHERE run_id = $1 ORDER BY post_id ASC, id ASC',
+    [runId]
+  );
+  return rows.map(r => ({
+    id: Number(r.id),
+    runId: Number(r.run_id),
+    postId: Number(r.post_id),
+    kind: r.kind,
+    verdict: r.verdict,
+    onderwerp: String(r.onderwerp ?? ''),
+    bevinding: String(r.bevinding ?? ''),
+    bron: String(r.bron ?? ''),
+    createdAt: String(r.created_at),
+  })) as AuditFinding[];
+}
+
+// Claimt het volgende nog niet opgepakte artikel van een run, atomisch.
+//
+// Zonder claim pakken twee gelijktijdige tikken (twee tabbladen, of een
+// dubbelklik) hetzelfde artikel: dubbele bevindingen en dubbele modelkosten.
+// De compare-and-swap op `claimed_post_ids` is hetzelfde patroon als
+// claimNextTopic hierboven: wie de UPDATE wint krijgt een rij terug, de ander
+// niets en probeert het volgende artikel. Claimen is bewust géén "done"
+// zetten — een tik die halverwege sneuvelt moet zichtbaar blijven als een
+// artikel zonder bevindingen, niet als een goedgekeurd artikel.
+export async function claimNextAuditPost(runId: number): Promise<number | null> {
+  const db = await getDb();
+  // Hooguit zoveel pogingen als er artikelen in een run kunnen zitten; elke
+  // mislukte CAS betekent dat een andere tik er net eentje wegkaapte.
+  for (let poging = 0; poging < 12; poging++) {
+    const row = await db.get('SELECT post_ids, done_post_ids, claimed_post_ids FROM audits WHERE id = $1', [runId]);
+    if (!row) return null;
+    const claimed = parseAuditIds(row.claimed_post_ids);
+    const bezet = new Set([...parseAuditIds(row.done_post_ids), ...claimed]);
+    const volgende = parseAuditIds(row.post_ids).find(id => !bezet.has(id));
+    if (volgende === undefined) return null;
+    const gewonnen = await db.get(
+      'UPDATE audits SET claimed_post_ids = $1 WHERE id = $2 AND claimed_post_ids = $3 RETURNING id',
+      [JSON.stringify([...claimed, volgende]), runId, String(row.claimed_post_ids ?? '[]')]
+    );
+    if (gewonnen) return volgende;
+  }
+  return null;
+}
+
+// Geeft een geclaimd artikel weer vrij: gebruikt wanneer de tik het artikel
+// niet heeft kunnen verwerken én er geen bevinding is weggeschreven, zodat een
+// volgende tik het opnieuw probeert in plaats van het stil over te slaan.
+export async function releaseAuditPost(runId: number, postId: number): Promise<void> {
+  const db = await getDb();
+  const row = await db.get('SELECT claimed_post_ids FROM audits WHERE id = $1', [runId]);
+  if (!row) return;
+  const claimed = parseAuditIds(row.claimed_post_ids).filter(id => id !== postId);
+  await db.run('UPDATE audits SET claimed_post_ids = $1 WHERE id = $2', [JSON.stringify(claimed), runId]);
+}
+
+// Zet vastgelopen runs af. Een gesloten tabblad of een gesneuvelde functie
+// laat een run anders eeuwig op 'running' staan, en dan blijft het paneel
+// "loopt nog" tonen voor werk dat nooit meer verdergaat.
+export async function failStaleAuditRuns(minutes = 15): Promise<number> {
+  const db = await getDb();
+  const cutoff = new Date(Date.now() - Math.max(1, minutes) * 60 * 1000).toISOString();
+  const rows = await db.all(
+    `SELECT id FROM audits WHERE status = 'running' AND started_at < $1`, [cutoff]
+  );
+  for (const r of rows) {
+    await db.run(
+      'UPDATE audits SET status = $1, finished_at = $2, error = $3 WHERE id = $4 AND status = $5',
+      ['failed', now(), `Run afgebroken: geen voortgang meer na ${minutes} minuten.`, Number(r.id), 'running']
+    );
+  }
+  return rows.length;
+}
+
+// Sluit de run af: 'failed' met reden als er een fout meekomt, anders 'done'.
+// Beide zetten finished_at, zodat een run met status 'running' én een
+// finished_at niet kan bestaan — dat is wat de UI als "loopt nog" leest.
+export async function finishAuditRun(runId: number, error?: string): Promise<void> {
+  const db = await getDb();
+  await db.run(
+    'UPDATE audits SET status = $1, finished_at = $2, error = $3 WHERE id = $4',
+    [error ? 'failed' : 'done', now(), error ? error.slice(0, 1000) : null, runId]
+  );
+}
+
+// Artikelen die de afgelopen N dagen al in een steekproef zaten. De trekking
+// sluit die uit, zodat een tweede run nieuwe artikelen pakt in plaats van
+// dezelfde drie. Bewust `post_ids` (de hele trekking) en niet `done_post_ids`:
+// een artikel dat wél getrokken is maar waarop de run afbrak, hoeft niet
+// meteen opnieuw aan de beurt te komen.
+export async function recentlyAuditedPostIds(days: number): Promise<number[]> {
+  const db = await getDb();
+  const cutoff = new Date(Date.now() - Math.max(0, days) * 24 * 60 * 60 * 1000).toISOString();
+  const rows = await db.all('SELECT post_ids FROM audits WHERE started_at >= $1', [cutoff]);
+  const out = new Set<number>();
+  for (const r of rows) for (const id of parseAuditIds(r.post_ids)) out.add(id);
+  return [...out];
 }

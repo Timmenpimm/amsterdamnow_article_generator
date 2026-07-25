@@ -65,6 +65,14 @@ async function request(body: Record<string, unknown>, prov: ActiveProvider): Pro
       headers: prov.headers,
       body: JSON.stringify(body),
       cache: 'no-store',
+      // Zonder timeout kan één hangende provider-call de hele fase-stap over de
+      // 60s-functielimiet duwen: de functie wordt dan hard afgekapt en de
+      // catch-blokken die het topic netjes op "mislukt" zetten worden nooit
+      // bereikt. 55s ligt onder die limiet en boven elke legitieme call
+      // (gemeten: de zwaarste schrijfcall haalt ~50s bij een op hol geslagen
+      // generatie), dus een hang wordt een leesbare fout in plaats van een
+      // FUNCTION_INVOCATION_TIMEOUT.
+      signal: AbortSignal.timeout(55_000),
     });
   } catch (e) {
     // Meest voorkomende Omniroute-fout: de gateway draait niet of is (op
