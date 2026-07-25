@@ -5,6 +5,7 @@ import {
   engineConfigured, engineErrorJson, notConfiguredJson, toContent, toMeta,
   type EngineCarousel,
 } from '@/lib/carouselEngine';
+import type { CarouselSlide } from '@/lib/carousel';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -52,6 +53,37 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ art
     if (!c?.id) {
       return NextResponse.json({ error: 'Onverwacht antwoord van de socials-engine bij het genereren.' }, { status: 502 });
     }
+
+    // De engine kent alleen imagePrompts; de artikelbeelden zelf leven hier.
+    // Zelfde toewijzing als de oude mock: hero/cta krijgen het uitgelichte
+    // beeld, image-slides doorlopen de sliderbeelden. Daarna terugschrijven
+    // zodat de engine dezelfde beelden gebruikt bij render/publicatie.
+    const pool = [article.featured, ...(article.slider || [])]
+      .map(m => m?.url)
+      .filter((u, i, arr): u is string => Boolean(u) && arr.indexOf(u) === i);
+    if (pool.length && Array.isArray(c.slides)) {
+      let next = 1;
+      c.slides = (c.slides as CarouselSlide[]).map(s => {
+        if (s.imageUrl) return s;
+        if (s.layout === 'hero' || s.layout === 'cta') return { ...s, imageUrl: pool[0] };
+        if (s.layout === 'image') {
+          const url = pool[next % pool.length] ?? pool[0];
+          next += 1;
+          return { ...s, imageUrl: url };
+        }
+        return s;
+      });
+      try {
+        await engineFetch(`/api/carousels/${c.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ slides: c.slides }),
+        });
+      } catch {
+        // Verrijking is best-effort: de content met beelden gaat sowieso terug
+        // naar de client; de eerstvolgende autosave schrijft ze alsnog weg.
+      }
+    }
+
     return NextResponse.json(
       { carouselId: c.id, meta: toMeta(id, c), content: toContent(c, article.title) },
       { status: 201 }
