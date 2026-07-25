@@ -138,7 +138,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       // Stap 2: scoren, één batch per tik.
       const unscored = await unscoredImageCandidates(article.id, 12);
       if (unscored.length) {
-        await scoreOneBatch(article, unscored);
+        await scoreOneBatch(article, unscored, `beeld-score#${article.id}`);
         const remaining = (await unscoredImageCandidates(article.id, 1)).length;
         return NextResponse.json({ done: false, step: 'score', remaining });
       }
@@ -273,7 +273,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (toScore.length) {
       await scoreOneBatch(
         { title: `${item.naam} (item uit: ${article.title})`, naam_locatie: item.naam, district: item.buurt || article.district },
-        toScore
+        toScore,
+        `beeld-score-item#${article.id}`
       );
       candidates = await listImageCandidates(article.id);
     }

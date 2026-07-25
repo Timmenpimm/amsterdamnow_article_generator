@@ -87,7 +87,7 @@ async function stepSelect(topic: Topic): Promise<ListStepResult> {
   const result = await askClaudeJson(
     prompt.content,
     `Thema van het lijstartikel: ${topic.title}${weekendContext(s.weekendgids)}\n\nTavily-bronnen:\n${sources.map((x, i) => `\n[${i + 1}] ${x.title}\n${x.url}\n${x.content.slice(0, 6000)}`).join('\n')}`,
-    FAST_WRITE_MODEL, 6000, LIST_SELECT_SCHEMA,
+    FAST_WRITE_MODEL, 6000, LIST_SELECT_SCHEMA, false, `lijst-select#${topic.id}`,
   );
   const kandidaten = Array.isArray(result.kandidaten) ? result.kandidaten : [];
   const items: ListItemState[] = kandidaten
@@ -129,7 +129,7 @@ async function stepVerify(topic: Topic): Promise<ListStepResult> {
     const result = await askClaudeJson(
       prompt.content,
       `Thema van het lijstartikel: ${topic.title}\nTe verifiëren item: ${item.naam}${weekendContext(s.weekendgids)}\n\nTavily-bronnen:\n${sources.map((x, i) => `\n[${i + 1}] ${x.title}\n${x.url}\n${x.content.slice(0, VERIFY_SOURCE_CHARS)}`).join('\n')}`,
-      FAST_WRITE_MODEL, 6000, LIST_VERIFY_SCHEMA,
+      FAST_WRITE_MODEL, 6000, LIST_VERIFY_SCHEMA, false, `lijst-verify#${topic.id}`,
     );
     if (str(result.status) === 'verified' && str(result.adres) && str(result.buurt)) {
       item.status = 'verified';
@@ -316,7 +316,7 @@ async function stepCompose(topic: Topic): Promise<ListStepResult> {
           beschikbare_districten: taxonomies.districts,
           beschikbare_tags: taxonomies.tags,
         })}`,
-        FAST_WRITE_MODEL, 6000, LIST_COMPOSE_FIRST_SCHEMA
+        FAST_WRITE_MODEL, 6000, LIST_COMPOSE_FIRST_SCHEMA, false, `lijst-compose#${topic.id}`
       );
     } else {
       // Elk blok kiest quote-plaatsing zonder de andere blokken te kennen.
@@ -333,7 +333,7 @@ async function stepCompose(topic: Topic): Promise<ListStepResult> {
       result = await askClaudeJson(
         ITEM_COMPOSE_PROMPT,
         `Thema van het lijstartikel: ${topic.title}\n\nSchrijf precies ${nextBatch.length} volgende items, in exact deze volgorde: ${nextBatch.map(item => item.naam).join(', ')}.${naadHint}${itemRulesHint}${feedbackHint}\n\n${JSON.stringify(input)}`,
-        FAST_WRITE_MODEL, 6000, LIST_COMPOSE_ITEMS_SCHEMA
+        FAST_WRITE_MODEL, 6000, LIST_COMPOSE_ITEMS_SCHEMA, false, `lijst-compose-items#${topic.id}`
       );
     }
     const items = Array.isArray(result.items) ? result.items : [];
@@ -489,7 +489,7 @@ async function stepFinalize(topic: Topic): Promise<ListStepResult> {
   const seo = await askClaudeJson(
     seoPrompt.content,
     `Onderwerp: ${topic.title}\nTitel: ${composed.title}\nIntro: ${composed.introcontent}\nItems: ${structure.items.map(i => i.naam).join(', ')}`,
-    FAST_WRITE_MODEL, 6000, SEO_SCHEMA,
+    FAST_WRITE_MODEL, 6000, SEO_SCHEMA, false, `lijst-seo#${topic.id}`,
   );
 
   const draft = await createDraft({

@@ -136,7 +136,7 @@ export async function judgeDuplicate(newTitle: string, candidates: LexicalCandid
     .join('\n');
   const prompt = `Nieuw onderwerp: "${newTitle}"\n\nMogelijk gerelateerde, al bestaande artikelen op amsterdamnow.com:\n${list}\n\nIs het nieuwe onderwerp een duplicaat van één van deze bestaande artikelen?`;
 
-  const result = await askClaudeJson(DEDUP_SYSTEM, prompt, DEDUP_MODEL, DEDUP_MAX_TOKENS, DEDUP_JUDGE_SCHEMA);
+  const result = await askClaudeJson(DEDUP_SYSTEM, prompt, DEDUP_MODEL, DEDUP_MAX_TOKENS, DEDUP_JUDGE_SCHEMA, false, 'dedup');
 
   // Defensief parsen: het schema garandeert de vorm, maar niet dat wp_id ook
   // echt bij een van de meegegeven kandidaten hoort — dat toetst de aanroeper.
