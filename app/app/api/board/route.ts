@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { listStructures, listTopics, STORAGE } from '@/lib/db';
-import { listArticles, LIVE } from '@/lib/wp';
+import { listArticles, isLive } from '@/lib/wp';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,7 +14,7 @@ export async function GET() {
       lists[Number(postId)] = { items: s.items.length, withMedia: s.items.filter(i => i.media).length };
     }
     return NextResponse.json({
-      mode: LIVE ? 'live' : 'demo',
+      mode: (await isLive()) ? 'live' : 'demo',
       storage: STORAGE,
       persistent: STORAGE === 'postgres' || !process.env.VERCEL,
       topics,

@@ -1,4 +1,4 @@
-import { WP_URL, LIVE } from './wp';
+import { getWpConnection, type WpConnection } from './wpConfig';
 import { decodeHtmlEntities } from './htmlEntities';
 import { deleteWpPostsNotIn, getWpSyncState, upsertWpPosts } from './db';
 import type { WpPostRow } from './db';
@@ -18,8 +18,10 @@ const INCREMENTAL_BUFFER_MS = 10 * 60 * 1000;
 // allang eerder (~11 pagina's voor de volledige backfill).
 const MAX_PAGES = 40;
 
-function authHeader(): string {
-  return 'Basic ' + Buffer.from(`${process.env.WP_USER}:${process.env.WP_APP_PASSWORD}`).toString('base64');
+// Zelfde resolver als lib/wp.ts: de verbinding komt per call uit wpConfig
+// (opgeslagen instellingen met env-fallback) in plaats van eigen env-reads.
+function authHeader(conn: WpConnection): string {
+  return 'Basic ' + Buffer.from(`${conn.user}:${conn.appPassword}`).toString('base64');
 }
 
 function stripHtml(html: string): string {
@@ -47,13 +49,14 @@ interface WpPage {
 }
 
 async function fetchPostsPage(pathname: string): Promise<WpPage> {
-  const res = await fetch(`${WP_URL}/wp-json${pathname}`, {
+  const conn = await getWpConnection();
+  const res = await fetch(`${conn.url}/wp-json${pathname}`, {
     // Alleen een Authorization-header sturen als er echte credentials zijn.
-    // Een header met "undefined:undefined" (LIVE = false) laat WordPress'
+    // Een header met lege credentials (live = false) laat WordPress'
     // application-passwords-auth de hele request afwijzen — ook voor
     // publieke content — terwijl gewoon geen header sturen prima anoniem
     // werkt en publish-only teruggeeft.
-    headers: LIVE ? { Authorization: authHeader() } : {},
+    headers: conn.live ? { Authorization: authHeader(conn) } : {},
     cache: 'no-store',
     // Voorkomt dat een hangende WP-respons de hele requestpath (incl. de
     // staleness-guard in dedup.ts, die dit synchroon awaited) onbeperkt blokkeert.
@@ -95,7 +98,7 @@ interface FetchAndUpsertResult {
 // anders de eerstvolgende sync-run) pakt de rest op. Zie productie-incident
 // 2026-07-21 in docs/superpowers/specs/2026-07-21-wp-dedup-index-design.md.
 async function fetchAndUpsertAllPosts(modifiedAfter?: string): Promise<FetchAndUpsertResult> {
-  const statusParam = LIVE ? ALL_STATUSES : PUBLIC_STATUS;
+  const statusParam = (await getWpConnection()).live ? ALL_STATUSES : PUBLIC_STATUS;
   const out: WpApiPost[] = [];
   let total: number | null = null;
   let upserted = 0;
@@ -123,7 +126,7 @@ async function fetchAndUpsertAllPosts(modifiedAfter?: string): Promise<FetchAndU
 // dát total zou alleen "hoeveel is er recent gewijzigd" zijn, niet "hoeveel
 // posts staan er in totaal op WP" (wat de self-heal-check nodig heeft).
 async function fetchExpectedTotal(): Promise<number | null> {
-  const statusParam = LIVE ? ALL_STATUSES : PUBLIC_STATUS;
+  const statusParam = (await getWpConnection()).live ? ALL_STATUSES : PUBLIC_STATUS;
   const params = new URLSearchParams({
     _fields: 'id',
     status: statusParam,
@@ -155,8 +158,9 @@ export interface WpSyncResult {
 //   niet meer terugkwam (vangt op WP verwijderde posts af).
 export async function syncWpPosts({ full = false }: { full?: boolean } = {}): Promise<WpSyncResult> {
   const start = Date.now();
-  if (!LIVE) {
-    console.warn('[wpSync] WP_USER/WP_APP_PASSWORD ontbreken — sync beperkt tot gepubliceerde posts (drafts/pending/future blijven buiten beeld).');
+  const live = (await getWpConnection()).live;
+  if (!live) {
+    console.warn('[wpSync] WP-credentials ontbreken (instellingen én env) — sync beperkt tot gepubliceerde posts (drafts/pending/future blijven buiten beeld).');
   }
 
   let modifiedAfter: string | undefined;
@@ -179,7 +183,7 @@ export async function syncWpPosts({ full = false }: { full?: boolean } = {}): Pr
       // wp_posts-index nooit leegtrekken — deleteWpPostsNotIn([]) verwijdert
       // dan namelijk gewoon alles. Zie ook de lege-ids-guard in db.ts.
       console.warn('[wpSync] Full sync leverde nul posts op — verwijderpas overgeslagen (zou de hele wp_posts-index wissen).');
-    } else if (LIVE) {
+    } else if (live) {
       deleted = await deleteWpPostsNotIn(posts.map(p => p.id));
     } else {
       // Een full sync zonder credentials ziet alleen publish-posts. Zou de

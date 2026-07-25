@@ -19,7 +19,7 @@
 // kleine batches per aanroep (hier een Claude-call per artikel, dus trager
 // dan een pure WP-PATCH), done/remaining zodat de aanroeper gewoon net zo
 // vaak opnieuw post totdat done: true.
-import { listSeoStubs, getArticle, updateArticleSeo, LIVE } from './wp';
+import { listSeoStubs, getArticle, updateArticleSeo, isLive } from './wp';
 import { getListStructure, activePrompt } from './db';
 import { askClaudeJson, FAST_WRITE_MODEL } from './claude';
 import { SEO_SCHEMA } from './schemas';
@@ -71,7 +71,7 @@ async function generateListSeo(article: Article, items: string[]) {
 }
 
 export async function backfillSeo(dryRun = false): Promise<SeoBackfillResult> {
-  if (!LIVE) throw new Error('Backfill is alleen beschikbaar in live-modus.');
+  if (!(await isLive())) throw new Error('Backfill is alleen beschikbaar in live-modus.');
   const stubs = await listSeoStubs();
   const candidates = stubs.filter(s => !s.hasSeo);
 
