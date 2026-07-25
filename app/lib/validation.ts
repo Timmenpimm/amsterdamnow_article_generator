@@ -94,13 +94,29 @@ export function extractPromptExamples(promptContent: string): string[] {
   return [...found];
 }
 
-// De voorbeeldzin die letterlijk (genormaliseerd) in de tekst voorkomt, of null.
+// Ook een halve voorbeeldzin is een lek. Het model nam de wijnzin niet altijd
+// heel over maar boog hem om: "De wijnkaart is hier net zo serieus als de
+// keuken, zeggen ze bij restaurants. Bij Technogym geldt iets vergelijkbaars"
+// (sportwinkel), "…maar dan voor geluid" (studio), "…Nee, wacht: hier is het de
+// bassline die alles bepaalt" (techno-club). Daarom keuren we niet alleen de
+// hele zin af maar ook elk stuk van acht opeenvolgende woorden eruit: lang
+// genoeg dat toeval is uitgesloten, kort genoeg om een omgebogen kopie te
+// pakken.
+const LEAK_SHINGLE_WORDS = 8;
+
+// Het stuk voorbeeldtekst dat (genormaliseerd) in de tekst voorkomt, of null.
 export function findPromptExampleLeak(text: string, examples: string[]): string | null {
   const haystack = normal(text);
   if (!haystack) return null;
   for (const example of examples) {
     const needle = normal(example);
-    if (needle && haystack.includes(needle)) return example;
+    if (!needle) continue;
+    if (haystack.includes(needle)) return example;
+    const parts = needle.split(' ');
+    for (let i = 0; i + LEAK_SHINGLE_WORDS <= parts.length; i++) {
+      const shingle = parts.slice(i, i + LEAK_SHINGLE_WORDS).join(' ');
+      if (haystack.includes(shingle)) return shingle;
+    }
   }
   return null;
 }

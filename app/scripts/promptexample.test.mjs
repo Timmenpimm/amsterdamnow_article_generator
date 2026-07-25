@@ -88,10 +88,30 @@ test('findPromptExampleLeak: vindt de zin ongeacht hoofdletters en leestekens', 
   assert.equal(findPromptExampleLeak(tekst, examples), WIJNZIN);
 });
 
+test('findPromptExampleLeak: pakt ook een omgebogen halve kopie', () => {
+  // Echte gevallen uit gepubliceerde artikelen: het model begon met de
+  // voorbeeldzin en draaide er daarna een eigen eind aan vast.
+  const examples = extractPromptExamples(PROMPT);
+  const echt = [
+    'De wijnkaart is hier net zo serieus als de keuken, zeggen ze bij restaurants. Bij Technogym geldt iets vergelijkbaars.',
+    'De wijnkaart is hier net zo serieus als de keuken, maar dan voor geluid: je gaat er niet alleen heen om te luisteren.',
+    'De wijnkaart is hier net zo serieus als de keuken. Nee, wacht: hier is het de bassline die alles bepaalt.',
+    'De wijnkaart is hier net zo serieus als de keuken bij een restaurant. Alleen gaat het hier om tap en fles.',
+  ];
+  for (const tekst of echt) assert.ok(findPromptExampleLeak(tekst, examples), `niet gevonden in: ${tekst.slice(0, 40)}…`);
+});
+
 test('findPromptExampleLeak: eigen tekst over hetzelfde onderwerp mag wel', () => {
   const examples = extractPromptExamples(PROMPT);
   const tekst = 'De wijnkaart bij Chez Chloé telt veertig flessen, allemaal Frans en allemaal uitgezocht door de sommelier.';
   assert.equal(findPromptExampleLeak(tekst, examples), null);
+});
+
+test('findPromptExampleLeak: zeven woorden overlap is nog geen lek', () => {
+  // De grens ligt op acht opeenvolgende woorden; daaronder telt het als
+  // toevallige overlap en blijft de tekst gewoon staan.
+  const examples = extractPromptExamples(PROMPT);
+  assert.equal(findPromptExampleLeak('De wijnkaart is hier net zo serieus, en de flessen komen uit de Loire.', examples), null);
 });
 
 test('findPromptExampleLeak: zonder voorbeelden nooit een lek', () => {
