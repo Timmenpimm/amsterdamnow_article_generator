@@ -250,6 +250,8 @@ async function claimCheck(article: Article): Promise<AuditFindingInput[]> {
     FAST_WRITE_MODEL,
     EXTRACT_MAX_TOKENS,
     AUDIT_CLAIMS_EXTRACT_SCHEMA,
+    false,
+    `audit-claims-extract#${article.id}`,
   );
 
   const geëxtraheerd = rowsOf(extracted, 'claims');
@@ -308,7 +310,7 @@ async function claimCheck(article: Article): Promise<AuditFindingInput[]> {
     ].join('\n')),
   ].filter(Boolean).join('\n');
 
-  const judged = await askClaudeJson(prompt, verdictPrompt, FAST_WRITE_MODEL, VERDICT_MAX_TOKENS, AUDIT_CLAIMS_VERDICT_SCHEMA);
+  const judged = await askClaudeJson(prompt, verdictPrompt, FAST_WRITE_MODEL, VERDICT_MAX_TOKENS, AUDIT_CLAIMS_VERDICT_SCHEMA, false, `audit-claims-oordeel#${article.id}`);
   const geoordeeld = rowsOf(judged, 'bevindingen');
   if (!geoordeeld.herkend) {
     return [{
@@ -579,7 +581,7 @@ async function imageCheck(article: Article, board: Article[]): Promise<AuditFind
     ...loadable.map((img, i) => `Beeld ${i + 1} — rol: ${img.rol}, bestandsnaam: ${img.bestandsnaam}`),
   ].filter(Boolean).join('\n');
 
-  const judged = await askClaudeJsonWithImages(prompt, vraag, payload, FAST_WRITE_MODEL, AUDIT_IMAGE_SCHEMA);
+  const judged = await askClaudeJsonWithImages(prompt, vraag, payload, FAST_WRITE_MODEL, AUDIT_IMAGE_SCHEMA, `audit-beeld#${article.id}`);
   const beoordeeld = rowsOf(judged, 'beelden');
   const rows = beoordeeld.rows;
   // Zie de claimcheck: een onleesbaar antwoord mag nooit als "beelden zijn in

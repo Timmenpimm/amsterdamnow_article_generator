@@ -16,7 +16,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     if (!article) return NextResponse.json({ error: 'Artikel niet gevonden.' }, { status: 404 });
 
     const batch = await unscoredImageCandidates(article.id, BATCH);
-    if (batch.length) await scoreOneBatch(article, batch);
+    if (batch.length) await scoreOneBatch(article, batch, `beeld-score#${article.id}`);
 
     const remaining = (await unscoredImageCandidates(article.id, 1)).length;
     return NextResponse.json({ candidates: await listImageCandidates(article.id), remaining });

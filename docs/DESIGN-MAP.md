@@ -123,9 +123,18 @@ codewijziging._
     en vervalt het herkansingspad. Nieuwe call = nieuw schema in `schemas.ts`
     (elk object `additionalProperties:false` + volledige `required`; geen
     min/max-keywords).
-  - `[claude]`-logregel in `lib/claude.ts` logt tokens + cache-hits
-    (tijdelijke instrumentatie). Cache-minimum: systeem-prompts onder ~2k
-    tokens (Sonnet) cachen stilletjes níet.
+  - **Tokenlogging (vast, juli 2026)**: `request()` in `lib/claude.ts` schrijft
+    na élke geslaagde call één `[claude]`-regel weg via `usageLine()` uit
+    `lib/tokenCost.ts` (tokens, cache-hits, geschatte dollarkosten, duur,
+    stop_reason). Elke call-site geeft een `label` mee in de vorm
+    `<fase>#<topic- of artikel-id>` (laatste parameter van `askClaudeJson` /
+    `askClaudeJsonWithImages`) — nieuwe call = label meegeven, anders staat er
+    `label=onbekend`. Kosten per artikel narekenen in de Vercel-logs:
+    `grep '\[claude\]' | grep '#1234'` en de `cost=`-velden sommeren.
+    Prijzen staan in `PRICES` in `lib/tokenCost.ts` en zijn lijstprijs, dus een
+    nieuw of goedkoper model toevoegen = daar een regel bij (onbekend model =
+    tarief 0, tokens blijven wél zichtbaar). Cache-minimum: systeem-prompts
+    onder ~2k tokens (Sonnet) cachen stilletjes níet.
   - Bronscanner slaat een `content_hash` per bron op (`sources`-tabel) en
     slaat de Claude-call over bij een ongewijzigde pagina.
   - **Redactionaliseren (juli 2026)**: gescande bronkoppen gaan níet meer

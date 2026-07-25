@@ -305,7 +305,9 @@ function buildCandidate(payload: Record<string, unknown>): GeneratedArticle {
 // die door dezelfde titel-keuring komt als validateArticle. Komt geen kandidaat
 // erdoor (of hapert de call), dan houden we de al-gevalideerde bestaande titel:
 // deze stap kan de titel dus nooit slechter of ongeldig maken.
-async function polishTitle(article: GeneratedArticle, s: StandaardState, naam: string, constraints: StandaardConstraints): Promise<string> {
+async function polishTitle(
+  article: GeneratedArticle, s: StandaardState, naam: string, constraints: StandaardConstraints, topicId: number,
+): Promise<string> {
   const r = s.research ?? {};
   const facts = [
     `Naam onderwerp: ${naam}`,
@@ -350,7 +352,7 @@ async function polishTitle(article: GeneratedArticle, s: StandaardState, naam: s
   try {
     // Geen schema → vrije generatie (extractJson-vangnet in claude.ts). Klein
     // token-budget: drie korte koppen zijn ruim binnen ~400 tokens.
-    const payload = await askClaudeJson(system, prompt, TITLE_MODEL, 600);
+    const payload = await askClaudeJson(system, prompt, TITLE_MODEL, 600, undefined, false, `titel#${topicId}`);
     const kandidaten = Array.isArray(payload.titels) ? payload.titels : [];
     for (const kandidaat of kandidaten) {
       if (typeof kandidaat === 'string' && kandidaat.trim() && checkTitle(kandidaat.trim(), naam, constraints) === null) {
@@ -388,7 +390,7 @@ async function stepResearch(topic: Topic, s: StandaardState): Promise<StandaardS
   const research = await askClaudeJson(
     researchPrompt.content,
     `Onderwerp: ${topic.title}\n\nVandaag is ${amsterdamToday()} (Europe/Amsterdam).\n\nBeschikbare WordPress-categorieën: ${taxonomies.categories.join(', ')}\nBeschikbare WordPress-districten: ${taxonomies.districts.join(', ')}\nBeschikbare WordPress-tags: ${taxonomies.tags.join(', ')}\nKies precies één "tag" uit deze lijst: de best passende. Verzin nooit een nieuwe tag. Past geen enkele bestaande tag echt goed, geef dan "" terug.\n\nGaat dit onderwerp over een event, tentoonstelling, festival of ander tijdelijk programma, geef dan de looptijd als "start_datum" en "eind_datum" in JJJJ-MM-DD, letterlijk overgenomen uit de bronnen. Bij een eendaags event is eind_datum gelijk aan start_datum.\n\nNoemt een bron een slotdatum ("t/m 29 juni 2026", "loopt tot en met…", "te zien tot…"), vul die dan ALTIJD in als eind_datum — ook als de tentoonstelling al maanden loopt, en ook als die datum inmiddels verstreken is. Die datum bepaalt of wij het onderwerp nog mogen publiceren; hem weglaten of doorschuiven is een fout. Alleen bij een vaste zaak (restaurant, winkel, museum als instelling) of nieuws zonder looptijd laat je beide velden leeg ("").\n\nTavily-bronnen:\n${sources.map((src, i) => `\n[${i + 1}] ${src.title}\n${src.url}\n${src.content.slice(0, 8000)}`).join('\n')}`,
-    FAST_WRITE_MODEL, 6000, RESEARCH_SCHEMA,
+    FAST_WRITE_MODEL, 6000, RESEARCH_SCHEMA, false, `research#${topic.id}`,
   );
   // Seed van de bronscanner is gezaghebbend: die datum komt rechtstreeks van de
   // agendapagina, betrouwbaarder dan wat het model uit de Tavily-bronnen afleidt.
@@ -420,7 +422,7 @@ async function stepResearch(topic: Topic, s: StandaardState): Promise<StandaardS
   // officiële homepage. Fail-open: bij een hapering blijven de originele waarden
   // staan. Moet vóór saveTopicProgress zodat de gecorrigeerde staat wordt bewaard.
   const homepageContent = officialUrl ? (sources.find(src => src.url === officialUrl)?.content ?? '') : '';
-  await verifyEntity(s, officialUrl, homepageContent);
+  await verifyEntity(s, officialUrl, homepageContent, topic.id);
   // Poort 2 — de entiteit. tavily.ts weert concurrent-bronnen al, maar de
   // research kan een concurrent nog steeds als onderwerp aanwijzen (hun naam
   // staat in een citaat, een tip-vermelding of een tweedehands bron). Dan is
@@ -510,7 +512,7 @@ async function stepResearchAanvullend(topic: Topic, s: StandaardState): Promise<
       const extra = await askClaudeJson(
         researchPrompt.content,
         `Onderwerp: ${topic.title}\n\nVandaag is ${amsterdamToday()} (Europe/Amsterdam).\n\nBeschikbare WordPress-categorieën: ${taxonomies.categories.join(', ')}\nBeschikbare WordPress-districten: ${taxonomies.districts.join(', ')}\nBeschikbare WordPress-tags: ${taxonomies.tags.join(', ')}\nKies precies één "tag" uit deze lijst: de best passende. Verzin nooit een nieuwe tag. Past geen enkele bestaande tag echt goed, geef dan "" terug.\n\nDit is een AANVULLENDE ronde: er is al research gedaan, maar deze feiten ontbraken nog: ${(s.missingFacts ?? []).join(', ') || '(niet gespecificeerd)'}. Let vooral op die punten. Verzin nooit iets: staat het niet in de bronnen, laat het veld leeg en zet het in "missing_facts".\n\nBronnen:\n${alle.map((src, i) => `\n[${i + 1}] ${src.title}\n${src.url}\n${src.content}`).join('\n')}`,
-        FAST_WRITE_MODEL, 6000, RESEARCH_SCHEMA,
+        FAST_WRITE_MODEL, 6000, RESEARCH_SCHEMA, false, `research-aanvullend#${topic.id}`,
       );
       mergeResearch(r, extra);
       // missing_facts van de tweede ronde is de actuelere lijst: die is
@@ -594,7 +596,11 @@ export interface EntityVerifyResult {
 // Gooit door bij een fout — de aanroeper bepaalt zelf hoe fail-open te zijn.
 // Gebruikt zowel door de research-fase van de queue (verifyEntity hieronder)
 // als door de admin-backfill-route voor bestaande drafts.
-export async function verifyEntityFields(input: EntityVerifyInput): Promise<EntityVerifyResult> {
+// `label` is puur voor de tokenlogging (lib/tokenCost.ts): de queue geeft
+// `entiteit#<topic-id>` mee, de backfill-route laat het op de default staan.
+export async function verifyEntityFields(
+  input: EntityVerifyInput, label = 'entiteit',
+): Promise<EntityVerifyResult> {
   const { naam, adres, website, rubriek, officialUrl, homepageContent } = input;
   const system = 'Je bent verificatieredacteur voor amsterdamnow.com. Je controleert of de naam, het adres en de website die de research opleverde bij ÉÉN en dezelfde echte zaak of instelling horen, op basis van de aangeleverde officiële homepage-tekst. Je verzint niets.';
   const prompt = [
@@ -614,7 +620,7 @@ export async function verifyEntityFields(input: EntityVerifyInput): Promise<Enti
     '- entiteit_consistent: horen naam, adres en website bij dezelfde zaak?',
     '- waarschuwing: korte NL-zin bij een probleem, anders lege string.',
   ].join('\n');
-  const payload = await askClaudeJson(system, prompt, FAST_WRITE_MODEL, 1000, ENTITY_VERIFY_SCHEMA);
+  const payload = await askClaudeJson(system, prompt, FAST_WRITE_MODEL, 1000, ENTITY_VERIFY_SCHEMA, false, label);
   return {
     canonical_naam_locatie: optionalString(payload.canonical_naam_locatie),
     entiteit_consistent: payload.entiteit_consistent === true,
@@ -626,7 +632,9 @@ export async function verifyEntityFields(input: EntityVerifyInput): Promise<Enti
 // waarschuwing, op basis van verifyEntityFields hierboven. FAIL-OPEN: bij een
 // fout gaan we door met de originele waarden en een lege waarschuwing. Logt
 // niets gevoeligs.
-async function verifyEntity(s: StandaardState, officialUrl: string | null, homepageContent: string): Promise<void> {
+async function verifyEntity(
+  s: StandaardState, officialUrl: string | null, homepageContent: string, topicId: number,
+): Promise<void> {
   const r = s.research as Record<string, unknown> | undefined;
   if (!r) return;
   const naam = optionalString(r.naam_locatie);
@@ -634,7 +642,10 @@ async function verifyEntity(s: StandaardState, officialUrl: string | null, homep
   const website = optionalString(r.website);
   const rubriek = optionalString(r.rubriek);
   try {
-    const result = await verifyEntityFields({ naam, adres, website, rubriek, officialUrl, homepageContent });
+    const result = await verifyEntityFields(
+      { naam, adres, website, rubriek, officialUrl, homepageContent },
+      `entiteit#${topicId}`,
+    );
     if (result.canonical_naam_locatie) r.naam_locatie = result.canonical_naam_locatie;
     s.entiteitConsistent = result.entiteit_consistent;
     s.entiteitWaarschuwing = result.waarschuwing;
@@ -661,7 +672,7 @@ async function stepSchrijf(topic: Topic, s: StandaardState): Promise<StandaardSt
   const payload = await askClaudeJson(
     writePrompt.content,
     `Onderwerp: ${topic.title}\n\nGebruik uitsluitend deze gecontroleerde research van Tavily. Schrijf het artikel als geldige JSON volgens de actieve prompt.\n\nHoud je aan deze regels:\n${rules}\n\n${JSON.stringify(s.research)}${describeSources(s)}${describeQuoteInstruction(s, constraints)}`,
-    FAST_WRITE_MODEL, WRITE_MAX_TOKENS, ARTICLE_SCHEMA,
+    FAST_WRITE_MODEL, WRITE_MAX_TOKENS, ARTICLE_SCHEMA, false, `schrijf#${topic.id}`,
   );
   try {
     const candidate = buildCandidate(payload);
@@ -671,7 +682,7 @@ async function stepSchrijf(topic: Topic, s: StandaardState): Promise<StandaardSt
     // Titel apart, vrij (her)genereren voor meer punch — zie polishTitle. Nooit
     // slechter: valt terug op de zojuist gevalideerde titel als geen kandidaat
     // de keuring haalt.
-    candidate.title = await polishTitle(candidate, s, subjectName(topic, s), constraints);
+    candidate.title = await polishTitle(candidate, s, subjectName(topic, s), constraints, topic.id);
     s.article = candidate;
     await saveTopicProgress(topic.id, { status: 'queued', phase: 'seo', state: s });
     return { topic, phase: 'seo', done: false, progress: 'Artikel geschreven en gevalideerd · SEO en draft' };
@@ -695,7 +706,7 @@ async function stepSchrijfRetry(topic: Topic, s: StandaardState): Promise<Standa
   const payload = await askClaudeJson(
     writePrompt.content,
     `Je vorige versie van dit artikel is afgekeurd door de eindredactie.\n\nOnderwerp: ${topic.title}\nAfkeurreden: ${s.rejectReason}\n\nLever het VOLLEDIGE artikel opnieuw aan als JSON met exact dezelfde velden (title, subregel, introductie_tekst, content, quote). Los de afkeurreden op en houd de rest zoveel mogelijk intact. Alle regels blijven gelden:\n${rules}\n\nJe vorige versie:\n${JSON.stringify(s.draftPayload)}${describeSources(s)}${describeQuoteInstruction(s, constraints)}`,
-    FAST_WRITE_MODEL, WRITE_MAX_TOKENS, ARTICLE_SCHEMA,
+    FAST_WRITE_MODEL, WRITE_MAX_TOKENS, ARTICLE_SCHEMA, false, `schrijf-retry#${topic.id}`,
   );
   let checked: GeneratedArticle;
   try {
@@ -717,7 +728,7 @@ async function stepSchrijfRetry(topic: Topic, s: StandaardState): Promise<Standa
     await saveTopicProgress(topic.id, { status: 'queued', phase: 'schrijf-retry', state: s });
     return { topic, phase: 'schrijf-retry', done: false, progress: `Afgekeurd (${String(e.message).slice(0, 60)}…) · herkansing ${attempts + 1} start` };
   }
-  checked.title = await polishTitle(checked, s, subjectName(topic, s), constraints);
+  checked.title = await polishTitle(checked, s, subjectName(topic, s), constraints, topic.id);
   s.article = checked;
   s.draftPayload = undefined;
   s.rejectReason = undefined;
@@ -743,7 +754,7 @@ async function stepSeo(topic: Topic, s: StandaardState): Promise<StandaardStepRe
   const seo = await askClaudeJson(
     seoPrompt.content,
     `POST_TITLE: ${title}\nPOST_EXCERPT: ${intro}\nPOST_CONTENT: ${content}\nCATEGORY: ${nonEmptyStrings(s.research.categories, 'categories').join(', ')}\nDISTRICT: ${string(s.research.district, 'district')}`,
-    FAST_WRITE_MODEL, 6000, SEO_SCHEMA,
+    FAST_WRITE_MODEL, 6000, SEO_SCHEMA, false, `seo#${topic.id}`,
   );
   const draft = await createDraft({
     title, subregel, intro, contentHtml: formatStandardArticleHtml(content, quote, bronAttributie(s, quote)), quote,
@@ -887,7 +898,7 @@ export async function rewriteQuote(article: Article, contentHtml: string, opts: 
     'Antwoord ALLEEN met JSON: "quote" (de nieuwe quote) en "herschreven_paragraaf" (de volledige, aangepaste bronparagraaf).',
   ].join('\n');
 
-  const payload = await askClaudeJson(system, prompt, FAST_WRITE_MODEL, 1200, QUOTE_REWRITE_SCHEMA);
+  const payload = await askClaudeJson(system, prompt, FAST_WRITE_MODEL, 1200, QUOTE_REWRITE_SCHEMA, false, `quote#${article.id}`);
   const quote = string(payload.quote, 'quote');
   const herschrevenParagraaf = string(payload.herschreven_paragraaf, 'herschreven_paragraaf');
 

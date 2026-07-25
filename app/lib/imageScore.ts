@@ -61,8 +61,12 @@ type Score = { beeld: number; score: number; reden: string; rol: string };
 // Elke kandidaat uit de batch is na deze functie afgehandeld: gescoord, of
 // score 0 met de reden (niet laadbaar / niet beoordeelbaar) — zo loopt de
 // wachtrij altijd leeg en blijft autofill nooit hangen op één rot beeld.
+// `label` is puur voor de tokenlogging in lib/claude.ts; de aanroepers die het
+// artikel-id kennen geven `beeld-score#<id>` mee, zodat de beeldkosten per
+// artikel na te rekenen zijn.
 export async function scoreOneBatch(
-  article: Pick<Article, 'title' | 'naam_locatie' | 'district'>, batch: ImageCandidate[]
+  article: Pick<Article, 'title' | 'naam_locatie' | 'district'>, batch: ImageCandidate[],
+  label = 'beeld-score'
 ): Promise<void> {
   const thumbs = await Promise.all(batch.map(fetchThumb));
   const loadable = batch.filter((_, i) => thumbs[i]);
@@ -77,7 +81,7 @@ export async function scoreOneBatch(
 
   let scores: Score[];
   try {
-    scores = parseScores(await askClaudeJsonWithImages(STYLE_SYSTEM, buildPrompt(article, loadable), images, FAST_WRITE_MODEL, IMAGE_SCORES_SCHEMA));
+    scores = parseScores(await askClaudeJsonWithImages(STYLE_SYSTEM, buildPrompt(article, loadable), images, FAST_WRITE_MODEL, IMAGE_SCORES_SCHEMA, label));
   } catch (e: any) {
     // Ontbrekende API-key is een configuratiefout — die melding moet de
     // redactie letterlijk zien.
