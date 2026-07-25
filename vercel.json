@@ -23,6 +23,9 @@
     { "src": "^/api/sources/([^/]+)/?$", "dest": "/app/api/sources/[id]?id=$1" },
     { "src": "^/api/publish/tick/?$", "dest": "/app/api/publish/tick" },
     { "src": "^/api/publish/settings/?$", "dest": "/app/api/publish/settings" },
+    { "src": "^/api/audit/run/?$", "dest": "/app/api/audit/run" },
+    { "src": "^/api/audit/tick/?$", "dest": "/app/api/audit/tick" },
+    { "src": "^/api/audit/([^/]+)/?$", "dest": "/app/api/audit/[id]?id=$1" },
     { "src": "^/artikel/([^/]+)/?$", "dest": "/app/artikel/[id]?id=$1" },
     { "src": "/(.*)", "dest": "/app/$1", "check": true }
   ],

@@ -15,6 +15,8 @@ const VARS: Record<PromptKind, string[]> = {
   'lijst-research': ['thema', 'item', 'tavily_bronnen', 'doelweekend'],
   'lijst-schrijf': ['thema', 'items_research', 'categorieën', 'districten'],
   'lijst-seo': ['titel', 'intro', 'items'],
+  'audit-claims': ['artikeltekst', 'zoekresultaten'],
+  'audit-beeld': ['beeldrol', 'artikelcontext'],
 };
 
 export default function PromptEditor({

@@ -214,13 +214,21 @@ export function articlePhase(a: Article, list?: ListArticleStructure | null): Ar
   return imageCount(a) >= REQUIRED_IMAGES ? 'ready' : 'needImages';
 }
 
+// De twee audit-kinds staan bewust in dezelfde lijst als de generatieprompts:
+// ze delen de prompts-tabel en dus het versiebeheer (activePrompt/
+// savePromptVersion), maar zijn losse kinds zodat een aanscherping van de
+// claimcheck nooit de schrijfprompt raakt. Zie docs/auditor-ontwerp.md:
+// onafhankelijkheid van de auditor zit in eigen prompts, eigen bronnen en een
+// eigen oordeel — niet in een tweede promptmechaniek.
 export type PromptKind =
   | 'research' | 'schrijf' | 'seo'
-  | 'lijst-selectie' | 'lijst-research' | 'lijst-schrijf' | 'lijst-seo';
+  | 'lijst-selectie' | 'lijst-research' | 'lijst-schrijf' | 'lijst-seo'
+  | 'audit-claims' | 'audit-beeld';
 
 export const PROMPT_KINDS: PromptKind[] = [
   'research', 'schrijf', 'seo',
   'lijst-selectie', 'lijst-research', 'lijst-schrijf', 'lijst-seo',
+  'audit-claims', 'audit-beeld',
 ];
 
 export interface PromptVersion {
@@ -448,6 +456,70 @@ export interface ImageCandidate extends ImageCandidateDraft {
   role: string;               // advies: 'featured' | 'slider' | 'geen'
   status: CandidateStatus;
   created_at: string;
+}
+
+// ---------- auditor (onafhankelijke steekproefcontrole) ----------
+
+// Het oordeel per bevinding. Bewust drie waarden en geen score: de auditor moet
+// een redacteur vertellen of hij moet ingrijpen, niet hoe zeker een model is.
+// 'twijfel' is expliciet de veilige uitkomst — een niet te verifiëren claim mag
+// nooit als 'ok' wegvallen (zie docs/prompts/audit-claims-v1.md).
+export type AuditVerdict = 'ok' | 'twijfel' | 'fout';
+
+export type AuditStatus = 'running' | 'done' | 'failed';
+
+// Welke van de drie controles de bevinding opleverde: 'claim' (model + Serper),
+// 'beeld' (vision + bestandsnaam/alt-heuristiek) of 'tekst' (deterministische
+// dubbele-zin- en contaminatiecheck).
+export type AuditFindingKind = 'claim' | 'beeld' | 'tekst';
+
+// De steekproef: 'drafts' = alles wat nog gepubliceerd moet worden,
+// 'ready' = alleen wat publicatieklaar is.
+export type AuditScope = 'drafts' | 'ready';
+
+// Eén auditronde. `postIds` is de volledige trekking, `donePostIds` wat al
+// afgehandeld is — de tick-route werkt één artikel per aanroep af (60s-limiet),
+// dus het verschil tussen die twee lijsten is de resterende wachtrij én de
+// voortgangsindicator voor de UI.
+export interface AuditRun {
+  id: number;
+  startedAt: string;
+  finishedAt: string | null;
+  status: AuditStatus;
+  scope: AuditScope;
+  sampleSize: number;
+  postIds: number[];
+  donePostIds: number[];
+  error: string | null;
+}
+
+export interface AuditFinding {
+  id: number;
+  runId: number;
+  postId: number;
+  kind: AuditFindingKind;
+  verdict: AuditVerdict;
+  onderwerp: string;   // de gecontroleerde claim, of de beeldrol ("featured")
+  bevinding: string;   // wat er aan de hand is, één zin
+  bron: string;        // URL of ''
+  createdAt: string;
+}
+
+// Wat een controle oplevert vóór opslag: run en artikel zijn dan al bekend bij
+// de aanroeper, het tijdstip zet de database.
+export type AuditFindingInput = Omit<AuditFinding, 'id' | 'runId' | 'postId' | 'createdAt'>;
+
+const VERDICT_RANK: Record<AuditVerdict, number> = { ok: 0, twijfel: 1, fout: 2 };
+
+// Eindoordeel per artikel = het zwaarste bevinding-verdict: 'fout' > 'twijfel' >
+// 'ok'. Een artikel zonder bevindingen is 'ok' — geen bevindingen is de
+// geldige, en gewenste, uitkomst van een controle.
+export function worstVerdict(findings: { verdict: AuditVerdict }[]): AuditVerdict {
+  let worst: AuditVerdict = 'ok';
+  for (const f of findings) {
+    if (VERDICT_RANK[f.verdict] > VERDICT_RANK[worst]) worst = f.verdict;
+  }
+  return worst;
 }
 
 export const DEFAULT_LIST_CONSTRAINTS: ListConstraints = {

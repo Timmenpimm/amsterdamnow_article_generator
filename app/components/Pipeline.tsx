@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Article, BoardData, Topic } from '@/lib/types';
 import { articlePhase, imageCount, listImagesReady, parseListState, REQUIRED_IMAGES } from '@/lib/types';
 import TopBar from './TopBar';
+import AuditPanel from './AuditPanel';
 import BulkModal from './BulkModal';
 import ListArticleModal from './ListArticleModal';
 import ReviewModal from './ReviewModal';
@@ -135,6 +136,17 @@ export default function Pipeline() {
   const [reorderingId, setReorderingId] = useState<number | null>(null);
   const [publishState, setPublishState] = useState<{ enabled: boolean; nextAt: string | null } | null>(null);
   const [rerunId, setRerunId] = useState<number | null>(null);
+  // Auditor (steekproefcontrole). auditRef is de harde guard tegen een tweede
+  // run naast de lopende (zelfde patroon als writingRef bij het schrijven);
+  // auditRefresh dwingt het paneel om de runlijst opnieuw op te halen.
+  const [auditScope, setAuditScope] = useState<'drafts' | 'ready'>('drafts');
+  const [auditSize, setAuditSize] = useState(3);
+  const [auditBusy, setAuditBusy] = useState(false);
+  const [auditProgress, setAuditProgress] = useState('');
+  const auditRef = useRef(false);
+  const [auditOpen, setAuditOpen] = useState(false);
+  const [auditRefresh, setAuditRefresh] = useState(0);
+  const [auditFocusRun, setAuditFocusRun] = useState<number | null>(null);
 
   // Volgnummer per board-load. De poll (elke 12s) en de load() ná een actie
   // lopen door elkaar heen; zonder deze guard kan een trager antwoord van een
@@ -496,6 +508,74 @@ export default function Pipeline() {
     }
   }
 
+  // Steekproefcontrole: één run trekken, daarna per tik één artikel auditen —
+  // zelfde lus-vorm als startWriting hierboven (POST tot done, ref-guard tegen
+  // dubbele runs, fouten via een error-toast, bord verversen in finally).
+  // Er wordt níet gepolld als er geen run loopt.
+  async function runAudit() {
+    if (auditRef.current) return;
+    auditRef.current = true;
+    setAuditBusy(true);
+    setAuditProgress('steekproef trekken…');
+    try {
+      const res = await fetch('/api/audit/run', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scope: auditScope, sampleSize: auditSize }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || 'Audit starten mislukt');
+      const postIds: number[] = Array.isArray(body.postIds) ? body.postIds : [];
+      // De route mag legitiem niets te doen hebben (alles net geauditeerd, of
+      // een leeg bord): dan is er geen run en geen lus.
+      if (!body.runId || postIds.length === 0) {
+        toast(body.melding || 'Geen artikelen om te auditen');
+        return;
+      }
+      const runId: number = body.runId;
+      setAuditFocusRun(runId);
+      const total = postIds.length;
+      let done = 0;
+      let findings = 0;
+      let fout = 0;
+      let twijfel = 0;
+      setAuditProgress(`artikel 0 van ${total} gecontroleerd`);
+      // Ruimte voor een tik die niets afrondt; nooit oneindig doortikken.
+      for (let tick = 0; tick < total + 5; tick++) {
+        const tickRes = await fetch('/api/audit/tick', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ runId }),
+        });
+        const tb = await tickRes.json().catch(() => ({}));
+        if (!tickRes.ok) throw new Error(tb.error || 'Audit mislukt');
+        if (tb.postId != null) {
+          done += 1;
+          if (typeof tb.findings === 'number') findings += tb.findings;
+          if (tb.verdict === 'fout') fout += 1;
+          else if (tb.verdict === 'twijfel') twijfel += 1;
+          setAuditProgress(`artikel ${Math.min(done, total)} van ${total} gecontroleerd`);
+        }
+        if (tb.done) break;
+      }
+      setAuditRefresh(n => n + 1);
+      setAuditOpen(true);
+      if (findings === 0) toast(`Audit klaar — ${done} artikel${done === 1 ? '' : 'en'} gecontroleerd, geen bevindingen`);
+      else {
+        toast(
+          `Audit klaar — ${findings} bevinding${findings === 1 ? '' : 'en'} in ${done} artikel${done === 1 ? '' : 'en'}`
+          + `${fout ? ` · ${fout}× fout` : ''}${twijfel ? ` · ${twijfel}× twijfel` : ''}`,
+          { kind: fout > 0 ? 'error' : 'ok' },
+        );
+      }
+    } catch (e: any) {
+      toast(e.message || 'Audit mislukt', { kind: 'error' });
+      setAuditRefresh(n => n + 1);
+    } finally {
+      auditRef.current = false;
+      setAuditBusy(false);
+      setAuditProgress('');
+    }
+  }
+
   // Automatisch schrijven: zolang autoOn aan staat, elke 5 minuten een ronde
   // starten (ook met lege wachtrij — dan gebeurt er stil niets die ronde).
   // Uitzetten stopt alleen de vólgende ronde; een lopende ronde maakt af.
@@ -780,6 +860,61 @@ export default function Pipeline() {
                 : undefined
             }
           >
+            {/* Steekproefcontrole: knop bovenaan de kolomkop, met de scope- en
+                aantal-keuze eronder (zelfde plek/vorm als de knop
+                "Automatisch schrijven" in de kolom Wordt geschreven). */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 2 }}>
+              <button
+                className="btn-primary"
+                disabled={auditBusy}
+                title="Trek een steekproef en laat een onafhankelijke auditor claims, beelden en tekst controleren"
+                onClick={runAudit}
+                style={{ width: '100%', fontSize: 12.5, padding: '8px 10px' }}
+              >
+                {auditBusy ? 'Auditen…' : '🔎 Steekproef auditen'}
+              </button>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <select
+                  value={auditScope}
+                  disabled={auditBusy}
+                  aria-label="Welke artikelen auditen"
+                  onChange={e => setAuditScope(e.target.value === 'ready' ? 'ready' : 'drafts')}
+                  style={{
+                    flex: 1, minWidth: 0, fontSize: 11.5, fontWeight: 600, padding: '5px 6px', borderRadius: 6,
+                    border: '1px solid var(--border)', background: 'var(--card)', color: 'var(--ink)',
+                  }}
+                >
+                  <option value="drafts">nog te publiceren</option>
+                  <option value="ready">publicatieklaar</option>
+                </select>
+                <select
+                  value={auditSize}
+                  disabled={auditBusy}
+                  aria-label="Aantal artikelen in de steekproef"
+                  onChange={e => setAuditSize(Number(e.target.value) || 3)}
+                  style={{
+                    fontSize: 11.5, fontWeight: 600, padding: '5px 6px', borderRadius: 6,
+                    border: '1px solid var(--border)', background: 'var(--card)', color: 'var(--ink)',
+                  }}
+                >
+                  {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => (
+                    <option key={n} value={n}>{n}×</option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--gray)' }}>
+                {auditBusy && <span style={{ fontWeight: 700, color: 'var(--blue-dark)' }}>{auditProgress}</span>}
+                <span
+                  role="button"
+                  tabIndex={0}
+                  style={{ marginLeft: 'auto', textDecoration: 'underline', cursor: 'pointer' }}
+                  onClick={() => setAuditOpen(true)}
+                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setAuditOpen(true); } }}
+                >
+                  Bevindingen →
+                </span>
+              </div>
+            </div>
             {ready.map(a => (
               <div key={a.id} className="card" style={{ overflow: 'hidden' }}>
                 {a.featured && (
@@ -902,6 +1037,12 @@ export default function Pipeline() {
         open={listModalOpen}
         onClose={() => setListModalOpen(false)}
         onCreated={load}
+      />
+      <AuditPanel
+        open={auditOpen}
+        onClose={() => setAuditOpen(false)}
+        refreshKey={auditRefresh}
+        focusRunId={auditFocusRun}
       />
       {reviewTopic && (
         <ReviewModal
