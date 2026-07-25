@@ -248,7 +248,7 @@ export default function AuditPanel({
 
         <div style={{ padding: '14px 22px 18px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
           {error && (
-            <div className="card" style={{ borderColor: 'var(--red-border)', background: 'var(--red-bg)', padding: '10px 14px' }}>
+            <div className="card" style={{ borderColor: 'var(--red-border)', background: 'var(--red-bg)', padding: '10px 14px', flexShrink: 0 }}>
               <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--red-dark)' }}>{error}</div>
               <button className="btn-small" style={{ marginTop: 8 }} onClick={loadRuns}>Opnieuw proberen</button>
             </div>
@@ -275,7 +275,12 @@ export default function AuditPanel({
             const expanded = expandedId === run.id;
             const detail = details[run.id];
             return (
-              <div key={run.id} className="card" style={{ overflow: 'hidden' }}>
+              // flexShrink: 0 is hier geen detail: de lijst is een flexkolom met
+              // een vaste hoogte (overflowY: auto). Zonder dit krimpen álle
+              // runkaarten zodra één run wordt uitgeklapt — de dichtgeklapte
+              // regels persen samen tot streepjes en de uitgeklapte run wordt
+              // afgekapt in plaats van dat het paneel scrollt.
+              <div key={run.id} className="card" style={{ overflow: 'hidden', flexShrink: 0 }}>
                 <div
                   role="button"
                   tabIndex={0}
@@ -361,6 +366,7 @@ export default function AuditPanel({
                           ref={focused ? focusedPostEl : undefined}
                           style={{
                             border: '1px solid var(--border-light)', borderRadius: 8, background: 'var(--card)', padding: '10px 12px',
+                            flexShrink: 0,
                             outline: focused ? '1.5px solid var(--ink)' : undefined, outlineOffset: focused ? -1.5 : undefined,
                           }}
                         >
