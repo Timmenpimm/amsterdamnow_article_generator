@@ -3,7 +3,10 @@
 import Link from 'next/link';
 import type { Article } from '@/lib/types';
 import { articlePhase } from '@/lib/types';
-import { CAROUSEL_TEMPLATES, type CarouselStatus, type CarouselTemplate, type GenerateProgress } from '@/lib/carousel';
+import {
+  SATORI_TEMPLATES,
+  type CarouselStatus, type CarouselTemplate, type GenerateProgress, type NowFamilySpec,
+} from '@/lib/carousel';
 
 function fmtTime(iso: string | null): string {
   if (!iso) return '';
@@ -31,31 +34,67 @@ export function SubContext({ article, status, savedAt }: { article: Article; sta
   );
 }
 
+// --- Template-pillen -------------------------------------------------------
+// Eén visuele taal voor beide plekken waar je een template kiest (de strip
+// boven de editor en het pre-generate-paneel). De Amsterdam NOW-families komen
+// uit het engine-manifest en staan altijd vóór de generieke satori-templates.
+
+function TemplatePill({
+  label, active, onClick, size = 'sm',
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+  size?: 'sm' | 'md';
+}) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        fontSize: 13, fontWeight: active ? 700 : 600,
+        padding: size === 'md' ? '9px 16px' : '7px 14px', borderRadius: 999,
+        background: active ? 'var(--ink)' : '#fff',
+        color: active ? '#fff' : 'var(--gray)',
+        border: active ? 'none' : '1px solid var(--border)',
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+function GroupLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--muted)' }}>
+      {children}
+    </span>
+  );
+}
+
+// Grijze placeholder-pillen terwijl het manifest nog laadt.
+function PillSkeleton({ width }: { width: number }) {
+  return <span style={{ width, height: 32, borderRadius: 999, background: 'var(--border-light)', display: 'inline-block' }} />;
+}
+
 export function TemplateStrip({
-  template, setTemplate, slideCount, generatedAt, onRegenerateAll,
+  template, setTemplate, families, slideCount, generatedAt, onRegenerateAll,
 }: {
   template: CarouselTemplate;
   setTemplate: (t: CarouselTemplate) => void;
+  families: NowFamilySpec[];
   slideCount: number;
   generatedAt: string | null;
   onRegenerateAll: () => void;
 }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 20px', borderBottom: '1px solid var(--border-light)', background: 'var(--sidebar)' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 20px', borderBottom: '1px solid var(--border-light)', background: 'var(--sidebar)', flexWrap: 'wrap' }}>
       <span style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--gray)' }}>Template</span>
-      {CAROUSEL_TEMPLATES.map(t => (
-        <button
-          key={t.key}
-          onClick={() => setTemplate(t.key)}
-          style={{
-            fontSize: 13, fontWeight: template === t.key ? 700 : 600, padding: '7px 14px', borderRadius: 999,
-            background: template === t.key ? 'var(--ink)' : '#fff',
-            color: template === t.key ? '#fff' : 'var(--gray)',
-            border: template === t.key ? 'none' : '1px solid var(--border)',
-          }}
-        >
-          {t.label}
-        </button>
+      {families.map(f => (
+        <TemplatePill key={f.templateId} label={f.label} active={template === f.templateId} onClick={() => setTemplate(f.templateId)} />
+      ))}
+      {families.length > 0 && <span style={{ width: 1, height: 20, background: 'var(--border-light)' }} />}
+      {SATORI_TEMPLATES.map(t => (
+        <TemplatePill key={t.key} label={t.label} active={template === t.key} onClick={() => setTemplate(t.key)} />
       ))}
       <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--gray)' }}>
         {slideCount} slides{generatedAt ? ` · gemaakt door Claude om ${fmtTime(generatedAt)}` : ''}
@@ -94,35 +133,69 @@ export function BottomBar({
   );
 }
 
+// Aantal slides hangt af van het gekozen template: een NOW-familie zegt zelf
+// hoe lang hij mag worden (een gids 4-10, een hotspot vast 5). Zonder keuze —
+// of bij een satori-template — houden we de oude tekst aan.
+function slidesSentence(spec: NowFamilySpec | null): string {
+  if (!spec) return 'Claude schrijft 5 slides uit dit artikel';
+  if (spec.minSlides === spec.maxSlides) return `Claude schrijft ${spec.minSlides} slides uit dit artikel`;
+  return `Claude schrijft ${spec.minSlides} tot ${spec.maxSlides} slides uit dit artikel`;
+}
+
 export function PreGeneratePanel({
-  template, setTemplate, onGenerate,
+  template, setTemplate, families, familiesLoading, familiesError, onGenerate,
 }: {
   template: CarouselTemplate | null;
   setTemplate: (t: CarouselTemplate) => void;
+  families: NowFamilySpec[];
+  familiesLoading: boolean;
+  familiesError: boolean;
   onGenerate: () => void;
 }) {
+  const chosenNow = families.find(f => f.templateId === template) || null;
+
   return (
     <div style={{ padding: '48px 32px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, textAlign: 'center' }}>
       <span style={{ fontSize: 16, fontWeight: 800 }}>Kies een template om te beginnen</span>
       <span style={{ fontSize: 13, color: 'var(--gray)', maxWidth: 420, lineHeight: 1.55 }}>
-        Claude schrijft 5 slides uit dit artikel — titel, intro, beelden zijn al bekend. Kies eerst een template.
+        {slidesSentence(chosenNow)} — titel, intro, beelden zijn al bekend. Kies eerst een template.
       </span>
-      <div style={{ display: 'flex', gap: 8 }}>
-        {CAROUSEL_TEMPLATES.map(t => (
-          <button
-            key={t.key}
-            onClick={() => setTemplate(t.key)}
-            style={{
-              fontSize: 13, fontWeight: template === t.key ? 700 : 600, padding: '9px 16px', borderRadius: 999,
-              background: template === t.key ? 'var(--ink)' : '#fff',
-              color: template === t.key ? '#fff' : 'var(--gray)',
-              border: template === t.key ? 'none' : '1px solid var(--border)',
-            }}
-          >
-            {t.label}
-          </button>
-        ))}
+
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+        <GroupLabel>Amsterdam NOW</GroupLabel>
+        {familiesLoading ? (
+          <div style={{ display: 'flex', gap: 8 }}>
+            <PillSkeleton width={96} />
+            <PillSkeleton width={78} />
+            <PillSkeleton width={110} />
+          </div>
+        ) : families.length > 0 ? (
+          <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', justifyContent: 'center', maxWidth: 620 }}>
+            {families.map(f => (
+              <span key={f.templateId} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, width: 150 }}>
+                <TemplatePill label={f.label} active={template === f.templateId} onClick={() => setTemplate(f.templateId)} size="md" />
+                <span style={{ fontSize: 11.5, color: 'var(--muted)', lineHeight: 1.45 }}>{f.purpose}</span>
+              </span>
+            ))}
+          </div>
+        ) : (
+          <span style={{ fontSize: 12, color: 'var(--muted)', maxWidth: 380, lineHeight: 1.5 }}>
+            {familiesError
+              ? 'De NOW-templates konden niet geladen worden — de generieke templates werken gewoon.'
+              : 'Geen NOW-templates beschikbaar in de socials-engine.'}
+          </span>
+        )}
       </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+        <GroupLabel>Algemeen</GroupLabel>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {SATORI_TEMPLATES.map(t => (
+            <TemplatePill key={t.key} label={t.label} active={template === t.key} onClick={() => setTemplate(t.key)} size="md" />
+          ))}
+        </div>
+      </div>
+
       <button className="btn-primary" disabled={!template} onClick={onGenerate} style={{ marginTop: 6 }}>
         Genereer carousel
       </button>

@@ -4,10 +4,11 @@ import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Article } from '@/lib/types';
 import {
-  getCarouselContent, generateCarousel, regenerateSlide,
+  getCarouselContent, getNowFamilies, generateCarousel, regenerateSlide,
   saveCarouselContent, flushCarouselSave, markReady, publishCarousel,
   EngineNotConfiguredError,
-  type CarouselContent, type CarouselSlide, type CarouselStatus, type CarouselTemplate, type GenerateProgress,
+  type CarouselContent, type CarouselSlide, type CarouselStatus, type CarouselTemplate,
+  type GenerateProgress, type NowFamilySpec,
 } from '@/lib/carousel';
 import { toast } from './toast';
 import CarouselSlidePreview from './CarouselSlidePreview';
@@ -32,6 +33,11 @@ export default function CarouselGenerator({ articleId }: { articleId: number }) 
   const [publishing, setPublishing] = useState(false);
   const [engineMissing, setEngineMissing] = useState(false);
   const [engineError, setEngineError] = useState('');
+  // NOW-families uit het engine-manifest: één keer ophalen bij mount, daarna
+  // read-only. Mislukt het, dan blijven de generieke templates gewoon werken.
+  const [families, setFamilies] = useState<NowFamilySpec[]>([]);
+  const [familiesLoading, setFamiliesLoading] = useState(true);
+  const [familiesError, setFamiliesError] = useState(false);
   const cancelled = useRef(false);
 
   const load = useCallback(async () => {
@@ -60,6 +66,15 @@ export default function CarouselGenerator({ articleId }: { articleId: number }) 
   }, [articleId]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    let alive = true;
+    getNowFamilies()
+      .then(fs => { if (alive) setFamilies(fs); })
+      .catch(() => { if (alive) setFamiliesError(true); })
+      .finally(() => { if (alive) setFamiliesLoading(false); });
+    return () => { alive = false; };
+  }, []);
 
   // Openstaande (gedebouncede) autosave wegschrijven bij het verlaten van de
   // pagina, zodat de laatste toetsaanslagen niet verloren gaan.
@@ -161,6 +176,10 @@ export default function CarouselGenerator({ articleId }: { articleId: number }) 
   if (loadError) return <LoadErrorPanel message={loadError} />;
   if (!article) return <div style={{ padding: 40, fontSize: 13, color: 'var(--gray)' }}>Laden…</div>;
 
+  // Manifest-spec van het gekozen template — null bij een satori-carousel.
+  // Preview en editor lezen hieruit welke slidetypes/tokens er bestaan.
+  const nowSpec = families.find(f => f.templateId === template) || null;
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: 'calc(100vh - 53px)' }}>
       <SubContext article={article} status={status} savedAt={savedAt} />
@@ -184,12 +203,20 @@ export default function CarouselGenerator({ articleId }: { articleId: number }) 
       ) : genError ? (
         <GenerateErrorPanel message={genError} onRetry={runGenerate} />
       ) : !content ? (
-        <PreGeneratePanel template={template} setTemplate={setTemplate} onGenerate={runGenerate} />
+        <PreGeneratePanel
+          template={template}
+          setTemplate={setTemplate}
+          families={families}
+          familiesLoading={familiesLoading}
+          familiesError={familiesError}
+          onGenerate={runGenerate}
+        />
       ) : (
         <>
           <TemplateStrip
             template={template || 'modern-news'}
             setTemplate={setTemplate}
+            families={families}
             slideCount={content.slides.length}
             generatedAt={savedAt}
             onRegenerateAll={runGenerate}
@@ -200,10 +227,13 @@ export default function CarouselGenerator({ articleId }: { articleId: number }) 
               currentIndex={slideIndex}
               onSelect={setSlideIndex}
               kicker={[article.category, article.district].filter(Boolean).join(' · ').toUpperCase() || 'AMSTERDAM'}
+              nowSpec={nowSpec}
+              articleId={article.id}
             />
             <CarouselSlideEditor
               content={content}
               slideIndex={slideIndex}
+              nowSpec={nowSpec}
               onChangeSlide={patchSlide}
               onRegenerateSlide={doRegenerateSlide}
               regenerating={regenBusy}
