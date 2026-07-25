@@ -86,9 +86,11 @@ const GENERIEKE_BEELDTOKENS = new Set([
   'grote', 'kleine', 'nieuwe', 'oude', 'mooie', 'shutterstock', 'gettyimages', 'adobe',
 ]);
 
-// WordPress hangt bij een bewerkt beeld een revisie-achtervoegsel aan de
-// bestandsnaam (`-e1612345678`). Dat is een tijdstempel, geen onderwerp.
-const WP_REVISIE_TOKEN = /^e\d{8,}$/;
+// Bestandsnamen die verraden dat het beeld geen redactionele foto is maar een
+// schermafbeelding. Dat is een echte bevinding — screenshots als artikelbeeld
+// kwamen uit de handmatige audit van 25-07-2026 — maar een andere dan "dit
+// beeld hoort bij een ander onderwerp".
+const SCREENSHOT_PATROON = /(screen[\s_-]?shot|schermafbeelding|schermafdruk)/i;
 
 // ---------------------------------------------------------------------------
 // Kleine, lokale helpers. Bewust eigen kopieën: de generatie heeft
@@ -387,8 +389,14 @@ export function fileNameTokens(bestandsnaam: string): string[] {
   const out: string[] = [];
   for (const t of tokens) {
     if (t.length < 5) continue;
-    if (/^\d+$/.test(t) || /^\d+x\d+$/.test(t)) continue;
-    if (WP_REVISIE_TOKEN.test(t)) continue;
+    // Alleen letterreeksen tellen als aanwijzing voor een ánder onderwerp.
+    // Alles met een cijfer erin is een tijdstempel, een formaat of een
+    // cameravolgnummer: `screenshot2025`, `23at16`, `852x1024`, `e1612345678`,
+    // `img20240101`. Die leverden meldingen op als "de bestandsnaam bevat de
+    // term 23at16, dat wijst op een ander onderwerp" — pure ruis, en ruis maakt
+    // een auditrapport waardeloos. Een venuenaam mét cijfer (Studio80) raken we
+    // hiermee kwijt als signaal; dat is de goede kant om fout te zitten.
+    if (!/^\p{L}+$/u.test(t)) continue;
     if (GENERIEKE_BEELDTOKENS.has(t)) continue;
     if (!out.includes(t)) out.push(t);
   }
@@ -442,7 +450,26 @@ async function fetchImageBytes(url: string): Promise<ClaudeImage | null> {
   }
 }
 
-async function imageCheck(article: Article): Promise<AuditFindingInput[]> {
+// Namen van de ándere artikelen op het bord, als losse letterreeksen. Komt zo'n
+// naam voor in een bestandsnaam hier, dan is het beeld aantoonbaar van een
+// ander onderwerp — dat is het verschil tussen een harde bevinding en een
+// vermoeden.
+function onderwerpenVanAndereArtikelen(article: Article, board: Article[]): Set<string> {
+  const uit = new Set<string>();
+  for (const other of board) {
+    if (other.id === article.id) continue;
+    const naam = normalize([other.naam_locatie, other.title].filter(Boolean).join(' '));
+    for (const woord of naam.split(' ')) {
+      if (woord.length < 5) continue;
+      if (!/^\p{L}+$/u.test(woord)) continue;
+      if (GENERIEKE_BEELDTOKENS.has(woord)) continue;
+      uit.add(woord);
+    }
+  }
+  return uit;
+}
+
+async function imageCheck(article: Article, board: Article[]): Promise<AuditFindingInput[]> {
   const images = collectImages(article);
   if (!images.length) {
     return [{
@@ -452,20 +479,48 @@ async function imageCheck(article: Article): Promise<AuditFindingInput[]> {
   }
 
   const findings: AuditFindingInput[] = [];
+  const andereOnderwerpen = onderwerpenVanAndereArtikelen(article, board);
 
-  // --- Deterministisch signaal 1: bestandsnaam wijst naar een ander onderwerp.
-  // Vóór de vision-call, want dit heeft geen model nodig en is een hárd
-  // signaal: staat er een merknaam in de bestandsnaam die nergens in het
-  // artikel voorkomt, dan is het beeld vrijwel zeker hergebruikt van een
-  // ander onderwerp.
+  // --- Deterministisch signaal 1: de bestandsnaam noemt een ander onderwerp.
+  // Vóór de vision-call, want dit heeft geen model nodig.
+  //
+  // Twee lessen uit de praktijk zitten hierin verwerkt. (a) Alleen een
+  // letterreeks telt als aanwijzing; tijdstempels en formaten als
+  // `screenshot2025`, `23at16` of `852x1024` leverden meldingen op die niets
+  // betekenden. (b) "Ik kan deze term niet terugvinden in de titel" is zwakker
+  // bewijs dan het klinkt: fotograafnamen en buurtnamen halen dezelfde toets.
+  // Daarom is het pas een `fout` als de term de naam van een ánder artikel op
+  // het bord is (dan is het beeld aantoonbaar hergebruikt, zoals het
+  // Awakenings-beeld bij het Dekmantel-artikel); anders `twijfel`.
   const haystack = normalize([article.title, article.naam_locatie, ...(article.tags || [])].filter(Boolean).join(' '));
   const haystackWords = haystack.split(' ').filter(Boolean);
   for (const img of images) {
     const vreemd = fileNameTokens(img.bestandsnaam).filter(t => !tokenAppearsIn(t, haystack, haystackWords));
     if (!vreemd.length) continue;
+    const anderOnderwerp = vreemd.filter(t => andereOnderwerpen.has(t));
+    if (anderOnderwerp.length) {
+      findings.push({
+        kind: 'beeld', verdict: 'fout', onderwerp: `${img.rol}: bestandsnaam`,
+        bevinding: `De bestandsnaam "${img.bestandsnaam}" noemt ${anderOnderwerp.map(t => `"${t}"`).join(', ')}, en dat is het onderwerp van een ander artikel op het bord. Dit beeld lijkt hergebruikt.`,
+        bron: img.ref.url,
+      });
+      continue;
+    }
     findings.push({
-      kind: 'beeld', verdict: 'fout', onderwerp: `${img.rol}: bestandsnaam`,
-      bevinding: `De bestandsnaam "${img.bestandsnaam}" bevat ${vreemd.length === 1 ? 'de term' : 'de termen'} ${vreemd.map(t => `"${t}"`).join(', ')}, die niet in de titel, de locatienaam of de tags van dit artikel voorkomt. Dat wijst op een beeld van een ander onderwerp.`,
+      kind: 'beeld', verdict: 'twijfel', onderwerp: `${img.rol}: bestandsnaam`,
+      bevinding: `De bestandsnaam "${img.bestandsnaam}" bevat ${vreemd.length === 1 ? 'de term' : 'de termen'} ${vreemd.map(t => `"${t}"`).join(', ')}, ${vreemd.length === 1 ? 'die' : 'die'} niet terugkomt in de titel, de locatienaam of de tags. Meestal onschuldig (fotograaf, buurt, pandnaam), maar controleer of het beeld echt bij dit artikel hoort.`,
+      bron: img.ref.url,
+    });
+  }
+
+  // --- Deterministisch signaal 1b: het beeld is een schermafbeelding. Geen
+  // verkeerd onderwerp, wél een beeldkwaliteitsprobleem: in de handmatige
+  // audit van 25-07-2026 stonden er twee als artikelbeeld op het bord.
+  for (const img of images) {
+    if (!SCREENSHOT_PATROON.test(img.bestandsnaam)) continue;
+    findings.push({
+      kind: 'beeld', verdict: 'twijfel', onderwerp: `${img.rol}: schermafbeelding`,
+      bevinding: `De bestandsnaam "${img.bestandsnaam}" wijst op een schermafbeelding in plaats van een redactionele foto. Controleer of dit beeld goed genoeg is om te publiceren.`,
       bron: img.ref.url,
     });
   }
@@ -673,7 +728,7 @@ export async function auditOneArticle(postId: number): Promise<AuditFindingInput
   // beelden ophalen), en ze raken elkaar niet.
   const [claims, beelden, tekst] = await Promise.all([
     runCheck('claim', 'Claimcheck', () => claimCheck(article)),
-    runCheck('beeld', 'Beeldcheck', () => imageCheck(article)),
+    runCheck('beeld', 'Beeldcheck', () => imageCheck(article, board)),
     runCheck('tekst', 'Tekstcontrole', () => textIntegrityCheck(article, board)),
   ]);
   return [...claims, ...beelden, ...tekst];

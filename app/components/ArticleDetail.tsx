@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Article, BoardData, ImageCandidate, ListArticleStructure, MediaRef } from '@/lib/types';
 import { articlePhase, imageCount, listImagesReady, REQUIRED_IMAGES } from '@/lib/types';
 import { buildCredit } from '@/lib/credit';
+import { hostOf, runTime, sortFindings, verdictStyle, VerdictBadge, type AuditFinding } from './AuditPanel';
 import { toast } from './toast';
 
 function allMedia(a: Article): MediaRef[] {
@@ -13,6 +14,25 @@ function allMedia(a: Article): MediaRef[] {
 }
 
 type UploadTarget = 'featured' | 'slider' | 'inline' | number; // number = item-index van een lijstartikel
+
+// Het auditoordeel van dít artikel (GET /api/audit/by-post?postId=…). Een 404
+// betekent gewoon "nooit geauditeerd" — dan tonen we niets, geen foutmelding.
+interface ArticleAudit {
+  verdict: 'ok' | 'twijfel' | 'fout';
+  geauditeerdOp: string | null;
+  findings: AuditFinding[];
+}
+
+function normalizeAudit(body: any): ArticleAudit | null {
+  const v = body?.verdict;
+  if (v !== 'ok' && v !== 'twijfel' && v !== 'fout') return null;
+  const raw = Array.isArray(body?.findings) ? body.findings : [];
+  return {
+    verdict: v,
+    geauditeerdOp: typeof body?.geauditeerdOp === 'string' ? body.geauditeerdOp : null,
+    findings: raw.filter((f: any) => f && typeof f === 'object'),
+  };
+}
 
 export default function ArticleDetail({ id }: { id: number }) {
   const router = useRouter();
@@ -34,6 +54,7 @@ export default function ArticleDetail({ id }: { id: number }) {
   const [website, setWebsite] = useState('');
   const [candidates, setCandidates] = useState<ImageCandidate[]>([]);
   const [suggestPhase, setSuggestPhase] = useState('');   // '' = niet bezig
+  const [audit, setAudit] = useState<ArticleAudit | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const uploadRole = useRef<UploadTarget>('slider');
 
@@ -70,6 +91,18 @@ export default function ArticleDetail({ id }: { id: number }) {
   }, [id]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Het auditoordeel van dit artikel. Eén keer ophalen, geen polling: een 404
+  // (nooit geauditeerd) en elke andere fout leiden allebei tot "toon niets".
+  useEffect(() => {
+    let stop = false;
+    setAudit(null);
+    fetch(`/api/audit/by-post?postId=${id}`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(body => { if (!stop) setAudit(normalizeAudit(body)); })
+      .catch(() => { /* geen auditblok, verder niets aan de hand */ });
+    return () => { stop = true; };
+  }, [id]);
 
   // Eerder gevonden kandidaat-beelden meteen tonen bij openen van het scherm.
   useEffect(() => {
@@ -474,6 +507,7 @@ export default function ArticleDetail({ id }: { id: number }) {
         {/* artikel-preview */}
         <div style={{ flex: 1, minWidth: 0, overflowY: 'auto', background: 'var(--card)', padding: '24px 44px', borderRight: '1px solid var(--border-light)' }}>
           <div style={{ maxWidth: 620, display: 'flex', flexDirection: 'column', gap: 13 }}>
+            {audit && <AuditBlock audit={audit} />}
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <span style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--red)' }}>
                 {article.category || 'Geen categorie'}
@@ -930,6 +964,103 @@ export default function ArticleDetail({ id }: { id: number }) {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Auditbevindingen bij dit artikel. Bij `fout` een opvallend kader dat meteen
+// openstaat — dit is de plek waar je het probleem ook repareert. Bij `ok` één
+// regel zonder kader: geauditeerd en niets gevonden hoeft geen ruimte te vragen.
+// De opmaak van de bevindingen is die van AuditPanel (zelfde helpers).
+function AuditBlock({ audit }: { audit: ArticleAudit }) {
+  const zwaar = audit.verdict === 'fout' || audit.verdict === 'twijfel';
+  const [open, setOpen] = useState(zwaar);
+  const s = verdictStyle(audit.verdict);
+  const when = runTime(audit.geauditeerdOp);
+  const findings = sortFindings(audit.findings);
+  const fout = findings.filter(f => f.verdict === 'fout').length;
+  const twijfel = findings.filter(f => f.verdict === 'twijfel').length;
+
+  const toggle = findings.length > 0 && (
+    <span
+      role="button"
+      tabIndex={0}
+      onClick={() => setOpen(v => !v)}
+      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(v => !v); } }}
+      style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--gray)', textDecoration: 'underline', cursor: 'pointer', marginLeft: 'auto' }}
+    >
+      {open ? 'verbergen' : `${findings.length} bevinding${findings.length === 1 ? '' : 'en'} tonen`}
+    </span>
+  );
+
+  const lijst = open && (
+    findings.length === 0 ? (
+      <div style={{ fontSize: 12, color: 'var(--gray)' }}>Geen losse bevindingen vastgelegd.</div>
+    ) : (
+      <ul style={{ margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 9 }}>
+        {findings.map((f, i) => (
+          <li key={i} style={{ borderLeft: `2px solid ${verdictStyle(f.verdict).color}`, paddingLeft: 9, lineHeight: 1.45 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
+              <VerdictBadge verdict={f.verdict} small />
+              <span style={{ fontSize: 12.5, fontWeight: 700 }}>{f.onderwerp || 'Bevinding'}</span>
+              {f.kind && <span style={{ fontSize: 10.5, color: 'var(--muted)', fontFamily: 'var(--mono)' }}>{f.kind}</span>}
+            </div>
+            {f.bevinding && <div style={{ fontSize: 12, color: 'var(--text-soft)', marginTop: 2 }}>{f.bevinding}</div>}
+            {f.bron && /^https?:\/\//.test(f.bron) && (
+              <a
+                href={f.bron}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ fontSize: 11.5, color: 'var(--gray)', textDecoration: 'underline', wordBreak: 'break-all' }}
+              >
+                bron: {hostOf(f.bron)} ↗
+              </a>
+            )}
+            {f.bron && !/^https?:\/\//.test(f.bron) && (
+              <div style={{ fontSize: 11.5, color: 'var(--gray)' }}>bron: {f.bron}</div>
+            )}
+          </li>
+        ))}
+      </ul>
+    )
+  );
+
+  // ok: geen kader, geen kleurvlak — alleen een regel dat de auditor langs is
+  // geweest, met de bevindingen achter een klik.
+  if (!zwaar) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--green-dark)' }}>
+          🔎 Auditor: niets aangetroffen
+        </span>
+        {when && <span style={{ fontSize: 11.5, color: 'var(--muted)' }}>{when}</span>}
+        {toggle}
+        {open && <div style={{ width: '100%', marginTop: 4 }}>{lijst}</div>}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      style={{
+        border: `1px solid ${audit.verdict === 'fout' ? 'var(--red-border)' : 'var(--amber-border)'}`,
+        background: s.bg, borderRadius: 10, padding: '12px 14px',
+        display: 'flex', flexDirection: 'column', gap: 9,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 13, fontWeight: 800, color: s.color }}>
+          {audit.verdict === 'fout' ? '⚠ Auditor vond een fout' : '⚠ Auditor twijfelt'}
+        </span>
+        {fout > 0 && <VerdictBadge verdict="fout" small />}
+        {twijfel > 0 && <VerdictBadge verdict="twijfel" small />}
+        {when && <span style={{ fontSize: 11.5, color: 'var(--gray)' }}>gecontroleerd {when}</span>}
+        {toggle}
+      </div>
+      <div style={{ fontSize: 12, color: 'var(--text-soft)', lineHeight: 1.45 }}>
+        Een tweede paar ogen met eigen bronnen. Corrigeer de tekst in WordPress of vervang het beeld hiernaast.
+      </div>
+      {lijst}
     </div>
   );
 }
