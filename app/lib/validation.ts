@@ -1,4 +1,4 @@
-import type { ListConstraints, StandaardConstraints } from './types';
+import type { ListConstraints, StandaardConstraints, WordRange } from './types';
 
 export type GeneratedArticle = {
   title: string; subregel: string; introductie_tekst: string; content: string; quote: string;
@@ -209,14 +209,53 @@ export function validateListArticle(article: GeneratedListArticle, config: ListC
   return meldingen;
 }
 
-export function validateArticle(article: GeneratedArticle, topic: string, config: StandaardConstraints, promptExamples: string[] = []) {
+// ---------- standaardartikelen ----------
+
+// Constraint-JSON wordt versiebeheerd in de database: een actieve rij kan van
+// vóór een veld-uitbreiding stammen en dus velden missen die de code intussen
+// verwacht. Lezen gaat daarom altijd via deze helpers, met een veilige
+// terugval. Een oude constraint-versie mag de validatie nooit laten crashen —
+// dat zou de hele pipeline blokkeren op een puur redactionele instelling.
+type LooseStandaard = StandaardConstraints & Partial<{
+  sparseContentWords: WordRange;
+  quoteSourceBlacklist: string[];
+}>;
+
+// Het "sparse"-bereik: het kortere woordenaantal dat geldt als de research te
+// dun bleef. Waarom dit bestaat: het harde minimum van 400 woorden dwong de
+// schrijf-agent om te vullen, en dat vullen wás de bron van de verzonnen
+// details. Liever 260 onderbouwde woorden dan 400 met opvulling. Ontbreekt het
+// veld (oude constraint-versie), dan valt de regel terug op contentWords en
+// gedraagt de validatie zich exact als voorheen.
+function sparseContentRange(config: StandaardConstraints): WordRange {
+  return (config as LooseStandaard).sparseContentWords ?? config.contentWords;
+}
+
+// De blacklist van bronnen waar geen quote uit mag komen (concurrerende
+// stadsgidsen). Ontbreekt hij in de standaard-constraints, dan blokkeert hij
+// niets in plaats van te crashen.
+export function standaardQuoteSourceBlacklist(config: StandaardConstraints): string[] {
+  return (config as LooseStandaard).quoteSourceBlacklist ?? [];
+}
+
+// opts.sparse = true → de sufficiëntie-poort heeft vastgesteld dat de research
+// te dun is voor een volwaardig artikel. Alle overige regels blijven onverkort
+// gelden; alleen de lengte-eis voor de hoofdtekst wordt verruimd naar beneden.
+export function validateArticle(
+  article: GeneratedArticle,
+  topic: string,
+  config: StandaardConstraints,
+  promptExamples: string[] = [],
+  opts?: { sparse?: boolean },
+) {
   range('Titel', article.title, config.titleWords.min, config.titleWords.max);
   if (article.title.length > config.titleMaxChars) {
     throw new Error(`Titel is ${article.title.length} tekens; maximaal ${config.titleMaxChars}.`);
   }
   range('Subregel', article.subregel, config.subregelWords.min, config.subregelWords.max);
   range('Introductie', article.introductie_tekst, config.introWords.min, config.introWords.max);
-  range('Artikeltekst', article.content, config.contentWords.min, config.contentWords.max);
+  const contentRange = opts?.sparse ? sparseContentRange(config) : config.contentWords;
+  range('Artikeltekst', article.content, contentRange.min, contentRange.max);
   range('Quote', article.quote, config.quoteWords.min, config.quoteWords.max);
   if (config.titleMustContainTopic && !subjectInTitle(article.title, topic)) {
     // Noem de vereiste naam letterlijk: deze melding wordt als afkeurreden aan
@@ -238,7 +277,12 @@ export function validateArticle(article: GeneratedArticle, topic: string, config
   if (config.noAmsterdamRepeatInTitleSubregelIntro && /\bAmsterdam\b/i.test(`${article.title} ${article.subregel} ${article.introductie_tekst}`)) {
     throw new Error('Amsterdam mag niet in titel, subregel of introductie staan.');
   }
-  if (article.content.split(/\n\s*\n/).filter(Boolean).length < config.minParagraphs) {
-    throw new Error(`Artikeltekst moet uit minimaal ${config.minParagraphs} alinea's bestaan.`);
+  // Bij dunne research schrijft het model bewust korter (250 i.p.v. 400+
+  // woorden). Vijf alinea's afdwingen betekent dan alinea's van vijftig
+  // woorden, of erger: opvullen om het quotum te halen. Precies wat de
+  // sparse-modus moet voorkomen, dus de eis zakt mee naar drie.
+  const minAlineas = opts?.sparse ? Math.min(3, config.minParagraphs) : config.minParagraphs;
+  if (article.content.split(/\n\s*\n/).filter(Boolean).length < minAlineas) {
+    throw new Error(`Artikeltekst moet uit minimaal ${minAlineas} alinea's bestaan.`);
   }
 }

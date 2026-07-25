@@ -3,6 +3,12 @@ type TavilyResponse = { results?: TavilyResult[]; detail?: string; message?: str
 
 export type ResearchSource = { title: string; url: string; content: string };
 
+// Elke fase-stap moet binnen de 60s serverless-limiet blijven. Zonder timeout
+// kan één hangende Tavily-call de hele tik over die grens duwen, waarna de
+// fail-open-catch in writer.ts niet eens meer wordt bereikt en het topic een
+// lease-cyclus verliest. 15s is ruim voor een advanced search.
+const TAVILY_TIMEOUT_MS = 15_000;
+
 // Resultaat van researchWithTavily: de bronnen én de gedetecteerde officiële
 // origin (site-root) van het onderwerp, of null als die niet te bepalen was.
 // De caller (writer.ts) gebruikt officialUrl om research.website te overschrijven
@@ -61,18 +67,27 @@ function looksOfficial(url: string, tokens: string[]): boolean {
   }
 }
 
-export async function researchWithTavily(topic: string): Promise<ResearchResult> {
+// opts stuurt de aanvullende researchronde (writer.ts stepResearchAanvullend):
+// die zoekt gericht op wat de eerste ronde niet vond ("<naam> <stad>
+// openingstijden") in plaats van breed op het onderwerp, met een kleinere
+// resultatenset omdat er dan al bronnen liggen. Zonder opts is het gedrag
+// exact als voorheen — de eerste ronde mag hier niets van merken.
+export async function researchWithTavily(
+  topic: string,
+  opts?: { query?: string; maxResults?: number },
+): Promise<ResearchResult> {
   const apiKey = process.env.TAVILY_API_KEY;
   if (!apiKey) throw new Error('Tavily is niet geconfigureerd. Voeg TAVILY_API_KEY toe aan de omgevingsvariabelen.');
 
   const res = await fetch('https://api.tavily.com/search', {
     method: 'POST',
+    signal: AbortSignal.timeout(TAVILY_TIMEOUT_MS),
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
-      query: `${topic} Amsterdam`,
+      query: opts?.query || `${topic} Amsterdam`,
       topic: 'general',
       search_depth: 'advanced',
-      max_results: 5,
+      max_results: opts?.maxResults ?? 5,
       include_raw_content: 'markdown',
     }),
     cache: 'no-store',
@@ -97,11 +112,17 @@ export async function researchWithTavily(topic: string): Promise<ResearchResult>
   // looksOfficial haalt; haalt niets dat, dan tóch de origin van het eerste
   // niet-aggregator zoekresultaat (best passende kandidaat) — die mag nooit
   // gemist worden. De gekozen origin geven we ook naar buiten (officialUrl).
+  // Bij een eigen query (aanvullende ronde) slaan we dit over: de homepage is
+  // in ronde 1 al gecrawld en staat al bij de bewaarde bronnen, dus een tweede
+  // extract-call zou alleen tijd kosten binnen dezelfde 60s-tik. officialUrl
+  // blijft dan null; de caller heeft die in ronde 2 niet meer nodig.
   const tokens = topicTokens(topic);
   const resultUrls = results.map(r => r.url).filter((u): u is string => !!u);
-  const chosen = resultUrls.find(u => looksOfficial(u, tokens))
-    ?? resultUrls.find(u => !isAggregatorHost(u))
-    ?? null;
+  const chosen = opts?.query
+    ? null
+    : resultUrls.find(u => looksOfficial(u, tokens))
+      ?? resultUrls.find(u => !isAggregatorHost(u))
+      ?? null;
   let officialUrl: string | null = null;
   let homepage: ResearchSource | null = null;
   if (chosen) {
@@ -137,6 +158,7 @@ export async function extractPageText(url: string): Promise<string> {
     try {
       const res = await fetch('https://api.tavily.com/extract', {
         method: 'POST',
+        signal: AbortSignal.timeout(TAVILY_TIMEOUT_MS),
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
         body: JSON.stringify({ urls: [url], extract_depth: 'basic' }),
         cache: 'no-store',
@@ -153,6 +175,7 @@ async function plainFetchText(url: string): Promise<string> {
   let res: Response;
   try {
     res = await fetch(url, {
+      signal: AbortSignal.timeout(TAVILY_TIMEOUT_MS),
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AmsterdamNOW-bronscanner)' },
       cache: 'no-store',
     });

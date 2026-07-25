@@ -12,7 +12,8 @@
     "test:tag": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/tag.test.mjs",
     "test:medianame": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/medianame.test.mjs",
     "test:imagename": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/imagename.test.mjs",
-    "test:promptexample": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/promptexample.test.mjs"
+    "test:promptexample": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/promptexample.test.mjs",
+    "test:research": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/research.test.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",

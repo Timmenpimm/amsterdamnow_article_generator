@@ -3,9 +3,12 @@ import { askClaudeJson, FAST_WRITE_MODEL, TITLE_MODEL } from './claude';
 import { RESEARCH_SCHEMA, ARTICLE_SCHEMA, SEO_SCHEMA, ENTITY_VERIFY_SCHEMA, QUOTE_REWRITE_SCHEMA } from './schemas';
 import { createDraft, singleTag, taxonomyChoices } from './wp';
 import { checkTopicAgainstWp } from './dedup';
-import { researchWithTavily } from './tavily';
-import { validateArticle, checkTitle, extractPromptExamples, findPromptExampleLeak, GeneratedArticle } from './validation';
-import { parseStandaardState, type Article, type StandaardConstraints, type StandaardPhase, type StandaardState, type Topic, type WordRange } from './types';
+import { researchWithTavily, type ResearchSource } from './tavily';
+// GeneratedArticle expliciet als type importeren: de testrunner draait op
+// --experimental-strip-types en die kan een type niet als waarde-import
+// oplossen ("does not provide an export named GeneratedArticle").
+import { validateArticle, checkTitle, quoteSourceAllowed, extractPromptExamples, findPromptExampleLeak, type GeneratedArticle } from './validation';
+import { DEFAULT_STANDAARD_CONSTRAINTS, parseStandaardState, type Article, type StandaardConstraints, type StandaardPhase, type StandaardState, type Topic, type WordRange } from './types';
 import { formatStandardArticleHtml } from './articleHtml';
 import { decodeHtmlEntities } from './htmlEntities';
 import { amsterdamToday, eventEndReference, isPastEvent } from './eventDate';
@@ -28,6 +31,15 @@ import { amsterdamToday, eventEndReference, isPastEvent } from './eventDate';
 const WRITE_MAX_TOKENS = 4500;
 // Maximaal aantal herschrijfrondes na de eerste schrijfpoging.
 const MAX_SCHRIJF_HERKANSINGEN = 2;
+// Hoeveel bronnen en hoeveel tekst per bron er mee mogen naar de schrijffase.
+// De schrijver krijgt sinds de anti-hallucinatie-fix niet alleen de
+// research-JSON maar ook de brontekst, zodat elk detail herleidbaar is. Dat
+// moet wél binnen de tokenruimte van de schrijfcall passen: 4 × 4000 tekens is
+// ruwweg 4000 tokens invoer, naast prompt, regels en research-JSON. Ruimer
+// maakt de call trager en riskeert de 60s-functielimiet; krapper haalt juist
+// de concrete details weg die verzinsels moeten voorkomen.
+const MAX_WRITE_SOURCES = 4;
+const WRITE_SOURCE_CHARS = 4000;
 
 function string(value: unknown, label: string): string {
   if (typeof value !== 'string' || !value.trim()) throw new Error(`Claude liet ${label} leeg.`);
@@ -68,8 +80,13 @@ function optionalIsoDate(value: unknown): string {
 // Woordaantallen mikken op het midden van de bandbreedte: het model telt niet
 // exact, dus wie op de ondergrens mikt valt er regelmatig onder — precies de
 // fout die topics op "mislukt" zette.
-function describeStandaardConstraints(c: StandaardConstraints, naam: string): string {
+// Bij sparse (dunne research, ook na de aanvullende ronde) geldt het kortere
+// sparseContentWords-bereik. Het harde minimum van 400 woorden was de motor
+// achter de verzinsels: wie te weinig feiten heeft en tóch die lengte moet
+// halen, vult het verschil met fictie. Dan liever een kort, kloppend artikel.
+function describeStandaardConstraints(c: StandaardConstraints, naam: string, opts?: { sparse?: boolean }): string {
   const mid = (r: WordRange) => Math.round((r.min + r.max) / 2);
+  const contentWords = opts?.sparse ? c.sparseContentWords : c.contentWords;
   // De titelcheck (validateArticle) eist de naam létterlijk; zeg het model dus
   // precies welke tekenreeks er in de titel moet, niet alleen "de naam van het
   // onderwerp" — daar maakte het model zelf een kortere variant van (bv.
@@ -78,12 +95,146 @@ function describeStandaardConstraints(c: StandaardConstraints, naam: string): st
     `- Titel: ${c.titleWords.min}-${c.titleWords.max} woorden${c.titleMustContainTopic ? `, met daarin letterlijk: "${naam}"` : ''}.`,
     `- Subregel: ${c.subregelWords.min}-${c.subregelWords.max} woorden.`,
     `- Introductie: ${c.introWords.min}-${c.introWords.max} woorden; mik op ~${mid(c.introWords)}.`,
-    `- Artikeltekst: ${c.contentWords.min}-${c.contentWords.max} woorden; mik op ~${mid(c.contentWords)}, verdeeld over minimaal ${c.minParagraphs} alinea's. Schrijf liever iets te ruim dan te krap.`,
+    `- Artikeltekst: ${contentWords.min}-${contentWords.max} woorden; mik op ~${mid(contentWords)}, verdeeld over minimaal ${c.minParagraphs} alinea's.${opts?.sparse ? ' Er is weinig harde research: blijf aan de ONDERKANT van dit bereik en rek de tekst niet op.' : ' Schrijf liever iets te ruim dan te krap.'}`,
     `- Quote: ${c.quoteWords.min}-${c.quoteWords.max} woorden${c.quoteMustBeVerbatimInContent ? ', en woord voor woord letterlijk terug te vinden in de artikeltekst' : ''}.`,
   ];
   if (c.noDashInText) lines.push('- Geen em dash (—) of en dash (–), nergens.');
   if (c.noAmsterdamRepeatInTitleSubregelIntro) lines.push('- Het woord "Amsterdam" mag níet in titel, subregel of introductie staan.');
   return lines.join('\n');
+}
+
+// Oudere constraint-versies in de database missen de anti-hallucinatie-velden
+// (minFactScore, sparseContentWords, quoteSourceBlacklist, quotePreferSource).
+// db.ts merget de actieve versie al met de codedefaults, maar die merge zit
+// buiten dit bestand: één gemiste default zou hier een TypeError geven
+// (constraints.sparseContentWords.min) en daarmee een topic laten crashen dat
+// al middenin de pipeline zit. Deze regel is de goedkope garantie dat dat niet
+// kan — een oude actieve versie mag de pipeline nooit breken.
+async function standaardConstraints(): Promise<StandaardConstraints> {
+  return { ...DEFAULT_STANDAARD_CONSTRAINTS, ...(await activeConstraints('standaard')) };
+}
+
+// Sufficiëntie-score van de research: hoeveel concrete haakjes heeft de
+// schrijver om een artikel op te hangen? De audit liet zien dat verzinsels
+// vrijwel altijd ontstaan bij research die er compleet uitziet (alle velden
+// bestaan) maar leeg is (bijna alle velden leeg of eenregelig). Deze telling
+// maakt dat verschil meetbaar:
+//
+// - de vijf feitenlijsten (key_people, distinctive_features,
+//   product_or_menu_highlights, company_facts, space_and_building) tellen elk
+//   1 punt als ze gevuld zijn en 2 punten vanaf 3 items — drie of meer items
+//   is het verschil tussen "er is íets" en "hier kan een alinea van";
+// - de vier kernvelden (adres, website, concept_description, samenvatting)
+//   tellen elk 1 punt als ze niet leeg zijn.
+//
+// Maximum is dus 14; de drempel staat in constraints.minFactScore (default 5).
+export function researchFactScore(research: Record<string, unknown> | null | undefined): number {
+  const r = research ?? {};
+  const lists = ['key_people', 'distinctive_features', 'product_or_menu_highlights', 'company_facts', 'space_and_building'];
+  const singles = ['adres', 'website', 'concept_description', 'samenvatting'];
+  let score = 0;
+  for (const key of lists) {
+    const value = Array.isArray(r[key]) ? (r[key] as unknown[]).filter(v => typeof v === 'string' && v.trim()) : [];
+    if (value.length >= 3) score += 2;
+    else if (value.length >= 1) score += 1;
+  }
+  for (const key of singles) {
+    if (optionalString(r[key])) score += 1;
+  }
+  return score;
+}
+
+// Bronnen klaarmaken voor bewaren in de topic-state: hooguit MAX_WRITE_SOURCES
+// stuks, elk afgekapt op WRITE_SOURCE_CHARS. De state gaat als JSON de database
+// in en komt bij élke fase-tik weer mee, dus ongelimiteerd bewaren zou zowel de
+// schrijfcall als de wachtrij-tikken onnodig zwaar maken.
+function trimSources(sources: ResearchSource[]): { title: string; url: string; content: string }[] {
+  return sources.slice(0, MAX_WRITE_SOURCES).map(src => ({
+    title: src.title,
+    url: src.url,
+    content: (src.content || '').slice(0, WRITE_SOURCE_CHARS),
+  }));
+}
+
+// Neemt de quote uit de research alleen over als er écht een uitspraak mét
+// bron staat én die bron niet op de blacklist staat (concurrerende stadsgidsen
+// citeren is de facto overschrijven). Alles wat niet aan die vorm voldoet
+// wordt null: geen quote is beter dan een quote van onduidelijke herkomst.
+function acceptBronQuote(value: unknown, constraints: StandaardConstraints): StandaardState['bronQuote'] {
+  if (!value || typeof value !== 'object') return null;
+  const q = value as Record<string, unknown>;
+  const tekst = optionalString(q.tekst);
+  const bron = optionalString(q.bron);
+  const herkomst = optionalString(q.herkomst);
+  if (!tekst || !bron) return null;
+  // Een bronquote mét em/en dash is onbruikbaar: "neem letterlijk over" botst
+  // dan frontaal met het dash-verbod uit validateArticle, en omdat de retry
+  // dezelfde instructie krijgt zou zo'n quote het topic gegarandeerd op
+  // "mislukt" zetten. Krantencitaten bevatten die streepjes regelmatig.
+  if (/[—–]/.test(tekst)) return null;
+  if (!quoteSourceAllowed(bron, constraints.quoteSourceBlacklist, herkomst)) return null;
+  return { tekst, bron, herkomst };
+}
+
+// Attributie onder de pull-quote, maar alleen als de gekozen quote écht de
+// uitspraak uit de bron ís. Paste de bronquote niet in het quote-veld, dan
+// koos de schrijver een eigen redactiezin; die toeschrijven aan een echt
+// persoon is erger dan helemaal geen bronvermelding.
+function bronAttributie(s: StandaardState, quote: string): string | undefined {
+  const q = s.bronQuote;
+  if (!q?.herkomst) return undefined;
+  const normaliseer = (v: string) => decodeHtmlEntities(v).replace(/[""'']/g, '"').replace(/\s+/g, ' ').trim().toLocaleLowerCase('nl-NL');
+  return normaliseer(q.tekst) === normaliseer(quote) ? q.herkomst : undefined;
+}
+
+// Lijst met wat de research NIET vond, defensief uit onbekende JSON.
+function missingFactsOf(research: Record<string, unknown>): string[] {
+  const raw = research.missing_facts;
+  if (!Array.isArray(raw)) return [];
+  return raw.map(v => (typeof v === 'string' ? v.trim() : '')).filter(Boolean);
+}
+
+// De brontekst zoals de schrijffase 'm krijgt. Dit is de kern van de
+// anti-hallucinatie-fix: zonder brontekst kende de schrijver alleen de
+// samengevatte research-JSON en vulde hij de gaten daartussen zelf in.
+function describeSources(s: StandaardState): string {
+  const sources = s.researchSources ?? [];
+  if (!sources.length) return '';
+  const blocks = sources.map((src, i) => `[B${i + 1}] ${src.title}\n${src.url}\n${src.content}`).join('\n\n');
+  return [
+    '',
+    'BRONTEKST (letterlijk uit de gecontroleerde bronnen):',
+    blocks,
+    '',
+    'HARDE REGEL: elk concreet detail in het artikel (namen, aantallen, materialen, herkomst, openingstijden, prijzen, jaartallen) moet herleidbaar zijn tot de research-JSON hierboven of tot deze brontekst. Staat het er niet, schrijf het dan niet. Liever een zin minder dan een verzonnen detail.',
+  ].join('\n');
+}
+
+// Instructie voor de quote. Staat er een echte uitspraak in de bronnen, dan
+// gaat die letterlijk het artikel in — een citaat van een betrokkene is
+// precies wat de schrijver anders zelf verzint. Twee smaken, omdat de
+// quoteWords-regel (25-40 woorden) hard door validateArticle wordt getoetst:
+// past de bronquote binnen dat bereik, dan is 'ie óók het quote-veld (en blijft
+// de verbatim-controle vanzelf kloppen); is 'ie korter of langer, dan zou dat
+// elke poging laten afkeuren, dus dan hoort de uitspraak wél in de lopende
+// tekst maar kiest de schrijver het quote-veld zoals gebruikelijk.
+function describeQuoteInstruction(s: StandaardState, c: StandaardConstraints): string {
+  const q = s.bronQuote;
+  if (!q || !c.quotePreferSource) return '';
+  const attributie = q.herkomst ? `, zegt ${q.herkomst}` : ' (met attributie aan de bron)';
+  const woorden = wordCount(q.tekst);
+  const past = woorden >= c.quoteWords.min && woorden <= c.quoteWords.max;
+  return [
+    '',
+    // Kop en veldnaam volgen letterlijk de schrijf-prompt (bron_quote), anders
+    // verwijst de prompt naar iets dat in de user-message anders heet.
+    'BRON_QUOTE (echte uitspraak uit de bronnen, verplicht gebruiken):',
+    `"${q.tekst}"${q.herkomst ? `, ${q.herkomst}` : ''} (bron: ${q.bron})`,
+    `Neem deze quote LETTERLIJK, woord voor woord, op in de lopende tekst mét attributie ("…"${attributie}).`,
+    past
+      ? 'Gebruik exact diezelfde zin ook als "quote"-veld. Verzin geen andere quote.'
+      : `Deze uitspraak is ${woorden} woorden en past niet in het quote-veld (${c.quoteWords.min}-${c.quoteWords.max} woorden); kies daarvoor zoals gebruikelijk een pakkende zin uit je eigen artikeltekst.`,
+  ].join('\n');
 }
 
 export interface StandaardStepResult {
@@ -104,10 +255,12 @@ export interface StandaardStepResult {
 export async function processStandaardStep(topic: Topic): Promise<StandaardStepResult> {
   const s = parseStandaardState(topic) ?? {};
   const phase: StandaardPhase =
-    topic.phase === 'schrijf' || topic.phase === 'schrijf-retry' || topic.phase === 'seo' ? topic.phase : 'research';
+    topic.phase === 'research-aanvullend' || topic.phase === 'schrijf' || topic.phase === 'schrijf-retry' || topic.phase === 'seo'
+      ? topic.phase : 'research';
   try {
     switch (phase) {
       case 'research': return await stepResearch(topic, s);
+      case 'research-aanvullend': return await stepResearchAanvullend(topic, s);
       case 'schrijf': return await stepSchrijf(topic, s);
       case 'schrijf-retry': return await stepSchrijfRetry(topic, s);
       case 'seo': return await stepSeo(topic, s);
@@ -204,7 +357,9 @@ async function polishTitle(article: GeneratedArticle, s: StandaardState, naam: s
 }
 
 async function stepResearch(topic: Topic, s: StandaardState): Promise<StandaardStepResult> {
-  const [researchPrompt, taxonomies] = await Promise.all([activePrompt('research'), taxonomyChoices()]);
+  const [researchPrompt, taxonomies, constraints] = await Promise.all([
+    activePrompt('research'), taxonomyChoices(), standaardConstraints(),
+  ]);
   const { sources, officialUrl } = await researchWithTavily(topic.title);
   // Research = feiten extraheren uit aangeleverde bronnen, geen creatief werk:
   // Sonnet 5 volstaat en kost een fractie van Opus (zie FAST_WRITE_MODEL in
@@ -247,8 +402,138 @@ async function stepResearch(topic: Topic, s: StandaardState): Promise<StandaardS
   // staan. Moet vóór saveTopicProgress zodat de gecorrigeerde staat wordt bewaard.
   const homepageContent = officialUrl ? (sources.find(src => src.url === officialUrl)?.content ?? '') : '';
   await verifyEntity(s, officialUrl, homepageContent);
+  // Bronnen, gaten en score bewaren voor de volgende fases: de schrijver krijgt
+  // de brontekst mee (zie describeSources) en de sufficiëntie-poort hieronder
+  // heeft de score nodig.
+  s.researchSources = trimSources(sources);
+  s.missingFacts = missingFactsOf(research);
+  s.factScore = researchFactScore(research);
+  s.researchRounds = 1;
+  s.bronQuote = acceptBronQuote(research.quote, constraints);
+  // Sufficiëntie-poort: te dunne research ging tot nu toe gewoon door naar de
+  // schrijffase, waar het model het tekort opvulde met verzonnen details. Nu
+  // is er een weg terug naar Tavily — hooguit één keer (researchRounds).
+  if (s.factScore < constraints.minFactScore && (s.researchRounds ?? 1) < 2) {
+    await saveTopicProgress(topic.id, { status: 'queued', phase: 'research-aanvullend', state: s });
+    return { topic, phase: 'research-aanvullend', done: false, progress: `Research te dun (${s.factScore}/${constraints.minFactScore}) · extra ronde` };
+  }
   await saveTopicProgress(topic.id, { status: 'queued', phase: 'schrijf', state: s });
   return { topic, phase: 'schrijf', done: false, progress: 'Research klaar · schrijven start' };
+}
+
+// Aanvullende researchronde: gericht zoeken op wat de eerste ronde niet vond.
+// Bewust bescheiden binnen de 60s-limiet — hooguit twee Tavily-calls en één
+// Claude-call — en volledig fail-open: gaat hier iets mis, dan schrijven we met
+// wat we al hebben, want het topic heeft al bruikbare research.
+async function stepResearchAanvullend(topic: Topic, s: StandaardState): Promise<StandaardStepResult> {
+  if (!s.research) throw new Error('Research ontbreekt voor de aanvullende researchronde.');
+  const r = s.research as Record<string, unknown>;
+  const constraints = await standaardConstraints();
+  let gevonden = 0;
+  try {
+    const naam = optionalString(r.naam_locatie) || topic.title;
+    // Adres is specifieker dan de stad (twee vestigingen met dezelfde naam), dus
+    // die krijgt voorrang als plaatsbepaling in de zoekterm.
+    const plaats = optionalString(r.adres) || optionalString(r.stad) || 'Amsterdam';
+    // Hooguit twee queries: elke query is een Tavily-call van enkele seconden.
+    // Zonder bekende gaten vallen we terug op de twee dingen die vrijwel elk
+    // artikel nodig heeft en die het vaakst ontbraken: praktische info en een
+    // uitspraak van een betrokkene.
+    const gaten = (s.missingFacts ?? []).slice(0, 2);
+    const queries = (gaten.length ? gaten.map(gat => `${naam} ${plaats} ${gat}`) : [
+      `${naam} ${plaats} openingstijden`,
+      `${naam} interview eigenaar`,
+    ]).slice(0, 2);
+
+    // De twee zoekopdrachten tegelijk: ze zijn onafhankelijk, en er moet in
+    // deze tik ook nog een Claude-extractie bij binnen de 60s. allSettled i.p.v.
+    // all, want een mislukte tweede query mag de opbrengst van de eerste niet
+    // weggooien. Dedupliceren gebeurt daarna in queryvolgorde, zodat de uitkomst
+    // niet afhangt van welke call het eerst terug is.
+    const uitkomsten = await Promise.allSettled(
+      queries.map(query => researchWithTavily(topic.title, { query, maxResults: 3 })),
+    );
+    const bekend = new Set((s.researchSources ?? []).map(src => src.url.replace(/\/+$/, '').toLowerCase()));
+    const nieuw: ResearchSource[] = [];
+    for (const uitkomst of uitkomsten) {
+      if (uitkomst.status !== 'fulfilled') continue;
+      for (const src of uitkomst.value.sources) {
+        const key = src.url.replace(/\/+$/, '').toLowerCase();
+        if (bekend.has(key)) continue;
+        bekend.add(key);
+        nieuw.push(src);
+      }
+    }
+    gevonden = nieuw.length;
+
+    if (nieuw.length) {
+      const bestaand = s.researchSources ?? [];
+      const nieuwGetrimd = trimSources(nieuw);
+      const [researchPrompt, taxonomies] = await Promise.all([activePrompt('research'), taxonomyChoices()]);
+      const alle = [...bestaand, ...nieuwGetrimd];
+      const extra = await askClaudeJson(
+        researchPrompt.content,
+        `Onderwerp: ${topic.title}\n\nVandaag is ${amsterdamToday()} (Europe/Amsterdam).\n\nBeschikbare WordPress-categorieën: ${taxonomies.categories.join(', ')}\nBeschikbare WordPress-districten: ${taxonomies.districts.join(', ')}\nBeschikbare WordPress-tags: ${taxonomies.tags.join(', ')}\nKies precies één "tag" uit deze lijst: de best passende. Verzin nooit een nieuwe tag. Past geen enkele bestaande tag echt goed, geef dan "" terug.\n\nDit is een AANVULLENDE ronde: er is al research gedaan, maar deze feiten ontbraken nog: ${(s.missingFacts ?? []).join(', ') || '(niet gespecificeerd)'}. Let vooral op die punten. Verzin nooit iets: staat het niet in de bronnen, laat het veld leeg en zet het in "missing_facts".\n\nBronnen:\n${alle.map((src, i) => `\n[${i + 1}] ${src.title}\n${src.url}\n${src.content}`).join('\n')}`,
+        FAST_WRITE_MODEL, 6000, RESEARCH_SCHEMA,
+      );
+      mergeResearch(r, extra);
+      // missing_facts van de tweede ronde is de actuelere lijst: die is
+      // opgesteld tegen álle bronnen samen.
+      s.missingFacts = missingFactsOf(extra);
+      if (!s.bronQuote) s.bronQuote = acceptBronQuote(extra.quote, constraints);
+      // Bewaarde bronnen blijven begrensd op MAX_WRITE_SOURCES (tokenruimte van
+      // de schrijfcall). De eerste twee van ronde 1 blijven staan — daar zit de
+      // officiële homepage bij, de betrouwbaarste bron — daarna krijgen de
+      // nieuwe bronnen voorrang, en pas als er dan nog plek is de rest van
+      // ronde 1.
+      s.researchSources = [...bestaand.slice(0, 2), ...nieuwGetrimd, ...bestaand.slice(2)].slice(0, MAX_WRITE_SOURCES);
+    }
+  } catch {
+    // FAIL-OPEN: we schrijven met de research van ronde 1.
+  }
+  // Altijd door naar schrijven, nooit een derde ronde.
+  s.researchRounds = 2;
+  s.factScore = researchFactScore(s.research as Record<string, unknown>);
+  await saveTopicProgress(topic.id, { status: 'queued', phase: 'schrijf', state: s });
+  return {
+    topic, phase: 'schrijf', done: false,
+    progress: `Aanvullende research (${gevonden} extra bron${gevonden === 1 ? '' : 'nen'}, score ${s.factScore}) · schrijven start`,
+  };
+}
+
+// Merge-regel van de aanvullende ronde: AANVULLEN, nooit overschrijven. De
+// eerste ronde zag de officiële homepage en is door de entiteitsverificatie
+// gekomen; de tweede ronde zoekt op deelaspecten en is dus per definitie
+// minder gezaghebbend over de kern. Datumvelden en website blijven daarom
+// volledig buiten schot: de event-poort en createDraft leunen erop, en de
+// homepage-detectie van ronde 1 (officialUrl) is de betere bron.
+// 'categories' hoort hier ook thuis: het is een array, maar géén feitenlijst
+// die je mag aanvullen. Ronde 2 zou er een tweede categorie bij kunnen zetten
+// en die belandt via createDraft echt in WordPress.
+const NOOIT_OVERSCHRIJVEN = new Set(['start_datum', 'eind_datum', 'website', 'categories']);
+
+function mergeResearch(doel: Record<string, unknown>, extra: Record<string, unknown>): void {
+  for (const [key, value] of Object.entries(extra)) {
+    if (NOOIT_OVERSCHRIJVEN.has(key)) continue;
+    if (key === 'quote' || key === 'missing_facts') continue; // apart afgehandeld
+    if (Array.isArray(value)) {
+      const nieuw = value.filter(v => typeof v === 'string' && v.trim()).map(v => (v as string).trim());
+      const huidig = Array.isArray(doel[key]) ? (doel[key] as unknown[]).filter(v => typeof v === 'string' && (v as string).trim()).map(v => (v as string).trim()) : [];
+      // Toevoegen en dedupliceren (hoofdletterongevoelig), volgorde behouden.
+      const gezien = new Set(huidig.map(v => v.toLocaleLowerCase('nl-NL')));
+      for (const item of nieuw) {
+        const sleutel = item.toLocaleLowerCase('nl-NL');
+        if (gezien.has(sleutel)) continue;
+        gezien.add(sleutel);
+        huidig.push(item);
+      }
+      doel[key] = huidig;
+      continue;
+    }
+    if (typeof value === 'string') {
+      if (!optionalString(doel[key]) && value.trim()) doel[key] = value.trim();
+    }
+  }
 }
 
 export interface EntityVerifyInput {
@@ -323,20 +608,30 @@ async function verifyEntity(s: StandaardState, officialUrl: string | null, homep
   }
 }
 
+// Blijft de research ook ná de aanvullende ronde onder de drempel, dan mag het
+// artikel korter (sparseContentWords). Topics van vóór deze fix hebben geen
+// factScore in hun staat; die tellen nooit als dun en houden dus exact het
+// oude gedrag — een halverwege de pipeline hangend topic mag hier niets van
+// merken.
+function isSparseResearch(s: StandaardState, c: StandaardConstraints): boolean {
+  return typeof s.factScore === 'number' && s.factScore < c.minFactScore;
+}
+
 async function stepSchrijf(topic: Topic, s: StandaardState): Promise<StandaardStepResult> {
   if (!s.research) throw new Error('Research ontbreekt voor de schrijffase.');
-  const [writePrompt, constraints] = await Promise.all([activePrompt('schrijf'), activeConstraints('standaard')]);
-  const rules = describeStandaardConstraints(constraints, subjectName(topic, s));
+  const [writePrompt, constraints] = await Promise.all([activePrompt('schrijf'), standaardConstraints()]);
+  const sparse = isSparseResearch(s, constraints);
+  const rules = describeStandaardConstraints(constraints, subjectName(topic, s), { sparse });
   const payload = await askClaudeJson(
     writePrompt.content,
-    `Onderwerp: ${topic.title}\n\nGebruik uitsluitend deze gecontroleerde research van Tavily. Schrijf het artikel als geldige JSON volgens de actieve prompt.\n\nHoud je aan deze regels:\n${rules}\n\n${JSON.stringify(s.research)}`,
+    `Onderwerp: ${topic.title}\n\nGebruik uitsluitend deze gecontroleerde research van Tavily. Schrijf het artikel als geldige JSON volgens de actieve prompt.\n\nHoud je aan deze regels:\n${rules}\n\n${JSON.stringify(s.research)}${describeSources(s)}${describeQuoteInstruction(s, constraints)}`,
     FAST_WRITE_MODEL, WRITE_MAX_TOKENS, ARTICLE_SCHEMA,
   );
   try {
     const candidate = buildCandidate(payload);
     // Voorbeeldzinnen uit de actieve prompt zelf: het model mag ze niet
     // letterlijk overnemen (zie validation.ts extractPromptExamples).
-    validateArticle(candidate, subjectName(topic, s), constraints, extractPromptExamples(writePrompt.content));
+    validateArticle(candidate, subjectName(topic, s), constraints, extractPromptExamples(writePrompt.content), { sparse });
     // Titel apart, vrij (her)genereren voor meer punch — zie polishTitle. Nooit
     // slechter: valt terug op de zojuist gevalideerde titel als geen kandidaat
     // de keuring haalt.
@@ -358,17 +653,18 @@ async function stepSchrijf(topic: Topic, s: StandaardState): Promise<StandaardSt
 
 async function stepSchrijfRetry(topic: Topic, s: StandaardState): Promise<StandaardStepResult> {
   if (!s.research || !s.draftPayload || !s.rejectReason) throw new Error('Onvolledige staat voor de herschrijfronde.');
-  const [writePrompt, constraints] = await Promise.all([activePrompt('schrijf'), activeConstraints('standaard')]);
-  const rules = describeStandaardConstraints(constraints, subjectName(topic, s));
+  const [writePrompt, constraints] = await Promise.all([activePrompt('schrijf'), standaardConstraints()]);
+  const sparse = isSparseResearch(s, constraints);
+  const rules = describeStandaardConstraints(constraints, subjectName(topic, s), { sparse });
   const payload = await askClaudeJson(
     writePrompt.content,
-    `Je vorige versie van dit artikel is afgekeurd door de eindredactie.\n\nOnderwerp: ${topic.title}\nAfkeurreden: ${s.rejectReason}\n\nLever het VOLLEDIGE artikel opnieuw aan als JSON met exact dezelfde velden (title, subregel, introductie_tekst, content, quote). Los de afkeurreden op en houd de rest zoveel mogelijk intact. Alle regels blijven gelden:\n${rules}\n\nJe vorige versie:\n${JSON.stringify(s.draftPayload)}`,
+    `Je vorige versie van dit artikel is afgekeurd door de eindredactie.\n\nOnderwerp: ${topic.title}\nAfkeurreden: ${s.rejectReason}\n\nLever het VOLLEDIGE artikel opnieuw aan als JSON met exact dezelfde velden (title, subregel, introductie_tekst, content, quote). Los de afkeurreden op en houd de rest zoveel mogelijk intact. Alle regels blijven gelden:\n${rules}\n\nJe vorige versie:\n${JSON.stringify(s.draftPayload)}${describeSources(s)}${describeQuoteInstruction(s, constraints)}`,
     FAST_WRITE_MODEL, WRITE_MAX_TOKENS, ARTICLE_SCHEMA,
   );
   let checked: GeneratedArticle;
   try {
     checked = buildCandidate(payload);
-    validateArticle(checked, subjectName(topic, s), constraints, extractPromptExamples(writePrompt.content));
+    validateArticle(checked, subjectName(topic, s), constraints, extractPromptExamples(writePrompt.content), { sparse });
   } catch (e: any) {
     // Elke herkansing is sinds de fase-opsplitsing een eigen serverless-tick,
     // dus meerdere rondes kunnen veilig (zelfde patroon als composeAttempts in
@@ -414,7 +710,7 @@ async function stepSeo(topic: Topic, s: StandaardState): Promise<StandaardStepRe
     FAST_WRITE_MODEL, 6000, SEO_SCHEMA,
   );
   const draft = await createDraft({
-    title, subregel, intro, contentHtml: formatStandardArticleHtml(content, quote), quote,
+    title, subregel, intro, contentHtml: formatStandardArticleHtml(content, quote, bronAttributie(s, quote)), quote,
     focusKeyword: string(seo.rank_math_focus_keyword, 'rank_math_focus_keyword'),
     slug: string(seo.slug, 'slug'),
     seoTitle: string(seo.rank_math_title, 'rank_math_title'),

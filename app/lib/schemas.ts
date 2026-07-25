@@ -27,7 +27,7 @@ export const RESEARCH_SCHEMA: Record<string, unknown> = {
     'samenvatting', 'key_people', 'distinctive_features', 'product_or_menu_highlights',
     'company_facts', 'space_and_building', 'concept_description', 'categories',
     'district', 'tag', 'rubriek', 'naam_locatie', 'adres', 'stad', 'website',
-    'start_datum', 'eind_datum',
+    'start_datum', 'eind_datum', 'missing_facts', 'quote',
   ],
   properties: {
     samenvatting: { type: 'string' },
@@ -56,6 +56,35 @@ export const RESEARCH_SCHEMA: Record<string, unknown> = {
     // createDraft (wp.ts) zet dit om naar het ACF-formaat Ymd.
     start_datum: { type: 'string', description: 'Startdatum van het event als JJJJ-MM-DD, of "" als er geen concrete eventdatum in de bronnen staat.' },
     eind_datum: { type: 'string', description: 'Einddatum van het event als JJJJ-MM-DD (gelijk aan start_datum bij een eendaags event), of "" als er geen concrete eventdatum is.' },
+    // Sufficiëntie-poort: het model moet zélf benoemen wat het NIET heeft
+    // gevonden. Zonder dit veld vult de schrijfronde de gaten met verzonnen
+    // details; mét dit veld kan de pipeline gericht een tweede researchronde
+    // draaien op precies die ontbrekende punten.
+    missing_facts: {
+      ...STRING_ARRAY,
+      description: 'Feiten die je NIET in de bronnen kon vinden, in korte termen die direct als zoekopdracht bruikbaar zijn ("openingstijden", "naam van de eigenaar", "aantal zitplaatsen"). Lege array als je alles hebt gevonden. Verzin hier niets: dit veld bestaat juist om gaten zichtbaar te maken.',
+      // Het schema staat geen extra keys toe binnen items; de description hoort
+      // op het array-niveau (zie de schema-eisen bovenaan dit bestand).
+    },
+    // Echte-quote-pad: één LETTERLIJKE uitspraak uit de bronnen, of null.
+    // Nullable via anyOf met een null-variant, exact zoals LIST_VERIFY_SCHEMA
+    // dat doet — zo blijft het parsepad voor beide artikeltypes hetzelfde.
+    quote: {
+      description: 'Alleen een LETTERLIJKE uitspraak van een betrokkene die woord-voor-woord in de bronnen staat. Nooit parafraseren, nooit zelf formuleren, en nooit iets overnemen uit een concurrerende stadsgids. Geen echte quote gevonden? Geef null.',
+      anyOf: [
+        {
+          type: 'object',
+          additionalProperties: false,
+          required: ['tekst', 'bron', 'herkomst'],
+          properties: {
+            tekst: { type: 'string', description: 'De uitspraak, woord voor woord zoals die in de bron staat, zonder aanhalingstekens eromheen.' },
+            bron: { type: 'string', description: 'De URL van de bron waarin de uitspraak letterlijk staat.' },
+            herkomst: { type: 'string', description: 'Wie het zei en waar, bv. "eigenaar Lasse Jensen in Het Parool".' },
+          },
+        },
+        { type: 'null' },
+      ],
+    },
   },
 };
 

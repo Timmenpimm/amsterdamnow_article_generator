@@ -12,7 +12,11 @@ export type ListPhase = 'select' | 'verify' | 'review' | 'compose' | 'finalize';
 // 'schrijf-retry' is losgetrokken van 'schrijf': de validatie-herkansing was
 // zelf ook een 2e Claude-call binnen dezelfde aanroep en kon daardoor alsnog
 // over de 60s heen lopen (gezien op productie na de eerste fase-opsplitsing).
-export type StandaardPhase = 'research' | 'schrijf' | 'schrijf-retry' | 'seo';
+// 'research-aanvullend' is de weg terug naar Tavily: leverde de eerste ronde te
+// weinig harde feiten op, dan haalt deze fase gericht bronnen bij op de dingen
+// die ontbraken. Ook dat is een eigen fase-stap, om dezelfde reden: extra
+// Tavily-calls plus een tweede extractie passen niet meer in de research-tik.
+export type StandaardPhase = 'research' | 'research-aanvullend' | 'schrijf' | 'schrijf-retry' | 'seo';
 
 export interface ListItemState {
   naam: string;
@@ -94,6 +98,29 @@ export interface StandaardState {
   // entiteitConsistent undefined en de waarschuwing leeg.
   entiteitConsistent?: boolean;
   entiteitWaarschuwing?: string;
+  // De getrimde Tavily-bronnen van de research, bewaard tot in de schrijffase.
+  // De schrijver kreeg tot nu toe alleen de research-JSON en vulde de gaten
+  // daartussen met verzinsels (plafondhoogtes, nationaliteiten, sectienamen);
+  // met de brontekst erbij kan elk concreet detail herleid worden. Getrimd
+  // omdat de volledige bronnen (6 × 12.000 tekens) de schrijfcall over haar
+  // tokenruimte heen zouden duwen.
+  researchSources?: { title: string; url: string; content: string }[];
+  // Wat het model NIET in de bronnen kon vinden ("openingstijden", "namen van
+  // de eigenaren"). Stuurt de gerichte queries van de aanvullende ronde.
+  missingFacts?: string[];
+  // 1 of 2. Bewaakt dat de aanvullende research nooit twee keer draait: die
+  // ronde kost extra Tavily- en Claude-calls, en een derde ronde levert
+  // aantoonbaar niets meer op als de eerste twee al niks vonden.
+  researchRounds?: number;
+  // Sufficiëntie-score van de research (zie researchFactScore in writer.ts).
+  // Bepaalt zowel de poort naar de aanvullende ronde als het woordbereik van
+  // het artikel: dunne research hoort een korter artikel op te leveren, geen
+  // opgevulde 400 woorden.
+  factScore?: number;
+  // Letterlijke quote van een betrokkene uit de bronnen, mét bron-URL en wie
+  // het zei; null als er geen echte quote in de bronnen stond. Alleen gevuld
+  // als de bron door de quote-blacklist komt.
+  bronQuote?: { tekst: string; bron: string; herkomst?: string } | null;
 }
 
 export function parseStandaardState(topic: Topic): StandaardState | null {
@@ -262,6 +289,20 @@ export interface StandaardConstraints {
   quoteMustBeVerbatimInContent: boolean;
   noDashInText: boolean;
   noAmsterdamRepeatInTitleSubregelIntro: boolean;
+  // Drempel voor de sufficiëntie-poort na de research: haalt de research deze
+  // score niet, dan gaat de pipeline terug naar Tavily voor een aanvullende
+  // ronde (zie researchFactScore in writer.ts).
+  minFactScore: number;
+  // Woordbereik bij research die ook ná de aanvullende ronde dun blijft. Het
+  // harde minimum van 400 woorden was de directe aanleiding voor verzonnen
+  // details: wie te weinig feiten heeft en toch 400 woorden moet vullen, vult
+  // ze met fictie. Minder feiten hoort een korter artikel op te leveren.
+  sparseContentWords: WordRange;
+  // Bronnen waarvan we nooit een quote overnemen (concurrerende stadsgidsen).
+  quoteSourceBlacklist: string[];
+  // Heeft een echte, letterlijke quote uit de bronnen voorrang op een door de
+  // schrijver gekozen zin uit het eigen artikel?
+  quotePreferSource: boolean;
 }
 
 export interface ListConstraints {
@@ -296,6 +337,19 @@ export interface ConstraintVersion {
   active: 0 | 1;
 }
 
+// Concurrerende stadsgidsen en agenda-portalen: hun teksten zijn zelf redactie,
+// geen bron. Eén lijst voor beide pipelines, zodat lijst- en standaardartikelen
+// niet uit elkaar kunnen lopen zodra er een site bijkomt. Staat hierboven
+// DEFAULT_STANDAARD_CONSTRAINTS omdat een const pas ná zijn definitie
+// gelezen mag worden (DEFAULT_LIST_CONSTRAINTS staat verderop in dit bestand).
+const QUOTE_SOURCE_BLACKLIST: string[] = [
+  'ylbb', 'your little black book', 'yourlittleblackbook',
+  'bartsboekje', 'barts boekje',
+  'iamsterdam',
+  'time out', 'timeout',
+  'cityguys', 'dagjeweg', 'awesome amsterdam', 'amsterdamlokaal', 'kidsproof', 'roadbook',
+];
+
 export const DEFAULT_STANDAARD_CONSTRAINTS: StandaardConstraints = {
   titleWords: { min: 8, max: 12 },
   titleMaxChars: 70,
@@ -308,6 +362,10 @@ export const DEFAULT_STANDAARD_CONSTRAINTS: StandaardConstraints = {
   quoteMustBeVerbatimInContent: true,
   noDashInText: true,
   noAmsterdamRepeatInTitleSubregelIntro: true,
+  minFactScore: 5,
+  sparseContentWords: { min: 250, max: 450 },
+  quoteSourceBlacklist: QUOTE_SOURCE_BLACKLIST,
+  quotePreferSource: true,
 };
 
 // ---------- bronnen (agenda-scanner) ----------
@@ -406,13 +464,7 @@ export const DEFAULT_LIST_CONSTRAINTS: ListConstraints = {
     'opent zijn deuren', 'verwelkomt gasten', 'biedt een unieke ervaring',
     'mis het niet', 'een aanrader voor iedereen',
   ],
-  quoteSourceBlacklist: [
-    'ylbb', 'your little black book', 'yourlittleblackbook',
-    'bartsboekje', 'barts boekje',
-    'iamsterdam',
-    'time out', 'timeout',
-    'cityguys', 'dagjeweg', 'awesome amsterdam', 'amsterdamlokaal', 'kidsproof', 'roadbook',
-  ],
+  quoteSourceBlacklist: QUOTE_SOURCE_BLACKLIST,
   titleNoCount: true,
   subregelNoVanTotFormula: true,
   subregelNoAmsterdamRepeat: true,
