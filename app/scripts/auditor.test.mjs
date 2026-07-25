@@ -9,7 +9,7 @@
 // bijna elk artikel een onterechte fout kreeg. Een auditor die overal fout
 // roept is net zo waardeloos als een auditor die overal ok roept.
 import assert from 'node:assert/strict';
-import { fileNameTokens } from '../lib/auditor.ts';
+import { fileNameTokens, longSentences } from '../lib/auditor.ts';
 import { worstVerdict } from '../lib/types.ts';
 
 let passed = 0;
@@ -74,6 +74,35 @@ test('fileNameTokens: tokens korter dan vijf tekens vallen af', () => {
   // "bar" en "ja" zijn te kort om betrouwbaar iets te zeggen; alleen de
   // langere eigennaam blijft over.
   assert.deepEqual(fileNameTokens('bar-basquiat-ja.jpg'), ['basquiat']);
+});
+
+test('fileNameTokens: export-artefacten uit het CMS tellen niet mee', () => {
+  // Regressie voor de eerste echte auditrun: caption-5/6/7 leverden drie keer
+  // "de term caption komt niet in de titel voor" op. Waar, en betekenisloos.
+  assert.deepEqual(fileNameTokens('caption-5-1024x1024.jpg'), []);
+  assert.deepEqual(fileNameTokens('untitled-3.png'), []);
+});
+
+// ---------- pull-quote telt niet als dubbele zin ----------
+
+test('longSentences: de pull-quote in de blockquote telt niet mee', () => {
+  // De pull-quote staat per ontwerp twee keer in de HTML: als <blockquote> en
+  // op zijn plek in de lopende tekst (articleHtml.ts). De eerste echte
+  // auditrun meldde daardoor 3 van de 3 artikelen als "dubbele zin - fout".
+  const zin = 'Aan de andere kant van de zaak staan de flessen natuurwijn klaar voor de avond.';
+  const html = `<p>Inleidende zin die lang genoeg is om mee te tellen in deze test.</p>`
+    + `<blockquote><p>${zin}</p></blockquote>`
+    + `<p>${zin}</p>`;
+  const keys = longSentences(html).map(s => s.key);
+  const doelKey = keys.filter(k => k.includes('flessen natuurwijn'));
+  assert.equal(doelKey.length, 1, `de zin hoort één keer te tellen, kreeg ${doelKey.length}`);
+});
+
+test('longSentences: een zin die het model écht twee keer schreef telt wél dubbel', () => {
+  const zin = 'De wijnkaart is hier net zo serieus als de keuken van deze zaak.';
+  const html = `<p>${zin}</p><p>Een andere zin die lang genoeg is om mee te tellen hier.</p><p>${zin}</p>`;
+  const keys = longSentences(html).map(s => s.key).filter(k => k.includes('wijnkaart'));
+  assert.equal(keys.length, 2);
 });
 
 // ---------- worstVerdict ----------
