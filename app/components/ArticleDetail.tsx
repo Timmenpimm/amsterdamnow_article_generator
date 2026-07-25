@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Article, BoardData, ImageCandidate, ListArticleStructure, MediaRef } from '@/lib/types';
 import { articlePhase, imageCount, listImagesReady, REQUIRED_IMAGES } from '@/lib/types';
+import { buildCredit } from '@/lib/credit';
 import { toast } from './toast';
 
 function allMedia(a: Article): MediaRef[] {
@@ -203,7 +204,7 @@ export default function ArticleDetail({ id }: { id: number }) {
       if (!res.ok) throw new Error(data.error);
       setArticle(data.article);
       if (data.list) setList(data.list);
-      const credit = [c.author, c.source, c.license].filter(Boolean).join(' · ');
+      const credit = buildCredit(c);
       if (!fotograaf.trim() && credit) {
         setFotograaf(credit);
         await fetch(`/api/articles/${article.id}`, {
