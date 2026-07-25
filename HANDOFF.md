@@ -37,7 +37,7 @@ dedup-logica+hooks, UI — deze sessie deed fase 3/UI + verificatie).
 - **Concurrency-waarschuwing (herhaling van de les uit 20 juli):** `preview_start
   {name:"artikel-tool"}` startte in deze sessie ondanks een cwd in de
   worktree een `next dev`-proces met working directory
-  `/Users/martijn/Claude/amsterdamnow-artikel-tool/app` (de **primaire**
+  `~/Claude/amsterdamnow-artikel-tool/app` (de **primaire**
   checkout), niet de worktree. Direct gestopt zodra dat bleek (`lsof`/`ps` op
   poort 3400 controleren vóórdat je 'm vertrouwt) en vervangen door een
   handmatige `npm run dev -p 3400` met cwd expliciet in de worktree. Volgende
