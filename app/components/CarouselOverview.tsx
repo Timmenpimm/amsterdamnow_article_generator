@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import type { Article, BoardData } from '@/lib/types';
 import { articlePhase } from '@/lib/types';
-import { getCarouselMeta, type CarouselMeta } from '@/lib/carousel-mock';
+import { getCarouselMetas, emptyCarouselMeta, EngineNotConfiguredError, type CarouselMeta } from '@/lib/carousel';
 
 type Filter = 'all' | 'none' | 'published';
 
@@ -49,9 +49,12 @@ function rowAction(article: Article, meta: CarouselMeta) {
 export default function CarouselOverview() {
   const [data, setData] = useState<BoardData | null>(null);
   const [filter, setFilter] = useState<Filter>('all');
-  // meta komt uit de mock-store, dus we lezen 'm pas ná mount (client-only)
-  // en forceren een re-render zodra de gebruiker terugkomt van de generator.
+  // Carousel-status komt uit de socials-engine (batch via /api/carousel/status);
+  // we verversen 'm zodra de gebruiker terugkomt van de generator (focus-tick).
   const [tick, setTick] = useState(0);
+  const [metas, setMetas] = useState<Record<number, CarouselMeta> | null>(null);
+  const [engineMissing, setEngineMissing] = useState(false);
+  const [metaError, setMetaError] = useState('');
 
   useEffect(() => {
     fetch('/api/board').then(r => r.json()).then(setData).catch(() => {});
@@ -63,12 +66,29 @@ export default function CarouselOverview() {
     return () => window.removeEventListener('focus', onFocus);
   }, []);
 
-  const eligible = (data?.articles || [])
+  const eligibleArticles = (data?.articles || [])
     .filter(a => articlePhase(a) === 'published' || articlePhase(a) === 'ready')
-    .map(a => ({ article: a, meta: getCarouselMeta(a.id) }))
-    .sort((a, b) => +new Date(b.article.date) - +new Date(a.article.date));
+    .sort((a, b) => +new Date(b.date) - +new Date(a.date));
 
-  void tick; // gebruikt alleen om de mock-lookup opnieuw te draaien
+  const eligibleKey = eligibleArticles.map(a => a.id).join(',');
+
+  useEffect(() => {
+    if (!data) return;
+    const ids = eligibleKey ? eligibleKey.split(',').map(Number) : [];
+    if (ids.length === 0) { setMetas({}); return; }
+    let stale = false;
+    getCarouselMetas(ids)
+      .then(m => { if (!stale) { setMetas(m); setEngineMissing(false); setMetaError(''); } })
+      .catch(e => {
+        if (stale) return;
+        setMetas({});
+        if (e instanceof EngineNotConfiguredError) { setEngineMissing(true); setMetaError(''); }
+        else { setEngineMissing(false); setMetaError(e.message || 'Carousel-status kon niet geladen worden.'); }
+      });
+    return () => { stale = true; };
+  }, [data, eligibleKey, tick]);
+
+  const eligible = eligibleArticles.map(a => ({ article: a, meta: metas?.[a.id] ?? emptyCarouselMeta(a.id) }));
 
   const rows = eligible.filter(({ meta }) => {
     if (filter === 'none') return meta.status === 'none';
@@ -82,6 +102,20 @@ export default function CarouselOverview() {
         <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.01em' }}>Carousel</span>
         <span style={{ fontSize: 13, color: 'var(--gray)' }}>welke artikelen zijn Instagram-klaar</span>
       </div>
+
+      {engineMissing && (
+        <div className="card" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 18px', marginBottom: 14 }}>
+          <span style={{ fontSize: 13, fontWeight: 800 }}>Socials-engine niet gekoppeld</span>
+          <span style={{ fontSize: 12.5, color: 'var(--gray)' }}>De carousel-status kan niet geladen worden zonder koppeling.</span>
+          <Link href="/instellingen" className="btn-small" style={{ marginLeft: 'auto', flexShrink: 0 }}>Naar Instellingen → Instagram</Link>
+        </div>
+      )}
+      {metaError && (
+        <div className="card" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 18px', marginBottom: 14 }}>
+          <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--red-dark)' }}>{metaError}</span>
+          <button className="btn-small" style={{ marginLeft: 'auto', flexShrink: 0 }} onClick={() => setTick(t => t + 1)}>Opnieuw proberen</button>
+        </div>
+      )}
 
       {data && eligible.length === 0 ? (
         <div className="card" style={{ padding: '56px 32px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, textAlign: 'center' }}>
@@ -153,7 +187,11 @@ export default function CarouselOverview() {
                   {articlePhase(article) === 'published' ? 'Gepubliceerd' : 'Klaar v. publicatie'}
                 </span>
               </div>
-              <div style={{ width: 190, flexShrink: 0 }}>{carouselChip(meta)}</div>
+              <div style={{ width: 190, flexShrink: 0 }}>
+                {metas === null && !engineMissing && !metaError
+                  ? <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--muted)' }}>Status laden…</span>
+                  : carouselChip(meta)}
+              </div>
               <div style={{ width: 130, flexShrink: 0 }}>{rowAction(article, meta)}</div>
             </div>
           ))}

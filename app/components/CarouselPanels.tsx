@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import type { Article } from '@/lib/types';
 import { articlePhase } from '@/lib/types';
-import { CAROUSEL_TEMPLATES, type CarouselStatus, type CarouselTemplate, type GenerateProgress } from '@/lib/carousel-mock';
+import { CAROUSEL_TEMPLATES, type CarouselStatus, type CarouselTemplate, type GenerateProgress } from '@/lib/carousel';
 
 function fmtTime(iso: string | null): string {
   if (!iso) return '';
@@ -177,7 +177,7 @@ export function GenerateErrorPanel({ message, onRetry }: { message: string; onRe
         </span>
       </div>
       <div style={{ background: '#fff', border: '1px solid var(--red-border)', borderRadius: 8, padding: '10px 14px', fontSize: 12, fontFamily: 'var(--mono)', color: 'var(--red-dark)' }}>
-        socials-service · 504 gateway time-out · {fmtTime(new Date().toISOString())}
+        socials-engine · {fmtTime(new Date().toISOString())}
       </div>
       <div style={{ display: 'flex', gap: 10, marginTop: 2 }}>
         <button className="btn-primary" onClick={onRetry}>Opnieuw proberen</button>

@@ -4,7 +4,9 @@
 uitpluizen. Lees eerst dít bestand, importeer het verse design, diff de
 schermlabels tegen de tabel hieronder, en bouw alléén de delta.
 
-_Laatst bijgewerkt: 25 juli 2026 (koppelingen-panelen WordPress + Instagram in
+_Laatst bijgewerkt: 25 juli 2026 (carousel-mock vervangen door echte
+socials-engine-koppeling: `lib/carousel.ts` + proxyroutes `/api/carousel/*`,
+zie rij 4a-4d hieronder. Daarvoor: koppelingen-panelen WordPress + Instagram in
 Instellingen, incl. wp.ts-refactor naar async `getWpUrl()`/`isLive()`.
 Daarvoor: TURN 5 — Instellingen-redesign: rail + één
 paneel + versielade, schermen 5a/5b vervangen 2a/2b; nieuwe componenten
@@ -59,11 +61,11 @@ codewijziging._
 | — | Archief | `app/app/archief/page.tsx` |
 | **3a/3b/3c** | Bronnen (agenda-scanner) | `app/app/bronnen/page.tsx`; nav in `TopBar.tsx`; backend §4 |
 | toast | Meldingen | `app/components/toast.tsx` (`toast(...)` + `<ToastHost>` in `layout.tsx`) |
-| **4a** | Carousel-overzicht (welke artikelen zijn Instagram-klaar) | `app/components/CarouselOverview.tsx`; route `app/app/carousel/page.tsx`; nav in `TopBar.tsx` (na Archief) |
-| **4b** | Carousel-generator / editor (template kiezen, preview, slide-editor, caption/hashtags, klaarzetten/publiceren) | `app/components/CarouselGenerator.tsx` (orchestratie) + `CarouselSlidePreview.tsx` (swipebare preview/thumbstrip) + `CarouselSlideEditor.tsx` (rechterpaneel) + `CarouselPanels.tsx` (subcontext/template-strip/bottombar/modal, presentationeel); route `app/app/carousel/[articleId]/page.tsx`; instap-knop "Maak Instagram-carousel" in `ArticleDetail.tsx` (header, bij `status==='publish'` of `articlePhase===ready`) |
-| **4c** | Laadstaat (genereren) en publiceren-bevestigingsmodal | `CarouselPanels.tsx` (`LoadingPanel`, `PublishModal`), aangestuurd door `CarouselGenerator.tsx` |
-| **4d** | Lege staat (overzicht) & mislukte generatie (editor, met retry + toast) | leeg: `CarouselOverview.tsx`; fout: `CarouselPanels.tsx` (`GenerateErrorPanel`) |
-| — | Mock-contract socials-engine (nog niet gebouwd, zie briefing `docs/briefings/2026-07-21-instagram-carousel-pagina-briefing.md` §5/§6) | `app/lib/carousel-mock.ts` — `CarouselContent`/`CarouselMeta`, in-memory (reset bij page-reload); vervang deze file zodra de echte socials-service er is, componenten blijven ongewijzigd |
+| **4a** | Carousel-overzicht (welke artikelen zijn Instagram-klaar) | `app/components/CarouselOverview.tsx`; route `app/app/carousel/page.tsx`; nav in `TopBar.tsx` (na Archief). Status komt in één batch uit `GET /api/carousel/status?ids=…` (`getCarouselMetas` in `lib/carousel.ts`), ververst op window-focus; engine-niet-gekoppeld → banner met link naar Instellingen → Instagram |
+| **4b** | Carousel-generator / editor (template kiezen, preview, slide-editor, caption/hashtags, klaarzetten/publiceren) | `app/components/CarouselGenerator.tsx` (orchestratie; laadt meta+content async via `getCarouselContent`, autosave 800 ms gedebounced via `saveCarouselContent`/`flushCarouselSave`) + `CarouselSlidePreview.tsx` (swipebare preview/thumbstrip, DOM-gerenderd — géén PNG's) + `CarouselSlideEditor.tsx` (rechterpaneel) + `CarouselPanels.tsx` (subcontext/template-strip/bottombar/modal, presentationeel); route `app/app/carousel/[articleId]/page.tsx`; instap-knop "Maak Instagram-carousel" in `ArticleDetail.tsx` (header, bij `status==='publish'` of `articlePhase===ready`) |
+| **4c** | Laadstaat (genereren) en publiceren-bevestigingsmodal | `CarouselPanels.tsx` (`LoadingPanel`, `PublishModal`), aangestuurd door `CarouselGenerator.tsx`. De checklist-stappen lopen op een timer mee terwijl `POST /api/carousel/[articleId]/generate` op de engine wacht (`generateCarousel` in `lib/carousel.ts`) |
+| **4d** | Lege staat (overzicht) & mislukte generatie (editor, met retry + toast) | leeg: `CarouselOverview.tsx`; fout: `CarouselPanels.tsx` (`GenerateErrorPanel`); engine-niet-gekoppeld/onbereikbaar: banners in `CarouselOverview.tsx`/`CarouselGenerator.tsx` |
+| — | Socials-engine-koppeling (echte engine, verving de mock in juli 2026; briefing `docs/briefings/2026-07-21-instagram-carousel-pagina-briefing.md` §5/§6) | Client: `app/lib/carousel.ts` (types `CarouselContent`/`CarouselMeta`/…, carouselId-bewaring in module-state, `EngineNotConfiguredError`). Server-proxyroutes (Bearer-key blijft server-side, allemaal in `vercel.json`): `app/app/api/carousel/status` (batch-meta), `…/carousel/[articleId]` (GET nieuwste carousel per wordpressId, PATCH slides/caption/hashtags/status), `…/[articleId]/generate` (laadt artikel via `getArticle`, engine `POST /api/generate`), `…/[articleId]/slide` (één slide opnieuw), `…/[articleId]/publish` (zo nodig eerst PATCH → APPROVED, dan engine-publish, tot ~60s). Mapping engine↔tool in `app/lib/carouselEngine.ts` (DRAFT→concept, APPROVED/PUBLISHING/FAILED→ready, PUBLISHED→published; hashtags zónder #). Verbinding/instellingen: `app/lib/socialsEngine.ts` |
 
 ## 3. Design-tokens & stijl
 
