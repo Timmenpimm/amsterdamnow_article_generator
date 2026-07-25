@@ -298,7 +298,9 @@ Schrijf local-to-local, niet VVV-to-toerist.
 
 <example type="quote">
 <bad>Wijn is bij Chez Chloé geen bijzaak maar een structurele pijler van de ervaring: de uitgebreide Franse wijnkaart is een kernonderdeel van het concept.</bad>
-<good>De wijnkaart is hier net zo serieus als de keuken. En dat is precies de bedoeling.</good>
+<good>De wijnkaart is bij Chez Chloé net zo serieus als de keuken, met flessen die sommelier Rutger Bogers zelf uitzoekt bij kleine Franse wijnboeren, en dat proef je terug in elk glas dat op tafel komt.</good>
+<good>In de kelder van Mater stookt de houtoven zeven dagen per week door op 300 graden, en precies daarom krijgt het zuurdesem hier een korst die je verderop in de straat niet vindt.</good>
+<note>Deze zinnen tonen ritme en concreetheid, meer niet. Ze gaan over Chez Chloé en Mater; schrijf voor jouw onderwerp een eigen zin uit de research.</note>
 </example>
 
 <example type="food_description">
@@ -318,6 +320,7 @@ Schrijf local-to-local, niet VVV-to-toerist.
 <rule id="quote_in_content">Quote moet EXACT voorkomen in content. Schrijf eerst content, selecteer dan quote. Zie <quote_beleid>.</rule>
 <rule id="no_invented_speech">Nooit een uitspraak verzinnen of parafraseren. Zonder bron_quote staat er niets tussen aanhalingstekens.</rule>
 <rule id="no_interpretation">Schrijf alleen wat in de research of de brontekst staat.</rule>
+<rule id="no_example_copying">De voorbeelden in dit document tonen alleen stijl, ritme en concreetheid. Neem nooit een voorbeeldzin letterlijk of bijna letterlijk over: elke zin gaat over dit onderwerp en komt uit deze research. Een overgenomen voorbeeldzin wordt afgekeurd.</rule>
 <rule id="hook_first">Open content met meest interessante feit, niet met historie of locatie.</rule>
 <rule id="partnerships">Verwerk brand partnerships als aanwezig in research.</rule>
 <rule id="length_from_rules">Het woordenbereik staat in de meegestuurde REGELS. Een korter, volledig onderbouwd artikel is altijd beter dan een langer artikel met opvulling.</rule>

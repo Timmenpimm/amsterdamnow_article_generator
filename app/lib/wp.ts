@@ -3,6 +3,7 @@ import { DEMO_ARTICLES, DEMO_TOPICS } from './demo-seed';
 import { decodeHtmlEntities } from './htmlEntities';
 import { cleanCredit } from './credit';
 import { formatExistingStandardArticleHtml, hasEditorialFormatting } from './articleHtml';
+import { imageAltName, imageFileName, MEDIA_MIME_EXT, type ImageNameContext } from './mediaName';
 import type { Article, MediaRef } from './types';
 
 export const WP_URL = process.env.WP_URL || 'https://www.amsterdamnow.com';
@@ -87,10 +88,23 @@ const INLINE_FIGURE_RE = /\s*<figure class="an-inline">[\s\S]*?<\/figure>/i;
 // <blockquote>, dus louter </p> tellen zou het beeld een blok te laat plaatsen.
 const BLOCK_RE = /<(p|h[1-6]|blockquote|ul|ol|figure|pre|table)\b[^>]*>[\s\S]*?<\/\1>/gi;
 
-export function spliceInlineImage(html: string, media: MediaRef | null): string {
+// Attribuutwaarde veilig maken. Alt-teksten komen uit de mediabibliotheek en
+// kunnen dus alles bevatten wat een redacteur ooit in WordPress typte; zonder
+// escapen breekt één aanhalingsteken de hele figure-markup (en daarmee
+// parseInline hieronder).
+function escapeAttr(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// `alt` is optioneel: zonder waarde blijft het gedrag exact zoals het was
+// (alt=""), zodat bestaande aanroepers niets hoeven te weten van de
+// beeldnaamconventie. De attribuutvolgorde (class, src, alt) blijft bewust
+// ongewijzigd: parseInline pakt met /src="([^"]+)"/ het eerste src-attribuut,
+// en omdat de alt-waarde geëscaped is en ná src staat, blijft dat kloppen.
+export function spliceInlineImage(html: string, media: MediaRef | null, alt?: string): string {
   const stripped = (html || '').replace(INLINE_FIGURE_RE, '');
   if (!media) return stripped;
-  const fig = `<figure class="an-inline"><img class="wp-image-${media.id}" src="${media.url}" alt="" /></figure>`;
+  const fig = `<figure class="an-inline"><img class="wp-image-${media.id}" src="${media.url}" alt="${escapeAttr(alt || '')}" /></figure>`;
   // Eind-posities van top-level blokken; plaats de figure na het 2e blok
   // (= tussen de 2e en 3e alinea van de tekst).
   const ends: number[] = [];
@@ -246,6 +260,28 @@ export async function mediaDimensions(ids: number[]): Promise<Map<number, { widt
   return out;
 }
 
+// Haalt alleen de alt-teksten van media op. De mediabibliotheek is de enige
+// bron van waarheid voor de beeldnaam (bestandsnaam == slug == titel == alt,
+// zie de conventie bij setMediaMeta); wie het inline-beeld in de content
+// (her)schrijft, leest de alt hier op in plaats van zelf een naam te
+// verzinnen. Zelfde chunk-aanpak als mediaRefs/mediaDimensions hierboven:
+// media zonder (lege) alt_text komen niet in de map, zodat een aanroeper met
+// `?? ''` netjes op het oude gedrag terugvalt.
+export async function mediaAltTexts(ids: number[]): Promise<Map<number, string>> {
+  const out = new Map<number, string>();
+  if (!ids.length) return out;
+  const chunks: number[][] = [];
+  for (let i = 0; i < ids.length; i += 50) chunks.push(ids.slice(i, i + 50));
+  for (const chunk of chunks) {
+    const media = await wpFetch(`/wp/v2/media?include=${chunk.join(',')}&per_page=100&_fields=id,alt_text`);
+    for (const m of media) {
+      const alt = typeof m.alt_text === 'string' ? m.alt_text.trim() : '';
+      if (alt) out.set(m.id, alt);
+    }
+  }
+  return out;
+}
+
 async function mapPost(p: any, media: Record<number, MediaRef>): Promise<Article> {
   const acf = p.acf || {};
   const sliderIds: number[] = Array.isArray(acf.slider) ? acf.slider : [];
@@ -370,6 +406,9 @@ export async function updateImages(id: number, upd: ImageUpdate, known: MediaRef
     if (upd.sliderIds) a.slider = upd.sliderIds.map(i => pool.get(i)).filter(Boolean) as MediaRef[];
     if (upd.inlineId !== undefined) {
       a.inline = upd.inlineId == null ? null : pool.get(upd.inlineId) || null;
+      // Demo-modus heeft geen mediabibliotheek om de alt uit te lezen en mag
+      // daar ook geen WP-call voor doen; het beeld krijgt dus alt="" — precies
+      // het gedrag van vóór deze wijziging.
       a.contentHtml = spliceInlineImage(a.contentHtml, a.inline);
     }
     if (upd.fotograaf !== undefined) a.fotograaf = cleanCredit(upd.fotograaf);
@@ -388,9 +427,23 @@ export async function updateImages(id: number, upd: ImageUpdate, known: MediaRef
   if (upd.inlineId !== undefined) {
     const cur = await wpFetch(`/wp/v2/posts/${id}?context=edit&_fields=content`);
     const media = upd.inlineId == null ? null : (known.find(m => m.id === upd.inlineId) || null);
+    // Alt-tekst uit de mediabibliotheek halen in plaats van hier een naam te
+    // verzinnen: zo staat in de content exact dezelfde string als bij het
+    // media-item (de conventie uit setMediaMeta) en krijgt ook beeld dat
+    // eerder al geüpload was alsnog een kloppende alt. Nice-to-have, dus een
+    // mislukte lookup mag de content-write nooit tegenhouden — dan valt het
+    // beeld terug op alt="" (het oude gedrag).
+    let alt = '';
+    if (media) {
+      try {
+        alt = (await mediaAltTexts([media.id])).get(media.id) || '';
+      } catch (err) {
+        console.warn(`[wp] Alt-tekst van media #${media.id} niet opgehaald: ${err instanceof Error ? err.message : err}`);
+      }
+    }
     // Strip meteen het taxonomie-linkblok mee (consistent met de andere
     // schrijf-paden), zodat we dat niet opnieuw vastleggen bij het inline-write.
-    body.content = stripTaxonomyFooter(spliceInlineImage(cur?.content?.raw ?? cur?.content?.rendered ?? '', media));
+    body.content = stripTaxonomyFooter(spliceInlineImage(cur?.content?.raw ?? cur?.content?.rendered ?? '', media, alt));
   }
   await wpFetch(`/wp/v2/posts/${id}`, { method: 'POST', body: JSON.stringify(body) });
   return getArticle(id);
@@ -751,7 +804,47 @@ export async function createDraft(draft: GeneratedDraft): Promise<Article> {
 
 const DEMO_UPLOAD_LIMIT = 3 * 1024 * 1024;
 
-export async function uploadMediaFromBuffer(buf: Buffer, filename: string, mime: string): Promise<MediaRef> {
+// Context waarmee een upload zijn naam volgens de AmsterdamNOW-conventie
+// bepaalt (zie lib/mediaName.ts). `index` is de volgnummer-suffix binnen één
+// artikel: featured = 1, daarna slider/inline/itemfoto's oplopend. Optioneel
+// meegeven aan de upload-functies — zonder deze naming blijft alles zoals het
+// was (rúwe bronnaam, geen metadata-write), zodat bestaande aanroepers niet
+// breken.
+export interface MediaNaming {
+  ctx: ImageNameContext;
+  index: number;
+}
+
+// Zet de beeldnaam op een media-item. AmsterdamNOW hanteert op alle oudere
+// posts één string voor bestandsnaam, media-slug, media-titel én alt-tekst
+// (bv. `stadsbakkerij-as-winkel-amsterdam_2`). WordPress leidt slug en titel
+// zelf af uit de meegestuurde bestandsnaam, maar zet alt_text nooit vanzelf —
+// vandaar deze expliciete write direct na de upload. Caption blijft bewust
+// ongemoeid: de conventie zegt daar niets over, en meesturen zou een
+// bestaande bijschrifttekst wissen.
+//
+// Fouten worden gelogd, niet gegooid: de afbeelding staat op dat moment al in
+// WordPress, dus een harde throw zou de aanroeper een half geslaagde upload
+// opleveren (beeld wel geüpload, maar geen media-ID terug om aan het artikel
+// te hangen). Ontbrekende metadata is redactioneel herstelbaar; een verweesd
+// media-item niet.
+export async function setMediaMeta(id: number, name: string): Promise<void> {
+  if (!LIVE) return;
+  try {
+    await wpFetch(`/wp/v2/media/${id}`, {
+      method: 'POST',
+      body: JSON.stringify({ alt_text: name, title: name, slug: name }),
+    });
+  } catch (err) {
+    console.warn(`[wp] Beeldnaam “${name}” niet weggeschreven op media #${id}: ${err instanceof Error ? err.message : err}`);
+  }
+}
+
+export async function uploadMediaFromBuffer(buf: Buffer, filename: string, mime: string, naming?: MediaNaming): Promise<MediaRef> {
+  // Met naming wint de conventienaam van de meegegeven (bron)bestandsnaam:
+  // WordPress leidt de media-slug en -titel af uit de bestandsnaam die in de
+  // Content-Disposition staat, dus dat is de enige plek waar dit ingrijpt.
+  const name = naming ? imageFileName(naming.ctx, naming.index, mime) : filename;
   if (!LIVE) {
     // Demo-modus: geen WordPress om naar te uploaden — bewaar als data-URL
     // (werkt ook op Vercel, waar het bestandssysteem alleen-lezen is).
@@ -766,25 +859,18 @@ export async function uploadMediaFromBuffer(buf: Buffer, filename: string, mime:
     headers: {
       Authorization: authHeader(),
       'Content-Type': mime,
-      'Content-Disposition': `attachment; filename="${filename.replace(/"/g, '')}"`,
+      'Content-Disposition': `attachment; filename="${name.replace(/"/g, '')}"`,
     },
     body: new Uint8Array(buf),
   });
   if (!res.ok) throw new Error(`Media-upload mislukt (${res.status}): ${(await res.text()).slice(0, 300)}`);
   const m = await res.json();
+  // Slug en titel heeft WordPress zojuist zelf uit de bestandsnaam afgeleid;
+  // alt_text niet. Zet alle drie expliciet, zodat ze gegarandeerd identiek
+  // zijn aan de bestandsnaam-zonder-extensie.
+  if (naming) await setMediaMeta(m.id, imageAltName(naming.ctx, naming.index));
   return { id: m.id, url: m.media_details?.sizes?.large?.source_url || m.source_url };
 }
-
-const MIME_EXT: Record<string, string> = {
-  'image/jpeg': 'jpg',
-  'image/jpg': 'jpg',
-  'image/pjpeg': 'jpg',
-  'image/png': 'png',
-  'image/gif': 'gif',
-  'image/webp': 'webp',
-  'image/avif': 'avif',
-  'image/heic': 'heic',
-};
 
 /** filename uit een Content-Disposition-header (filename* heeft voorrang op filename). */
 function filenameFromDisposition(disposition: string | null): string | null {
@@ -806,9 +892,13 @@ function filenameFromDisposition(disposition: string | null): string | null {
  * Maakt een bestandsnaam die WordPress accepteert. Veel CDN's (bijv. Rosewood's
  * picasso-transform-URLs) serveren afbeeldingen zonder extensie in het pad; zonder
  * extensie weigert WP de upload met `rest_upload_sideload_error`.
+ *
+ * De mime→extensie-tabel komt uit lib/mediaName.ts (MEDIA_MIME_EXT): daar
+ * bepaalt dezelfde tabel de extensie van een conventienaam, en één tabel voor
+ * beide upload-namen voorkomt dat ze uit elkaar gaan lopen.
  */
 export function mediaFilenameFor(url: string, mime: string, disposition?: string | null): string {
-  const ext = MIME_EXT[mime.toLowerCase()] || '';
+  const ext = MEDIA_MIME_EXT[mime.toLowerCase()] || '';
   let base = filenameFromDisposition(disposition ?? null) || '';
   if (!base) {
     try {
@@ -820,7 +910,7 @@ export function mediaFilenameFor(url: string, mime: string, disposition?: string
   base = base.split('?')[0].split('#')[0].replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[.-]+/, '');
   if (!base) base = 'afbeelding';
   const current = base.includes('.') ? base.slice(base.lastIndexOf('.') + 1).toLowerCase() : '';
-  const knownExts = new Set(Object.values(MIME_EXT).concat(['jpeg']));
+  const knownExts = new Set(Object.values(MEDIA_MIME_EXT).concat(['jpeg']));
   if (ext && current !== ext && !(ext === 'jpg' && current === 'jpeg')) {
     // Geen (of verkeerde) extensie: hang de extensie van het echte mime-type eraan.
     base = current && knownExts.has(current) ? `${base.slice(0, base.lastIndexOf('.'))}.${ext}` : `${base}.${ext}`;
@@ -830,7 +920,7 @@ export function mediaFilenameFor(url: string, mime: string, disposition?: string
   return base;
 }
 
-export async function uploadMediaFromUrl(url: string): Promise<MediaRef> {
+export async function uploadMediaFromUrl(url: string, naming?: MediaNaming): Promise<MediaRef> {
   if (!LIVE) {
     // Demo-modus: valideer alleen en verwijs direct naar de bron-URL.
     const head = await fetch(url, { method: 'HEAD' }).catch(() => null);
@@ -843,6 +933,9 @@ export async function uploadMediaFromUrl(url: string): Promise<MediaRef> {
   const mime = (res.headers.get('content-type') || 'image/jpeg').split(';')[0].trim().toLowerCase();
   if (!mime.startsWith('image/')) throw new Error('URL is geen afbeelding');
   const buf = Buffer.from(await res.arrayBuffer());
+  // Bewust altijd de bronnaam afleiden en `naming` gewoon doorgeven: de keuze
+  // tussen conventienaam en bronnaam zit op één plek (uploadMediaFromBuffer),
+  // zodat beide upload-ingangen niet uit elkaar kunnen lopen.
   const name = mediaFilenameFor(url, mime, res.headers.get('content-disposition'));
-  return uploadMediaFromBuffer(buf, name, mime);
+  return uploadMediaFromBuffer(buf, name, mime, naming);
 }

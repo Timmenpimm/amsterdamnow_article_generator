@@ -4,12 +4,14 @@ import type { ImageUpdate } from '@/lib/wp';
 import { searchImageCandidates } from '@/lib/imageSearch';
 import { buildCredit } from '@/lib/credit';
 import { assembleListHtml } from '@/lib/listHtml';
+import { listItemNameContext } from '@/lib/mediaName';
+import { attachedImageCount, nameContext } from '@/lib/imageNaming';
 import {
   addImageCandidates, listImageCandidates, unscoredImageCandidates,
   setImageCandidateStatus, getListStructure, saveListStructure,
 } from '@/lib/db';
 import { imageCount } from '@/lib/types';
-import type { ImageCandidate, ListArticleStructure, MediaRef } from '@/lib/types';
+import type { Article, ImageCandidate, ListArticleStructure, MediaRef } from '@/lib/types';
 import { scoreOneBatch } from '@/lib/imageScore';
 
 export const dynamic = 'force-dynamic';
@@ -160,10 +162,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         const need = fillMode === 'fresh' ? 3 : gaps;
         // Dode bron-URL? Schuif door naar de volgende kandidaat tot er `need` staan.
         const uploaded: { candidate: ImageCandidate; media: MediaRef }[] = [];
+        // De `_n`-teller vervolgt op wat er al hangt; mislukte uploads slaan
+        // geen index op, zodat de nummering geen gaten krijgt.
+        let index = attachedImageCount(article);
         for (const c of ordered) {
           if (uploaded.length >= need) break;
           try {
-            uploaded.push({ candidate: c, media: await uploadMediaFromUrl(c.url) });
+            uploaded.push({
+              candidate: c,
+              media: await uploadMediaFromUrl(c.url, { ctx: nameContext(article), index: index + 1 }),
+            });
+            index++;
           } catch {
             await setImageCandidateStatus(article.id, c.id, 'dismissed'); // niet nóg eens proberen
           }
@@ -273,12 +282,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       .filter(c => isItemCand(c) && c.status === 'scored' && (c.score ?? 0) >= AUTO_MIN_SCORE)
       .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
 
-    // Dode bron-URL? Schuif door naar de volgende kandidaat.
+    // Dode bron-URL? Schuif door naar de volgende kandidaat. Itemfoto's zijn
+    // naar het ítem genoemd; index vast op idx + 1 omdat elk item precies één
+    // foto heeft — zo blijft de naam gelijk als de foto later vervangen wordt.
+    const itemNaming = {
+      ctx: listItemNameContext(nameContext(article), item.naam, item.buurt),
+      index: idx + 1,
+    };
     let placedCand: ImageCandidate | null = null;
     let placedMedia: MediaRef | null = null;
     for (const c of picks) {
       try {
-        placedMedia = await uploadMediaFromUrl(c.url);
+        placedMedia = await uploadMediaFromUrl(c.url, itemNaming);
         placedCand = c;
         break;
       } catch {
@@ -301,7 +316,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     // Zelfde patroon als /api/articles/[id]/item-media: media zetten, content
     // opnieuw assembleren, structuur bewaren.
     list.items[idx].media = placedMedia;
-    await updateArticleContent(article.id, assembleListHtml(list));
+    await updateArticleContent(article.id, assembleListHtml(list, nameContext(article)));
     await saveListStructure(article.id, null, list);
     await setImageCandidateStatus(article.id, placedCand.id, 'used');
 

@@ -58,6 +58,53 @@ export function checkTitle(title: string, topic: string, config: StandaardConstr
   return null;
 }
 
+// ---------- voorbeeldzinnen uit de prompt ----------
+
+// De schrijfprompt bevat voorbeeldzinnen (<good>, <concreet>) die laten zien
+// HOE je schrijft. Het model nam die soms letterlijk over: de quote "De
+// wijnkaart is hier net zo serieus als de keuken. En dat is precies de
+// bedoeling." uit <example type="quote"> belandde zo in artikelen over een
+// techno-festival, een sportwinkel en een theater. Omdat de quote ook
+// letterlijk in de artikeltekst moet staan (quoteMustBeVerbatimInContent),
+// plakte het model diezelfde zin er nog eens middenin een alinea bij.
+//
+// Titel- en subregelvoorbeelden blijven buiten beschouwing: die noemen echte
+// zaken (KLM Open, Chez Chloé) en een artikel over precies dát onderwerp mag
+// legitiem op dezelfde kop uitkomen.
+const EXAMPLE_BLOCK_RE = /<example\b([^>]*)>[\s\S]*?<\/example>/gi;
+const SAMPLE_RE = /<(good|concreet)>([\s\S]*?)<\/\1>/gi;
+const SKIPPED_EXAMPLE_TYPES = ['title', 'subregel'];
+// Kortere voorbeelden ("Hier eet je goed.") zijn gewone Nederlandse zinnen die
+// een artikel toevallig ook kan bevatten; die afkeuren levert vals alarm op.
+const MIN_EXAMPLE_WORDS = 6;
+
+// Alle voorbeeldzinnen uit een promptversie, als platte tekst. Werkt op de
+// prompt zoals die op dat moment actief is (DB), niet op een vaste lijst —
+// nieuwe voorbeelden zijn zo automatisch gedekt.
+export function extractPromptExamples(promptContent: string): string[] {
+  const relevant = (promptContent || '').replace(EXAMPLE_BLOCK_RE, (block, attrs: string) => {
+    const type = /type\s*=\s*["']?([a-z_-]+)/i.exec(attrs || '')?.[1]?.toLowerCase() || '';
+    return SKIPPED_EXAMPLE_TYPES.includes(type) ? '' : block;
+  });
+  const found = new Set<string>();
+  for (const match of relevant.matchAll(SAMPLE_RE)) {
+    const text = match[2].trim();
+    if (words(text) >= MIN_EXAMPLE_WORDS) found.add(text);
+  }
+  return [...found];
+}
+
+// De voorbeeldzin die letterlijk (genormaliseerd) in de tekst voorkomt, of null.
+export function findPromptExampleLeak(text: string, examples: string[]): string | null {
+  const haystack = normal(text);
+  if (!haystack) return null;
+  for (const example of examples) {
+    const needle = normal(example);
+    if (needle && haystack.includes(needle)) return example;
+  }
+  return null;
+}
+
 // ---------- lijstartikelen ----------
 
 export interface ListItemDraft {
@@ -198,6 +245,7 @@ export function validateArticle(
   article: GeneratedArticle,
   topic: string,
   config: StandaardConstraints,
+  promptExamples: string[] = [],
   opts?: { sparse?: boolean },
 ) {
   range('Titel', article.title, config.titleWords.min, config.titleWords.max);
@@ -218,6 +266,10 @@ export function validateArticle(
   }
   if (config.quoteMustBeVerbatimInContent && !normal(article.content).includes(normal(article.quote))) {
     throw new Error('De quote moet letterlijk in de artikeltekst voorkomen.');
+  }
+  const leak = findPromptExampleLeak([article.quote, article.content, article.introductie_tekst, article.subregel].join('\n'), promptExamples);
+  if (leak) {
+    throw new Error(`Voorbeeldzin uit de prompt letterlijk overgenomen: "${leak}". De voorbeelden tonen alleen stijl; schrijf een eigen zin over dit onderwerp, op basis van de research.`);
   }
   if (config.noDashInText && [article.title, article.subregel, article.introductie_tekst, article.content, article.quote].some(v => /[—–]/.test(v))) {
     throw new Error('Een artikel mag geen em dash of en dash bevatten.');

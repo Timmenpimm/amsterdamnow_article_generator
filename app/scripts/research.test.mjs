@@ -101,24 +101,24 @@ test('validateArticle: 280 woorden wordt afgekeurd zonder sparse', () => {
 
 test('validateArticle: hetzelfde artikel is geldig mét sparse', () => {
   const a = artikel({ content: content(280, 3) });
-  validateArticle(a, 'Levain et le vin', DEFAULT_STANDAARD_CONSTRAINTS, { sparse: true });
+  validateArticle(a, 'Levain et le vin', DEFAULT_STANDAARD_CONSTRAINTS, [], { sparse: true });
 });
 
 test('validateArticle: sparse verlaagt de alinea-eis maar schaft hem niet af', () => {
   const a = artikel({ content: content(280, 2) });
-  assert.throws(() => validateArticle(a, 'Levain et le vin', DEFAULT_STANDAARD_CONSTRAINTS, { sparse: true }), /alinea/);
+  assert.throws(() => validateArticle(a, 'Levain et le vin', DEFAULT_STANDAARD_CONSTRAINTS, [], { sparse: true }), /alinea/);
 });
 
 test('validateArticle: sparse laat de overige harde regels ongemoeid', () => {
   const a = artikel({ content: `${content(280, 3)} — met een em dash` });
-  assert.throws(() => validateArticle(a, 'Levain et le vin', DEFAULT_STANDAARD_CONSTRAINTS, { sparse: true }), /dash/);
+  assert.throws(() => validateArticle(a, 'Levain et le vin', DEFAULT_STANDAARD_CONSTRAINTS, [], { sparse: true }), /dash/);
 });
 
 test('validateArticle: oude constraint-JSON zonder sparseContentWords valt terug op contentWords', () => {
   const oud = { ...DEFAULT_STANDAARD_CONSTRAINTS };
   delete oud.sparseContentWords;
-  validateArticle(artikel(), 'Levain et le vin', oud, { sparse: true });
-  assert.throws(() => validateArticle(artikel({ content: content(280, 3) }), 'Levain et le vin', oud, { sparse: true }), /Artikeltekst/);
+  validateArticle(artikel(), 'Levain et le vin', oud, [], { sparse: true });
+  assert.throws(() => validateArticle(artikel({ content: content(280, 3) }), 'Levain et le vin', oud, [], { sparse: true }), /Artikeltekst/);
 });
 
 // ---------- bron-attributie in de HTML ----------
