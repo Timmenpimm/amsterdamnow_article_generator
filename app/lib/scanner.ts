@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { askClaudeJson, FAST_WRITE_MODEL } from './claude';
 import { SCAN_SCHEMA, SCAN_EDITORIALIZE_SCHEMA } from './schemas';
 import { extractPageText } from './tavily';
+import { amsterdamToday, isoOrEmpty, isPastEvent } from './eventDate';
 import {
   activeSources, addTopics, getFindingKeys, getSource,
   recordFindings, topicIdsByTitle, updateSourceScan,
@@ -21,38 +22,17 @@ Negeer: navigatie, cookiemeldingen, reclame, algemene teksten, items buiten Amst
 
 Formuleer elk item als één bondige onderwerptitel zoals een redacteur die zou intypen — concreet en herkenbaar (naam + kern), bv. "Lucky Chops: brass party in de grote zaal van Paradiso". Geen datums-als-titel, geen opsommingstekens.
 
-Geef per item ook de eventdatum mee in ISO-formaat (JJJJ-MM-DD), letterlijk uit de brontekst: "startdatum" en "einddatum". Bij een eendaags event is einddatum gelijk aan startdatum; bij een meerdaags event (festival, expositieperiode) de eerste en laatste dag. Gaat het om iets zonder concrete datum (een opening, een doorlopende expositie, nieuws zonder events-datum), geef dan startdatum: null en einddatum: null. Een event waarvan de einddatum al voorbij is (zie "Vandaag is" hierboven) hoort niet in de output.
+Geef per item ook de eventdatum mee in ISO-formaat (JJJJ-MM-DD), letterlijk uit de brontekst: "startdatum" en "einddatum". Bij een eendaags event is einddatum gelijk aan startdatum; bij een meerdaags event (festival, expositieperiode) de eerste en laatste dag.
+
+Noemt de bron een slotdatum ("t/m 29 juni", "loopt tot en met…", "te zien tot…"), geef die dan ALTIJD als einddatum — ook bij een expositie die al maanden loopt. Alleen als er echt nergens een datum staat (een vaste zaak, een opening zonder datum, nieuws zonder event) geef je startdatum: null en einddatum: null. Een event waarvan de einddatum al voorbij is (zie "Vandaag is" hierboven) hoort niet in de output.
 
 Geef UITSLUITEND geldige JSON terug in exact dit formaat, zonder omliggende tekst:
 {"items": [{"titel": "...", "startdatum": "JJJJ-MM-DD" of null, "einddatum": "JJJJ-MM-DD" of null}]}
 
 Maximaal 12 items, de meest relevante eerst. Vind je niets bruikbaars, geef dan {"items": []}.`;
 
-// JJJJ-MM-DD in Europe/Amsterdam, zodat de prompt en de code-side filter
-// hieronder dezelfde "vandaag" hanteren als de kalenderdag van de redactie.
-function amsterdamToday(): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Amsterdam' }).format(new Date());
-}
-
 // Genormaliseerd scan-item: titel + (optionele) event-datums als JJJJ-MM-DD.
 type ScanItem = { titel: string; start: string; eind: string };
-
-// Strikt JJJJ-MM-DD of ''. Accepteert alleen het exacte ISO-formaat dat het
-// schema/de prompt vraagt; al het andere (null, "doorlopend", een bereik) → ''.
-function isoOrEmpty(value: unknown): string {
-  const s = typeof value === 'string' ? value.trim() : '';
-  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : '';
-}
-
-// Deterministische check bovenop de prompt-instructie: Claude's eigen begrip
-// van "vandaag" is niet betrouwbaar, dus filteren we hier nog eens hard. Een
-// event is pas voorbij als de einddatum (of, bij ontbreken, de startdatum)
-// vóór vandaag ligt. Zonder parsebare datum niet overslaan — bij twijfel
-// liever een keer een oud item ter beoordeling op het bord.
-function isPastEvent(item: ScanItem, todayISO: string): boolean {
-  const ref = item.eind || item.start;
-  return ref !== '' && ref < todayISO;
-}
 
 function findingKey(title: string): string {
   return title.toLowerCase().trim().replace(/\s+/g, ' ');
@@ -143,7 +123,10 @@ async function runScan(source: Source): Promise<ScanResult & { contentHash: stri
       const eind = isoOrEmpty(it?.einddatum) || start; // eendaags: eind = start
       return { titel: (typeof it === 'string' ? it : String(it?.titel || it?.title || '')).trim(), start, eind };
     })
-    .filter((it: ScanItem) => it.titel && !isPastEvent(it, today));
+    // Deterministische check bovenop de prompt-instructie: Claude's eigen
+    // begrip van "vandaag" is niet betrouwbaar, dus filteren we hier nog eens
+    // hard (zie lib/eventDate.ts).
+    .filter((it: ScanItem) => it.titel && !isPastEvent(it.start, it.eind, today));
 
   // Ontdubbel binnen deze scan (op titel; de datum reist mee).
   const seen = new Set<string>();

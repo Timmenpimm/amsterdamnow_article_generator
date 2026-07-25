@@ -249,6 +249,7 @@ async function mapPost(p: any, media: Record<number, MediaRef>): Promise<Article
     seoTitle: p.meta?.rank_math_title || '',
     metaDescription: p.meta?.rank_math_description || '',
     eventStart: acfDateToIso(acf.start_datum),
+    eventEnd: acfDateToIso(acf.eind_datum),
     flags: {
       new_in_town: Boolean(acf.new_in_town),
       featured_item: Boolean(acf.featured_item),
@@ -670,6 +671,7 @@ export async function createDraft(draft: GeneratedDraft): Promise<Article> {
       focusKeyword: draft.focusKeyword, slug: draft.slug, seoTitle: draft.seoTitle,
       metaDescription: draft.metaDescription,
       eventStart: acfDateToIso(toAcfDate(draft.startDatum) || ''),
+      eventEnd: acfDateToIso(toAcfDate(draft.eindDatum) || toAcfDate(draft.startDatum) || ''),
       flags: { new_in_town: false, featured_item: false, beste_van_amsterdam: Boolean(draft.isList), homepage_carousel: false },
     };
     await demoSave(article);

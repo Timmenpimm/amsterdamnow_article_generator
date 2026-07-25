@@ -8,6 +8,7 @@ import { validateArticle, checkTitle, GeneratedArticle } from './validation';
 import { parseStandaardState, type Article, type StandaardConstraints, type StandaardPhase, type StandaardState, type Topic, type WordRange } from './types';
 import { formatStandardArticleHtml } from './articleHtml';
 import { decodeHtmlEntities } from './htmlEntities';
+import { amsterdamToday, eventEndReference, isPastEvent } from './eventDate';
 
 // Ruime marge boven een realistisch artikel (~450 woorden content + korte
 // titel/subregel/intro/quote-velden ≈ 800-1000 tokens als JSON), maar veel
@@ -212,7 +213,7 @@ async function stepResearch(topic: Topic, s: StandaardState): Promise<StandaardS
   // content (zie VERIFY_SOURCE_CHARS in listWriter.ts voor dezelfde afweging).
   const research = await askClaudeJson(
     researchPrompt.content,
-    `Onderwerp: ${topic.title}\n\nBeschikbare WordPress-categorieën: ${taxonomies.categories.join(', ')}\nBeschikbare WordPress-districten: ${taxonomies.districts.join(', ')}\nBeschikbare WordPress-tags: ${taxonomies.tags.join(', ')}\nKies "tags" uitsluitend uit deze lijst; verzin nooit nieuwe tags. Past geen enkele bestaande tag goed, geef dan een lege lijst terug.\n\nGaat dit onderwerp over een event met een concrete datum, geef die dan als "start_datum" (en "eind_datum", gelijk aan start bij een eendaags event) in JJJJ-MM-DD, letterlijk overgenomen uit de bronnen. Is het geen event of noemt geen bron een concrete datum, laat beide leeg ("").\n\nTavily-bronnen:\n${sources.map((src, i) => `\n[${i + 1}] ${src.title}\n${src.url}\n${src.content.slice(0, 8000)}`).join('\n')}`,
+    `Onderwerp: ${topic.title}\n\nVandaag is ${amsterdamToday()} (Europe/Amsterdam).\n\nBeschikbare WordPress-categorieën: ${taxonomies.categories.join(', ')}\nBeschikbare WordPress-districten: ${taxonomies.districts.join(', ')}\nBeschikbare WordPress-tags: ${taxonomies.tags.join(', ')}\nKies "tags" uitsluitend uit deze lijst; verzin nooit nieuwe tags. Past geen enkele bestaande tag goed, geef dan een lege lijst terug.\n\nGaat dit onderwerp over een event, tentoonstelling, festival of ander tijdelijk programma, geef dan de looptijd als "start_datum" en "eind_datum" in JJJJ-MM-DD, letterlijk overgenomen uit de bronnen. Bij een eendaags event is eind_datum gelijk aan start_datum.\n\nNoemt een bron een slotdatum ("t/m 29 juni 2026", "loopt tot en met…", "te zien tot…"), vul die dan ALTIJD in als eind_datum — ook als de tentoonstelling al maanden loopt, en ook als die datum inmiddels verstreken is. Die datum bepaalt of wij het onderwerp nog mogen publiceren; hem weglaten of doorschuiven is een fout. Alleen bij een vaste zaak (restaurant, winkel, museum als instelling) of nieuws zonder looptijd laat je beide velden leeg ("").\n\nTavily-bronnen:\n${sources.map((src, i) => `\n[${i + 1}] ${src.title}\n${src.url}\n${src.content.slice(0, 8000)}`).join('\n')}`,
     FAST_WRITE_MODEL, 6000, RESEARCH_SCHEMA,
   );
   // Seed van de bronscanner is gezaghebbend: die datum komt rechtstreeks van de
@@ -221,6 +222,19 @@ async function stepResearch(topic: Topic, s: StandaardState): Promise<StandaardS
   if (s.seedStartDatum) {
     (research as Record<string, unknown>).start_datum = s.seedStartDatum;
     (research as Record<string, unknown>).eind_datum = s.seedEindDatum || s.seedStartDatum;
+  }
+  // Harde poort: een event dat al is afgelopen wordt niet geschreven. Dit is
+  // het enige punt in de pipeline waar élk topic langskomt — de scanner-check
+  // geldt alleen voor gescande items, dus handmatig ingevoerde onderwerpen
+  // (zoals de al gesloten expositie in artikel 86418) kwamen er anders
+  // ongehinderd doorheen. Gooien vóór de entiteitsverificatie en vóór de
+  // schrijffase: geen extra Claude-calls, geen WordPress-draft, en het topic
+  // komt met een leesbare reden op "mislukt" te staan.
+  const eindDatum = eventEndReference(research.start_datum, research.eind_datum);
+  if (isPastEvent(research.start_datum, research.eind_datum, amsterdamToday())) {
+    throw new Error(
+      `Event is voorbij: liep t/m ${eindDatum}. Dit onderwerp wordt niet geschreven — pas het aan of verwijder het uit de wachtrij.`
+    );
   }
   // De homepage/origin is de betrouwbaarste bron voor de website: overschrijf
   // altijd met de gedetecteerde origin (de site-root, geen diepe link) wanneer

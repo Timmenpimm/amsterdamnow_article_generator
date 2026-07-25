@@ -140,6 +140,11 @@ export interface Article {
   // als het geen event met datum is. De auto-publisher gebruikt dit om de
   // event_date-classificatie zonder LLM-call te bepalen (zie lib/publisher.ts).
   eventStart?: string;
+  // Event-einddatum uit ACF (eind_datum), zelfde normalisatie. De publisher
+  // toetst hierop of een event al voorbij is: bij een tentoonstelling die
+  // maanden loopt zegt de startdatum niets over de actualiteit, de slotdatum
+  // wel (zie lib/eventDate.ts).
+  eventEnd?: string;
   flags: {
     new_in_town: boolean;
     featured_item: boolean;
