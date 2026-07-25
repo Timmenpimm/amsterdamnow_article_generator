@@ -6,6 +6,7 @@
 import type { Article } from './types';
 import { getSetting, setSetting, claimSetting, getPublishMetaByIds, upsertPublishMeta, type PublishMetaRow } from './db';
 import { askClaudeJson } from './claude';
+import { amsterdamToday, isPastEvent } from './eventDate';
 
 const SETTINGS_KEY = 'autopublish';
 
@@ -82,9 +83,10 @@ export async function claimAutoPublishTick(
 // "Vandaag" in Europe/Amsterdam (niet UTC): new Date().toISOString() loopt
 // tussen middernacht UTC en middernacht lokale tijd een dag achter/voor,
 // wat zowel de classificatieprompt als het event-tijdvenster op de verkeerde
-// dag zou laten rekenen. sv-SE formatteert standaard als "JJJJ-MM-DD".
+// dag zou laten rekenen. Gedeelde implementatie in lib/eventDate.ts, zodat de
+// scanner, de writer en de publisher gegarandeerd dezelfde dag hanteren.
 export function todayInAmsterdam(date: Date = new Date()): string {
-  return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Amsterdam' }).format(date);
+  return amsterdamToday(date);
 }
 
 // Volgende geplande tik, uitsluitend informatief (voor de UI) — de tick-route
@@ -395,10 +397,44 @@ export function pickNextForPublish(
   now: Date = new Date()
 ): Article | null {
   if (!ready.length) return null;
+  // Laatste vangnet: een draft over een afgelopen event gaat nooit automatisch
+  // live. Anders dan de cluster-cooldown hieronder is dit géén voorkeur maar
+  // een harde uitsluiting — blijft er niets over, dan publiceren we deze tik
+  // liever niets dan een expositie die vorige maand sloot.
+  const live = ready.filter(a => !isExpiredEvent(a, metaById.get(a.id), now));
+  // Nooit stilzwijgend overslaan: een artikel dat blijft liggen omdat de
+  // einddatum verkeerd is ingevuld moet terug te vinden zijn in de logs.
+  if (live.length !== ready.length) {
+    const skipped = ready.filter(a => !live.includes(a)).map(a => `${a.id} (t/m ${a.eventEnd || a.eventStart || '?'})`);
+    console.warn(`[publisher] overgeslagen, event voorbij: ${skipped.join(', ')}`);
+  }
+  if (!live.length) return null;
   const blocked = recentClusterKeys(published, metaById, clusterCooldown);
   const allowed = blocked.size
-    ? ready.filter(a => !blocked.has(clusterKeyFor(a, metaById)))
-    : ready;
-  const pool = allowed.length ? allowed : ready;
+    ? live.filter(a => !blocked.has(clusterKeyFor(a, metaById)))
+    : live;
+  const pool = allowed.length ? allowed : live;
   return pickBest(pool, metaById, published, now);
+}
+
+// Is dit artikel een event dat al voorbij is?
+//
+// De ACF-datums (eventStart/eventEnd) zijn leidend en wegen zwaarder dan de
+// evergreen-vlag: die vlag komt van een LLM-classificatie die een lopende
+// tentoonstelling makkelijk voor tijdloos aanziet — precies wat er misging bij
+// artikel 86418, dat als evergreen op het bord bleef staan terwijl de
+// expositie al gesloten was. Staat er geen ACF-datum, dan valt de check terug
+// op de event_date uit de classificatie.
+export function isExpiredEvent(
+  article: Pick<Article, 'eventStart' | 'eventEnd'>,
+  meta: PublishMetaRow | undefined,
+  now: Date = new Date()
+): boolean {
+  const today = todayInAmsterdam(now);
+  if (article.eventStart || article.eventEnd) {
+    return isPastEvent(article.eventStart, article.eventEnd, today);
+  }
+  if (meta?.evergreen) return false;
+  const classified = meta?.event_date ?? '';
+  return isPastEvent(classified, classified, today);
 }
