@@ -84,6 +84,11 @@ const GENERIEKE_BEELDTOKENS = new Set([
   'sauna', 'bakkerij', 'brouwerij', 'koffiebar', 'wijnbar', 'club', 'bar',
   // Gewone woorden en fotograaf-/stockleveranciers die geen onderwerp aanduiden.
   'grote', 'kleine', 'nieuwe', 'oude', 'mooie', 'shutterstock', 'gettyimages', 'adobe',
+  // Artefacten van beeldexports en CMS-downloads. `caption-5-1024x1024.jpg`
+  // meldde in de eerste echte auditrun drie keer "de term caption komt niet in
+  // de titel voor" — waar, en volstrekt betekenisloos.
+  'caption', 'captions', 'untitled', 'naamloos', 'download', 'downloads', 'export',
+  'afbeelding1', 'website', 'webshop', 'facebook', 'instagram', 'origineel', 'original',
 ]);
 
 // Bestandsnamen die verraden dat het beeld geen redactionele foto is maar een
@@ -616,9 +621,19 @@ async function imageCheck(article: Article, board: Article[]): Promise<AuditFind
 // simpel (leesteken + witruimte); een afkorting die per ongeluk splitst maakt
 // de zin alleen korter en valt dan buiten de ondergrens — dat is de veilige
 // kant.
-function longSentences(html: string): { raw: string; key: string }[] {
+// De pull-quote staat per ontwerp twee keer in de HTML: één keer als
+// <blockquote> boven de tekst en één keer op zijn oorspronkelijke plek in de
+// lopende tekst (zie articleHtml.ts — een pull-quote is nadruk, geen
+// vervanging). Zonder deze uitzondering meldt de duplicaatcheck dus élk
+// standaardartikel als "fout", en dat is precies wat de eerste echte auditrun
+// liet zien: 3 van de 3 artikelen. We tellen daarom alleen de lopende tekst.
+function stripPullQuotes(html: string): string {
+  return String(html || '').replace(/<blockquote\b[\s\S]*?<\/blockquote>/gi, ' ');
+}
+
+export function longSentences(html: string): { raw: string; key: string }[] {
   const out: { raw: string; key: string }[] = [];
-  for (const part of plainText(html).split(/(?<=[.!?])\s+/)) {
+  for (const part of plainText(stripPullQuotes(html)).split(/(?<=[.!?])\s+/)) {
     const raw = part.trim();
     if (!raw) continue;
     const key = normalize(raw);
