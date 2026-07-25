@@ -120,8 +120,10 @@ let catCache: Record<number, string> | null = null;
 let districtCache: Record<number, string> | null = null;
 let tagCache: Record<number, string> = {};
 // Bestaande WP-tags waaruit de AI mag kiezen bij het classificeren van een
-// artikel (zie taxonomyChoices). Bewust op één pagina gehouden: max 30 tags,
-// geen paginering.
+// artikel (zie taxonomyChoices). Eén pagina van 100 volstaat ruimschoots voor
+// de huidige ~21 tags; stond eerder op 30, waardoor tags erbuiten stil uit de
+// keuzelijst verdwenen. Sinds er nog maar één tag per artikel gekozen wordt is
+// een incomplete kandidatenlijst niet langer een detail maar direct een fout.
 let tagChoicesCache: string[] | null = null;
 
 async function loadTaxonomies() {
@@ -129,11 +131,11 @@ async function loadTaxonomies() {
   const [cats, districts, tags] = await Promise.all([
     fetch(`${WP_URL}/wp-json/wp/v2/categories?per_page=100`, { cache: 'no-store' }).then(r => r.json()),
     fetch(`${WP_URL}/wp-json/wp/v2/district?per_page=100`, { cache: 'no-store' }).then(r => r.json()),
-    fetch(`${WP_URL}/wp-json/wp/v2/tags?per_page=30`, { cache: 'no-store' }).then(r => r.json()),
+    fetch(`${WP_URL}/wp-json/wp/v2/tags?per_page=100`, { cache: 'no-store' }).then(r => r.json()),
   ]);
   catCache = Object.fromEntries(cats.map((c: any) => [c.id, c.name]));
   districtCache = Object.fromEntries(districts.map((d: any) => [d.id, d.name]));
-  tagChoicesCache = tags.map((t: any) => t.name);
+  tagChoicesCache = tags.map((t: any) => decodeHtmlEntities(String(t.name)));
 }
 
 export async function taxonomyChoices(): Promise<{ categories: string[]; districts: string[]; tags: string[] }> {
@@ -146,8 +148,12 @@ export async function taxonomyChoices(): Promise<{ categories: string[]; distric
   return { categories: Object.values(catCache || {}), districts: Object.values(districtCache || {}), tags: tagChoicesCache || [] };
 }
 
+// Eerst entities decoderen, dan pas normaliseren. WordPress levert taxonomie-
+// namen HTML-geëncodeerd ("Cafés &amp; Bars"); de AI krijgt ze gedecodeerd
+// aangeboden en geeft ze ook gedecodeerd terug. Zonder decode hier zou
+// "cafés bars" nooit matchen met "cafés amp bars" en verdween de tag stil.
 function normalized(value: string) {
-  return value.toLocaleLowerCase('nl-NL').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  return decodeHtmlEntities(value).toLocaleLowerCase('nl-NL').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 }
 
 function idForName(items: Record<number, string>, name: string, type: string): number {
@@ -161,16 +167,39 @@ function matchExistingTagId(existing: { id: number; name: string }[], name: stri
   return match ? match.id : null;
 }
 
+// Precies één tag uit de modeloutput, als lijst van 0 of 1 element zodat de
+// rest van de pipeline (GeneratedDraft.tags, de WordPress-payload) ongewijzigd
+// blijft. Leest het nieuwe stringveld `tag`; werk dat al in de wachtrij stond
+// heeft nog het oude array-veld `tags` in zijn opgeslagen state, dus daar
+// vallen we op terug en nemen het eerste (door het model als meest relevant
+// genoemde) element. Geen tag is een geldige uitkomst: dan gaat het artikel
+// ongetagd weg, en dat is beter dan een tag die er niet bij past.
+export function singleTag(source: Record<string, unknown>): string[] {
+  const trimmed = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
+  const tag = trimmed(source.tag);
+  if (tag) return [tag];
+  const legacy = (Array.isArray(source.tags) ? source.tags : []).map(trimmed).find(Boolean);
+  return legacy ? [legacy] : [];
+}
+
+// Eén artikel krijgt hoogstens één tag: de best passende. De schema's dwingen
+// dat al af aan de modelkant (RESEARCH_SCHEMA.tag, LIST_COMPOSE_FIRST_SCHEMA.tag);
+// deze cap is het vangnet op het knooppunt waar beide schrijfpaden langskomen,
+// zodat geen enkele toekomstige aanroeper er alsnog een reeks in kan duwen.
 async function tagIdsForNames(names: string[]): Promise<number[]> {
-  const ids: number[] = [];
-  for (const name of [...new Set(names.map(n => n.trim()).filter(Boolean))]) {
-    const existing = await wpFetch(`/wp/v2/tags?search=${encodeURIComponent(name)}&per_page=100`);
-    const id = matchExistingTagId(existing, name);
-    // Geen match → tag overslaan. Er wordt nooit meer automatisch een nieuwe
-    // WordPress-tag aangemaakt vanuit het aanmaak-pad.
-    if (id !== null) ids.push(id);
+  const name = names.map(n => n.trim()).find(Boolean);
+  if (!name) return [];
+  const existing = await wpFetch(`/wp/v2/tags?search=${encodeURIComponent(name)}&per_page=100`);
+  const id = matchExistingTagId(existing, name);
+  // Geen match → geen tag. Er wordt nooit automatisch een nieuwe WordPress-tag
+  // aangemaakt vanuit het aanmaak-pad. Wel loggen: met één tag per artikel
+  // betekent een mislukte match een artikel zonder tag, en dat ging voorheen
+  // volledig ongemerkt voorbij.
+  if (id === null) {
+    console.warn(`[wp] Tag “${name}” niet gevonden in WordPress; artikel krijgt geen tag.`);
+    return [];
   }
-  return ids;
+  return [id];
 }
 
 async function tagNames(ids: number[]): Promise<string[]> {

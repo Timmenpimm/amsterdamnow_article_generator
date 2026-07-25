@@ -1,7 +1,7 @@
 import { activeConstraints, activePrompt, completeTopic, failTopic, saveTopicProgress } from './db';
 import { askClaudeJson, FAST_WRITE_MODEL, TITLE_MODEL } from './claude';
 import { RESEARCH_SCHEMA, ARTICLE_SCHEMA, SEO_SCHEMA, ENTITY_VERIFY_SCHEMA, QUOTE_REWRITE_SCHEMA } from './schemas';
-import { createDraft, taxonomyChoices } from './wp';
+import { createDraft, singleTag, taxonomyChoices } from './wp';
 import { checkTopicAgainstWp } from './dedup';
 import { researchWithTavily } from './tavily';
 import { validateArticle, checkTitle, GeneratedArticle } from './validation';
@@ -213,7 +213,7 @@ async function stepResearch(topic: Topic, s: StandaardState): Promise<StandaardS
   // content (zie VERIFY_SOURCE_CHARS in listWriter.ts voor dezelfde afweging).
   const research = await askClaudeJson(
     researchPrompt.content,
-    `Onderwerp: ${topic.title}\n\nVandaag is ${amsterdamToday()} (Europe/Amsterdam).\n\nBeschikbare WordPress-categorieën: ${taxonomies.categories.join(', ')}\nBeschikbare WordPress-districten: ${taxonomies.districts.join(', ')}\nBeschikbare WordPress-tags: ${taxonomies.tags.join(', ')}\nKies "tags" uitsluitend uit deze lijst; verzin nooit nieuwe tags. Past geen enkele bestaande tag goed, geef dan een lege lijst terug.\n\nGaat dit onderwerp over een event, tentoonstelling, festival of ander tijdelijk programma, geef dan de looptijd als "start_datum" en "eind_datum" in JJJJ-MM-DD, letterlijk overgenomen uit de bronnen. Bij een eendaags event is eind_datum gelijk aan start_datum.\n\nNoemt een bron een slotdatum ("t/m 29 juni 2026", "loopt tot en met…", "te zien tot…"), vul die dan ALTIJD in als eind_datum — ook als de tentoonstelling al maanden loopt, en ook als die datum inmiddels verstreken is. Die datum bepaalt of wij het onderwerp nog mogen publiceren; hem weglaten of doorschuiven is een fout. Alleen bij een vaste zaak (restaurant, winkel, museum als instelling) of nieuws zonder looptijd laat je beide velden leeg ("").\n\nTavily-bronnen:\n${sources.map((src, i) => `\n[${i + 1}] ${src.title}\n${src.url}\n${src.content.slice(0, 8000)}`).join('\n')}`,
+    `Onderwerp: ${topic.title}\n\nVandaag is ${amsterdamToday()} (Europe/Amsterdam).\n\nBeschikbare WordPress-categorieën: ${taxonomies.categories.join(', ')}\nBeschikbare WordPress-districten: ${taxonomies.districts.join(', ')}\nBeschikbare WordPress-tags: ${taxonomies.tags.join(', ')}\nKies precies één "tag" uit deze lijst: de best passende. Verzin nooit een nieuwe tag. Past geen enkele bestaande tag echt goed, geef dan "" terug.\n\nGaat dit onderwerp over een event, tentoonstelling, festival of ander tijdelijk programma, geef dan de looptijd als "start_datum" en "eind_datum" in JJJJ-MM-DD, letterlijk overgenomen uit de bronnen. Bij een eendaags event is eind_datum gelijk aan start_datum.\n\nNoemt een bron een slotdatum ("t/m 29 juni 2026", "loopt tot en met…", "te zien tot…"), vul die dan ALTIJD in als eind_datum — ook als de tentoonstelling al maanden loopt, en ook als die datum inmiddels verstreken is. Die datum bepaalt of wij het onderwerp nog mogen publiceren; hem weglaten of doorschuiven is een fout. Alleen bij een vaste zaak (restaurant, winkel, museum als instelling) of nieuws zonder looptijd laat je beide velden leeg ("").\n\nTavily-bronnen:\n${sources.map((src, i) => `\n[${i + 1}] ${src.title}\n${src.url}\n${src.content.slice(0, 8000)}`).join('\n')}`,
     FAST_WRITE_MODEL, 6000, RESEARCH_SCHEMA,
   );
   // Seed van de bronscanner is gezaghebbend: die datum komt rechtstreeks van de
@@ -419,7 +419,7 @@ async function stepSeo(topic: Topic, s: StandaardState): Promise<StandaardStepRe
     metaDescription: string(seo.rank_math_description, 'rank_math_description'),
     categories: nonEmptyStrings(s.research.categories, 'categories'),
     district: string(s.research.district, 'district'),
-    tags: strings(s.research.tags, 'tags'),
+    tags: singleTag(s.research),
     rubriek: string(s.research.rubriek, 'rubriek'),
     naamLocatie: string(s.research.naam_locatie, 'naam_locatie'),
     // adres en website mogen leeg zijn: niet elk onderwerp heeft een betrouwbaar

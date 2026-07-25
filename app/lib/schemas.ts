@@ -26,7 +26,7 @@ export const RESEARCH_SCHEMA: Record<string, unknown> = {
   required: [
     'samenvatting', 'key_people', 'distinctive_features', 'product_or_menu_highlights',
     'company_facts', 'space_and_building', 'concept_description', 'categories',
-    'district', 'tags', 'rubriek', 'naam_locatie', 'adres', 'stad', 'website',
+    'district', 'tag', 'rubriek', 'naam_locatie', 'adres', 'stad', 'website',
     'start_datum', 'eind_datum',
   ],
   properties: {
@@ -39,7 +39,11 @@ export const RESEARCH_SCHEMA: Record<string, unknown> = {
     concept_description: { type: 'string' },
     categories: STRING_ARRAY,
     district: { type: 'string' },
-    tags: STRING_ARRAY,
+    // Eén tag, geen lijst. "Max 1 tag" stond eerder alleen als zin in de prompt
+    // en was dus een verzoek, geen garantie: het veld was een ongelimiteerde
+    // array. Als string is meer dan één tag structureel onmogelijk (constrained
+    // decoding), zonder dat we op promptgehoorzaamheid hoeven te leunen.
+    tag: { type: 'string', description: 'Exact één bestaande WordPress-tag uit de meegegeven lijst: de best passende. Past geen enkele tag echt, geef dan "" terug.' },
     rubriek: { type: 'string' },
     naam_locatie: { type: 'string' },
     adres: { type: 'string' },
@@ -195,7 +199,7 @@ export const LIST_COMPOSE_FIRST_SCHEMA: Record<string, unknown> = {
   additionalProperties: false,
   required: [
     'title', 'subregel', 'introcontent', 'inleiding', 'afsluiting',
-    'items', 'categories', 'district', 'tags', 'rubriek',
+    'items', 'categories', 'district', 'tag', 'rubriek',
   ],
   properties: {
     title: { type: 'string' },
@@ -218,7 +222,8 @@ export const LIST_COMPOSE_FIRST_SCHEMA: Record<string, unknown> = {
     },
     categories: STRING_ARRAY,
     district: { type: 'string' },
-    tags: STRING_ARRAY,
+    // Eén tag, geen lijst — zie de toelichting bij RESEARCH_SCHEMA.tag.
+    tag: { type: 'string', description: 'Exact één bestaande WordPress-tag uit "beschikbare_tags": de best passende. Past geen enkele tag echt, geef dan "" terug.' },
     rubriek: { type: 'string' },
   },
 };

@@ -8,7 +8,7 @@ import {
   LIST_COMPOSE_ITEMS_SCHEMA, SEO_SCHEMA,
 } from './schemas';
 import { researchWithTavily } from './tavily';
-import { createDraft, findArticleLink, taxonomyChoices } from './wp';
+import { createDraft, findArticleLink, singleTag, taxonomyChoices } from './wp';
 import { checkTopicAgainstWp } from './dedup';
 import { assembleListHtml } from './listHtml';
 import { quoteSourceAllowed, validateListArticle, type GeneratedListArticle } from './validation';
@@ -310,7 +310,7 @@ async function stepCompose(topic: Topic): Promise<ListStepResult> {
       const [prompt, taxonomies] = await Promise.all([activePrompt('lijst-schrijf'), taxonomyChoices()]);
       result = await askClaudeJson(
         prompt.content,
-        `Schrijf het lijstartikel. Kies verplicht "categories" (1-2) uit de beschikbare lijst. Kies ook "district" uit de beschikbare lijst als de items in dit lijstartikel overwegend in één stadsdeel liggen; gaat het artikel over meerdere stadsdelen door elkaar, geef dan "district": "" (leeg) terug — verzin nooit een stadsdeel dat niet klopt. Kies 3-6 "tags" uitsluitend uit "beschikbare_tags" (nooit nieuwe tags verzinnen; laat "tags" leeg als er geen passen). Voeg ook een "rubriek" (Locatie of Evenement) toe aan je JSON-output, naast de velden uit je instructie.\n\nHoud je aan deze regels:\n${describeArticleConstraints(constraints)}\n${describeItemConstraints(constraints)}${feedbackHint}\n\n${JSON.stringify({
+        `Schrijf het lijstartikel. Kies verplicht "categories" (1-2) uit de beschikbare lijst. Kies ook "district" uit de beschikbare lijst als de items in dit lijstartikel overwegend in één stadsdeel liggen; gaat het artikel over meerdere stadsdelen door elkaar, geef dan "district": "" (leeg) terug — verzin nooit een stadsdeel dat niet klopt. Kies precies één "tag" uit "beschikbare_tags": de best passende (nooit een nieuwe tag verzinnen; laat "tag" leeg als er geen enkele echt past). Voeg ook een "rubriek" (Locatie of Evenement) toe aan je JSON-output, naast de velden uit je instructie.\n\nHoud je aan deze regels:\n${describeArticleConstraints(constraints)}\n${describeItemConstraints(constraints)}${feedbackHint}\n\n${JSON.stringify({
           ...input,
           beschikbare_categorieen: taxonomies.categories,
           beschikbare_districten: taxonomies.districts,
@@ -347,7 +347,10 @@ async function stepCompose(topic: Topic): Promise<ListStepResult> {
       items: items.map((i: any) => ({ naam: str(i.naam), beschrijving: str(i.beschrijving), plaats_quote: Boolean(i.plaats_quote) })),
       categories: Array.isArray(result.categories) ? result.categories.map(str).filter(Boolean) : [],
       district: str(result.district),
-      tags: Array.isArray(result.tags) ? result.tags.map(str).filter(Boolean) : [],
+      // Eén tag, als lijst van 0 of 1 zodat de rest van de pipeline ongewijzigd
+      // blijft. `tags` (array) is de terugval voor lijsten die al in de wachtrij
+      // staan met opgeslagen composeChunks van vóór deze wijziging.
+      tags: singleTag(result),
       rubriek: str(result.rubriek) || 'Locatie',
     });
     s.composeChunks = chunks;
