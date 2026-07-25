@@ -1,6 +1,6 @@
 import { askClaudeJson, askClaudeJsonWithImages, FAST_WRITE_MODEL, type ClaudeImage } from './claude';
 import { activePrompt, listStructures, recentlyAuditedPostIds } from './db';
-import { listArticles, WP_URL } from './wp';
+import { listArticles, getWpUrl } from './wp';
 import { articlePhase, type Article, type AuditFindingInput, type AuditFindingKind, type AuditScope, type AuditVerdict, type MediaRef } from './types';
 import { decodeHtmlEntities } from './htmlEntities';
 import { searchClaimSources, type AuditSource } from './auditSearch';
@@ -350,12 +350,14 @@ type AuditImage = { rol: string; ref: MediaRef; bestandsnaam: string };
 // Alle beelden van het artikel met hun rol, in de volgorde waarin de lezer ze
 // ziet. De URL's staan al op het Article-object; alleen de alt-tekst moet uit
 // de media-API komen.
-function collectImages(a: Article): AuditImage[] {
+// `wpUrl` alleen als base voor relatieve media-URL's; de aanroeper (async)
+// resolvet 'm via getWpUrl(), want deze functie is bewust synchroon.
+function collectImages(a: Article, wpUrl: string): AuditImage[] {
   const out: AuditImage[] = [];
   const add = (rol: string, ref: MediaRef | null | undefined) => {
     if (!ref?.url) return;
     if (out.some(o => o.ref.id === ref.id)) return; // featured staat vaak óók in de slider
-    out.push({ rol, ref, bestandsnaam: fileNameFromUrl(ref.url) });
+    out.push({ rol, ref, bestandsnaam: fileNameFromUrl(ref.url, wpUrl) });
   };
   add('featured', a.featured);
   a.slider.forEach((m, i) => add(`slider ${i + 1}`, m));
@@ -363,9 +365,9 @@ function collectImages(a: Article): AuditImage[] {
   return out.slice(0, MAX_IMAGES_CHECKED);
 }
 
-function fileNameFromUrl(url: string): string {
+function fileNameFromUrl(url: string, base: string): string {
   try {
-    const path = new URL(url, WP_URL).pathname;
+    const path = new URL(url, base).pathname;
     return decodeURIComponent(path.split('/').pop() || '');
   } catch {
     return (url.split('?')[0].split('/').pop() || '');
@@ -426,7 +428,7 @@ function tokenAppearsIn(token: string, haystack: string, haystackWords: string[]
 // opleveren die er niet is.
 async function fetchAltText(id: number): Promise<string | null> {
   try {
-    const res = await fetch(`${WP_URL}/wp-json/wp/v2/media/${id}`, {
+    const res = await fetch(`${await getWpUrl()}/wp-json/wp/v2/media/${id}`, {
       cache: 'no-store',
       signal: AbortSignal.timeout(MEDIA_TIMEOUT_MS),
       headers: { Accept: 'application/json' },
@@ -477,7 +479,7 @@ function onderwerpenVanAndereArtikelen(article: Article, board: Article[]): Set<
 }
 
 async function imageCheck(article: Article, board: Article[]): Promise<AuditFindingInput[]> {
-  const images = collectImages(article);
+  const images = collectImages(article, await getWpUrl());
   if (!images.length) {
     return [{
       kind: 'beeld', verdict: 'twijfel', onderwerp: 'geen beeld',

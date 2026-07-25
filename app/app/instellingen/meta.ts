@@ -1,8 +1,8 @@
 import type { ConstraintKind, PromptKind } from '@/lib/types';
 
-// Interne selectie-key voor de rail: prompts, criteria, publiceren en de twee
-// placeholder-schermen (variabelen, model).
-export type RailKey = PromptKind | ConstraintKind | 'publiceren' | 'variabelen' | 'model';
+// Interne selectie-key voor de rail: prompts, criteria, publiceren, de
+// koppelingen (wordpress, instagram) en de placeholder (variabelen).
+export type RailKey = PromptKind | ConstraintKind | 'publiceren' | 'variabelen' | 'model' | 'wordpress' | 'instagram';
 
 export interface RailItem {
   key: RailKey;
@@ -47,6 +47,8 @@ export const RAIL_GROUPS: RailGroup[] = [
       { key: 'variabelen', label: 'Variabelen & context' },
       { key: 'publiceren', label: 'Publiceren' },
       { key: 'model', label: 'Model & koppelingen' },
+      { key: 'wordpress', label: 'WordPress' },
+      { key: 'instagram', label: 'Instagram' },
     ],
   },
 ];
@@ -70,6 +72,8 @@ const TITLES: Record<RailKey, string> = {
   publiceren: 'Publiceren',
   variabelen: 'Variabelen & context',
   model: 'Model & koppelingen',
+  wordpress: 'WordPress',
+  instagram: 'Instagram',
 };
 
 const DESCRIPTIONS: Record<RailKey, string> = {
@@ -90,6 +94,8 @@ const DESCRIPTIONS: Record<RailKey, string> = {
   publiceren: 'Publiceert zelf artikelen uit "Klaar voor publicatie" op een instelbaar interval — één artikel per keer.',
   variabelen: 'Beheer de {{variabelen}} die n8n elke run bij de prompts invult.',
   model: 'Kies waar de AI draait: rechtstreeks naar Claude (Anthropic) of via je eigen Omniroute-gateway om tokens te sparen.',
+  wordpress: 'Koppeling met WordPress (drafts & publicatie). Instellingen hier winnen van de omgevingsvariabelen.',
+  instagram: 'Koppeling met de socials-engine en Instagram. De engine bezit het Instagram-account; deze tool praat er server-side mee.',
 };
 
 export interface PanelMeta {
@@ -106,6 +112,7 @@ function eyebrowFor(key: RailKey): string {
   if (key === 'standaard') return 'Standaardartikel · redactionele criteria';
   if (key === 'lijst') return 'Lijstartikel · redactionele criteria';
   if (key === 'publiceren') return 'Algemeen · publiceren';
+  if (key === 'wordpress' || key === 'instagram') return 'Algemeen · koppelingen';
   return 'Algemeen'; // variabelen, model
 }
 

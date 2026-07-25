@@ -4,14 +4,27 @@ import { decodeHtmlEntities } from './htmlEntities';
 import { cleanCredit } from './credit';
 import { formatExistingStandardArticleHtml, hasEditorialFormatting } from './articleHtml';
 import { imageAltName, imageFileName, MEDIA_MIME_EXT, type ImageNameContext } from './mediaName';
+import { getWpConnection, type WpConnection } from './wpConfig';
 import type { Article, MediaRef } from './types';
 
-export const WP_URL = process.env.WP_URL || 'https://www.amsterdamnow.com';
-export const LIVE = Boolean(process.env.WP_USER && process.env.WP_APP_PASSWORD);
 export { STORAGE };
 
-function authHeader(): string {
-  return 'Basic ' + Buffer.from(`${process.env.WP_USER}:${process.env.WP_APP_PASSWORD}`).toString('base64');
+// De WP-verbinding (URL + credentials) komt sinds juli 2026 per call uit
+// lib/wpConfig.ts (opgeslagen instellingen met env-fallback) in plaats van
+// module-constanten, zodat de koppeling in Instellingen aanpasbaar is zonder
+// deploy. Zonder opgeslagen instelling is het gedrag identiek aan de oude
+// env-only situatie (WP_URL/WP_USER/WP_APP_PASSWORD).
+// De oude exports `WP_URL` en `LIVE` zijn vervangen door deze async accessors.
+export async function getWpUrl(): Promise<string> {
+  return (await getWpConnection()).url;
+}
+
+export async function isLive(): Promise<boolean> {
+  return (await getWpConnection()).live;
+}
+
+function basicAuth(conn: WpConnection): string {
+  return 'Basic ' + Buffer.from(`${conn.user}:${conn.appPassword}`).toString('base64');
 }
 
 // Claude plakt af en toe ongevraagd een categorie/tag-linkblok achter de
@@ -27,10 +40,11 @@ function stripTaxonomyFooter(html: string): string {
 }
 
 async function wpFetchRaw(pathname: string, init: RequestInit = {}): Promise<Response> {
-  const res = await fetch(`${WP_URL}/wp-json${pathname}`, {
+  const conn = await getWpConnection();
+  const res = await fetch(`${conn.url}/wp-json${pathname}`, {
     ...init,
     headers: {
-      Authorization: authHeader(),
+      Authorization: basicAuth(conn),
       'Content-Type': 'application/json',
       ...(init.headers || {}),
     },
@@ -142,10 +156,11 @@ let tagChoicesCache: string[] | null = null;
 
 async function loadTaxonomies() {
   if (catCache && districtCache && tagChoicesCache) return;
+  const wpUrl = await getWpUrl();
   const [cats, districts, tags] = await Promise.all([
-    fetch(`${WP_URL}/wp-json/wp/v2/categories?per_page=100`, { cache: 'no-store' }).then(r => r.json()),
-    fetch(`${WP_URL}/wp-json/wp/v2/district?per_page=100`, { cache: 'no-store' }).then(r => r.json()),
-    fetch(`${WP_URL}/wp-json/wp/v2/tags?per_page=100`, { cache: 'no-store' }).then(r => r.json()),
+    fetch(`${wpUrl}/wp-json/wp/v2/categories?per_page=100`, { cache: 'no-store' }).then(r => r.json()),
+    fetch(`${wpUrl}/wp-json/wp/v2/district?per_page=100`, { cache: 'no-store' }).then(r => r.json()),
+    fetch(`${wpUrl}/wp-json/wp/v2/tags?per_page=100`, { cache: 'no-store' }).then(r => r.json()),
   ]);
   catCache = Object.fromEntries(cats.map((c: any) => [c.id, c.name]));
   districtCache = Object.fromEntries(districts.map((d: any) => [d.id, d.name]));
@@ -153,7 +168,7 @@ async function loadTaxonomies() {
 }
 
 export async function taxonomyChoices(): Promise<{ categories: string[]; districts: string[]; tags: string[] }> {
-  if (!LIVE) return {
+  if (!(await isLive())) return {
     categories: ['Cultuur', 'Uitgaan', 'Restaurants', 'Lifestyle'],
     districts: ['Amsterdam Centrum', 'Amsterdam Noord', 'Amsterdam Oost', 'Amsterdam Zuid'],
     tags: ['Terras', 'Live muziek', 'Brunch', 'Hondvriendelijk'],
@@ -219,7 +234,7 @@ async function tagIdsForNames(names: string[]): Promise<number[]> {
 async function tagNames(ids: number[]): Promise<string[]> {
   const missing = ids.filter(id => !(id in tagCache));
   if (missing.length) {
-    const tags = await fetch(`${WP_URL}/wp-json/wp/v2/tags?include=${missing.join(',')}&per_page=100`, { cache: 'no-store' }).then(r => r.json());
+    const tags = await fetch(`${await getWpUrl()}/wp-json/wp/v2/tags?include=${missing.join(',')}&per_page=100`, { cache: 'no-store' }).then(r => r.json());
     for (const t of tags) tagCache[t.id] = t.name;
   }
   return ids.map(id => tagCache[id]).filter(Boolean);
@@ -345,7 +360,7 @@ async function demoSave(a: Article) {
 // Zoekt een bestaand gepubliceerd AmsterdamNOW-artikel over een zaak, zodat
 // lijstitems intern kunnen doorlinken (zoals in de bestaande lijstartikelen).
 export async function findArticleLink(name: string): Promise<string | null> {
-  if (!LIVE) return null;
+  if (!(await isLive())) return null;
   try {
     const hits = await wpFetch(`/wp/v2/posts?search=${encodeURIComponent(name)}&per_page=3&_fields=title,link`);
     const needle = name.toLocaleLowerCase('nl-NL');
@@ -363,7 +378,7 @@ export async function findArticleLink(name: string): Promise<string | null> {
 // die 50 opvraagt). Drafts blijven onveranderd — dit raakt alleen de
 // published-tak.
 export async function listArticles(publishedPerPage = 15): Promise<Article[]> {
-  if (!LIVE) return demoArticles();
+  if (!(await isLive())) return demoArticles();
   await loadTaxonomies();
   const perPage = Math.max(1, Math.min(100, Math.trunc(publishedPerPage)));
   const [drafts, published] = await Promise.all([
@@ -381,7 +396,7 @@ export async function listArticles(publishedPerPage = 15): Promise<Article[]> {
 }
 
 export async function getArticle(id: number): Promise<Article | null> {
-  if (!LIVE) return (await demoArticles()).find(a => a.id === id) || null;
+  if (!(await isLive())) return (await demoArticles()).find(a => a.id === id) || null;
   await loadTaxonomies();
   const p = await wpFetch(`/wp/v2/posts/${id}?context=edit`);
   const ids = [p.featured_media, ...(p.acf?.slider || [])].filter(Boolean);
@@ -397,7 +412,7 @@ export interface ImageUpdate {
 }
 
 export async function updateImages(id: number, upd: ImageUpdate, known: MediaRef[] = []): Promise<Article | null> {
-  if (!LIVE) {
+  if (!(await isLive())) {
     const a = (await demoArticles()).find(x => x.id === id);
     if (!a) return null;
     const pool = new Map<number, MediaRef>();
@@ -454,7 +469,7 @@ export async function updateImages(id: number, upd: ImageUpdate, known: MediaRef
 // matchen op een bestaande WordPress-tag worden overgeslagen, nooit
 // aangemaakt.
 export async function updateArticleTags(id: number, tags: string[]): Promise<Article | null> {
-  if (!LIVE) {
+  if (!(await isLive())) {
     const a = (await demoArticles()).find(x => x.id === id);
     if (!a) return null;
     a.tags = [...tags];
@@ -493,7 +508,7 @@ export async function updateArticleFields(id: number, upd: ArticleFieldUpdate): 
   if (upd.adres !== undefined) acf.adres = upd.adres.trim();
   if (upd.website !== undefined) acf.website = normalizeWebsite(upd.website);
 
-  if (!LIVE) {
+  if (!(await isLive())) {
     const a = (await demoArticles()).find(x => x.id === id);
     if (!a) return null;
     if (acf.naam_locatie !== undefined) a.naam_locatie = acf.naam_locatie;
@@ -518,7 +533,7 @@ export interface SeoFields {
 // Vult alleen de RankMath-metavelden; slug blijft onaangeroerd (die wijzigen
 // op een bestaand artikel breekt de URL, zie lib/seoBackfill.ts).
 export async function updateArticleSeo(id: number, seo: SeoFields): Promise<void> {
-  if (!LIVE) {
+  if (!(await isLive())) {
     const a = (await demoArticles()).find(x => x.id === id);
     if (!a) throw new Error('Artikel niet gevonden');
     a.focusKeyword = seo.focusKeyword;
@@ -552,7 +567,7 @@ export interface SeoStub { id: number; title: string; hasSeo: boolean }
 // FUNCTION_INVOCATION_TIMEOUT) als simpelweg een veel grotere klus dan
 // bedoeld — de scope is de eigen wachtrij van de tool, niet het hele archief.
 export async function listSeoStubs(): Promise<SeoStub[]> {
-  if (!LIVE) {
+  if (!(await isLive())) {
     const arts = await demoArticles();
     return arts.filter(a => a.status === 'draft').map(a => ({ id: a.id, title: a.title, hasSeo: Boolean(a.seoTitle) }));
   }
@@ -567,7 +582,7 @@ export async function listSeoStubs(): Promise<SeoStub[]> {
 // Vervangt de volledige content-HTML van een post; gebruikt door het
 // per-item-beeldwerk van lijstartikelen (content wordt opnieuw geassembleerd).
 export async function updateArticleContent(id: number, html: string): Promise<void> {
-  if (!LIVE) {
+  if (!(await isLive())) {
     const a = (await demoArticles()).find(x => x.id === id);
     if (!a) throw new Error('Artikel niet gevonden');
     a.contentHtml = html;
@@ -591,7 +606,7 @@ export interface FormattingBackfillResult {
 // opgemaakte post blijft dus onaangeroerd. Gepubliceerde artikelen worden
 // bewust nooit door deze routine opgehaald.
 export async function backfillDraftEditorialFormatting(dryRun = false): Promise<FormattingBackfillResult> {
-  if (!LIVE) throw new Error('Backfill is alleen beschikbaar in live-modus.');
+  if (!(await isLive())) throw new Error('Backfill is alleen beschikbaar in live-modus.');
   // Gebruik exact dezelfde selectie als het kanbanbord. Daarmee zijn dit
   // uitsluitend de artikelen in “Klaar — beelden nodig” en “Klaar voor
   // publicatie”, nooit andere WordPress-drafts buiten de redactietool.
@@ -641,7 +656,7 @@ export async function backfillDraftEditorialFormatting(dryRun = false): Promise<
 }
 
 export async function publishArticle(id: number): Promise<Article | null> {
-  if (!LIVE) {
+  if (!(await isLive())) {
     const a = (await demoArticles()).find(x => x.id === id);
     if (!a) return null;
     a.status = 'publish';
@@ -665,7 +680,7 @@ export async function publishArticle(id: number): Promise<Article | null> {
 // WordPress-prullenbak. Gepubliceerde artikelen horen hier niet doorheen —
 // dat filtert de API-route af.
 export async function deleteArticle(id: number): Promise<void> {
-  if (!LIVE) {
+  if (!(await isLive())) {
     await demoDelete(id);
     return;
   }
@@ -735,7 +750,7 @@ function acfDateToIso(value: unknown): string {
 
 export async function createDraft(draft: GeneratedDraft): Promise<Article> {
   const contentHtml = stripTaxonomyFooter(draft.contentHtml);
-  if (!LIVE) {
+  if (!(await isLive())) {
     const articles = await demoArticles();
     const id = Math.max(Date.now() % 2147483647, ...articles.map(a => a.id + 1));
     const article: Article = {
@@ -829,7 +844,7 @@ export interface MediaNaming {
 // te hangen). Ontbrekende metadata is redactioneel herstelbaar; een verweesd
 // media-item niet.
 export async function setMediaMeta(id: number, name: string): Promise<void> {
-  if (!LIVE) return;
+  if (!(await isLive())) return;
   try {
     await wpFetch(`/wp/v2/media/${id}`, {
       method: 'POST',
@@ -845,7 +860,7 @@ export async function uploadMediaFromBuffer(buf: Buffer, filename: string, mime:
   // WordPress leidt de media-slug en -titel af uit de bestandsnaam die in de
   // Content-Disposition staat, dus dat is de enige plek waar dit ingrijpt.
   const name = naming ? imageFileName(naming.ctx, naming.index, mime) : filename;
-  if (!LIVE) {
+  if (!(await isLive())) {
     // Demo-modus: geen WordPress om naar te uploaden — bewaar als data-URL
     // (werkt ook op Vercel, waar het bestandssysteem alleen-lezen is).
     if (buf.length > DEMO_UPLOAD_LIMIT) {
@@ -854,10 +869,11 @@ export async function uploadMediaFromBuffer(buf: Buffer, filename: string, mime:
     const id = Date.now() % 2147483647;
     return { id, url: `data:${mime};base64,${buf.toString('base64')}` };
   }
-  const res = await fetch(`${WP_URL}/wp-json/wp/v2/media`, {
+  const conn = await getWpConnection();
+  const res = await fetch(`${conn.url}/wp-json/wp/v2/media`, {
     method: 'POST',
     headers: {
-      Authorization: authHeader(),
+      Authorization: basicAuth(conn),
       'Content-Type': mime,
       'Content-Disposition': `attachment; filename="${name.replace(/"/g, '')}"`,
     },
@@ -921,7 +937,7 @@ export function mediaFilenameFor(url: string, mime: string, disposition?: string
 }
 
 export async function uploadMediaFromUrl(url: string, naming?: MediaNaming): Promise<MediaRef> {
-  if (!LIVE) {
+  if (!(await isLive())) {
     // Demo-modus: valideer alleen en verwijs direct naar de bron-URL.
     const head = await fetch(url, { method: 'HEAD' }).catch(() => null);
     const mime = head?.headers.get('content-type') || '';

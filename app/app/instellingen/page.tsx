@@ -8,6 +8,8 @@ import PromptEditor from './PromptEditor';
 import CriteriaEditor from './CriteriaEditor';
 import AutoPublishPanel from './AutoPublishPanel';
 import ModelPanel from './ModelPanel';
+import WordPressPanel from './WordPressPanel';
+import InstagramPanel from './InstagramPanel';
 import PlaceholderPanel from './PlaceholderPanel';
 import { RAIL_GROUPS, panelMeta, PLACEHOLDER_CARD, type RailKey } from './meta';
 
@@ -71,7 +73,7 @@ export default function Instellingen() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [promptResults, constraintResults, publish, model] = await Promise.all([
+      const [promptResults, constraintResults, publish, model, wordpress, instagram] = await Promise.all([
         Promise.all(
           PROMPT_KINDS.map(k =>
             fetch(`/api/prompts?kind=${k}`).then(r => r.json()).then(d => [k, d] as const).catch(() => [k, null] as const)
@@ -84,6 +86,8 @@ export default function Instellingen() {
         ),
         fetch('/api/publish/settings').then(r => (r.ok ? r.json() : null)).catch(() => null),
         fetch('/api/model').then(r => (r.ok ? r.json() : null)).catch(() => null),
+        fetch('/api/koppelingen/wordpress').then(r => (r.ok ? r.json() : null)).catch(() => null),
+        fetch('/api/koppelingen/instagram').then(r => (r.ok ? r.json() : null)).catch(() => null),
       ]);
       if (cancelled) return;
       const next: Partial<Record<RailKey, Badge>> = {};
@@ -100,6 +104,16 @@ export default function Instellingen() {
       next.model = model?.provider === 'omniroute'
         ? { label: 'Omniroute', tone: 'green' }
         : { label: 'Claude', tone: 'muted' };
+      next.wordpress = wordpress
+        ? wordpress.source === 'settings'
+          ? { label: 'eigen instelling', tone: wordpress.live ? 'green' : 'muted' }
+          : wordpress.live
+            ? { label: 'live', tone: 'green' }
+            : { label: 'demo', tone: 'muted' }
+        : { label: '', tone: 'muted' };
+      next.instagram = instagram?.connection?.igUsername
+        ? { label: `@${instagram.connection.igUsername}`, tone: 'green' }
+        : { label: 'niet gekoppeld', tone: 'muted' };
       setBadges(next);
     })();
     return () => { cancelled = true; };
@@ -169,6 +183,10 @@ export default function Instellingen() {
           <AutoPublishPanel key="publiceren" eyebrow={meta.eyebrow} title={meta.title} description={meta.description} onChanged={onChanged} />
         ) : selected === 'model' ? (
           <ModelPanel key="model" eyebrow={meta.eyebrow} title={meta.title} description={meta.description} onChanged={onChanged} />
+        ) : selected === 'wordpress' ? (
+          <WordPressPanel key="wordpress" eyebrow={meta.eyebrow} title={meta.title} description={meta.description} onChanged={onChanged} />
+        ) : selected === 'instagram' ? (
+          <InstagramPanel key="instagram" eyebrow={meta.eyebrow} title={meta.title} description={meta.description} onChanged={onChanged} />
         ) : selected === 'variabelen' ? (
           <PlaceholderPanel
             key={selected}
