@@ -1,3 +1,5 @@
+import { COMPETITOR_ALIASSEN } from './competitors';
+
 export type TopicStatus = 'queued' | 'writing' | 'review' | 'failed' | 'done';
 export type TopicType = 'standaard' | 'lijst';
 
@@ -346,17 +348,11 @@ export interface ConstraintVersion {
 }
 
 // Concurrerende stadsgidsen en agenda-portalen: hun teksten zijn zelf redactie,
-// geen bron. Eén lijst voor beide pipelines, zodat lijst- en standaardartikelen
-// niet uit elkaar kunnen lopen zodra er een site bijkomt. Staat hierboven
-// DEFAULT_STANDAARD_CONSTRAINTS omdat een const pas ná zijn definitie
-// gelezen mag worden (DEFAULT_LIST_CONSTRAINTS staat verderop in dit bestand).
-const QUOTE_SOURCE_BLACKLIST: string[] = [
-  'ylbb', 'your little black book', 'yourlittleblackbook',
-  'bartsboekje', 'barts boekje',
-  'iamsterdam',
-  'time out', 'timeout',
-  'cityguys', 'dagjeweg', 'awesome amsterdam', 'amsterdamlokaal', 'kidsproof', 'roadbook',
-];
+// geen bron. De lijst zelf staat in lib/competitors.ts en geldt pipeline-breed
+// (bron, entiteit, tekst, quote, beeld); dit veld blijft bestaan omdat het in
+// opgeslagen constraint-versies staat en de redactie er in de instellingen
+// eigen termen aan kan toevoegen.
+const QUOTE_SOURCE_BLACKLIST: string[] = COMPETITOR_ALIASSEN;
 
 export const DEFAULT_STANDAARD_CONSTRAINTS: StandaardConstraints = {
   titleWords: { min: 8, max: 12 },

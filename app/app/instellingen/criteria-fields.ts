@@ -51,9 +51,9 @@ export const LIST_FIELDS: { section: string; fields: FieldDef<ListConstraints>[]
     ],
   },
   {
-    section: 'Quote-bronnen blacklist',
+    section: 'Concurrenten',
     fields: [
-      { type: 'tags', key: 'quoteSourceBlacklist', label: 'Quote-bronnen blacklist', hint: 'Quotes afkomstig van deze domeinen/bronnen worden niet overgenomen.', placeholder: '+ domein & Enter' },
+      { type: 'tags', key: 'quoteSourceBlacklist', label: 'Concurrenten (extra)', hint: 'Bovenop de vaste concurrentenlijst in de code. Wat hier staat wordt overal geblokkeerd: research-bron, entiteit, tekst, quote en beeld.', placeholder: '+ merknaam of domein & Enter' },
     ],
   },
   {

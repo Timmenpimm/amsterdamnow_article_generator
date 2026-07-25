@@ -14,7 +14,8 @@
     "test:imagename": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/imagename.test.mjs",
     "test:promptexample": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/promptexample.test.mjs",
     "test:research": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/research.test.mjs",
-    "test:auditor": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/auditor.test.mjs"
+    "test:auditor": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/auditor.test.mjs",
+    "test:competitors": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/competitors.test.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",

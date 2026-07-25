@@ -7,11 +7,12 @@ import { researchWithTavily, type ResearchSource } from './tavily';
 // GeneratedArticle expliciet als type importeren: de testrunner draait op
 // --experimental-strip-types en die kan een type niet als waarde-import
 // oplossen ("does not provide an export named GeneratedArticle").
-import { validateArticle, checkTitle, quoteSourceAllowed, extractPromptExamples, findPromptExampleLeak, type GeneratedArticle } from './validation';
+import { validateArticle, checkTitle, quoteSourceAllowed, standaardQuoteSourceBlacklist, extractPromptExamples, findPromptExampleLeak, type GeneratedArticle } from './validation';
 import { DEFAULT_STANDAARD_CONSTRAINTS, parseStandaardState, type Article, type StandaardConstraints, type StandaardPhase, type StandaardState, type Topic, type WordRange } from './types';
 import { formatStandardArticleHtml } from './articleHtml';
 import { decodeHtmlEntities } from './htmlEntities';
 import { amsterdamToday, eventEndReference, isPastEvent } from './eventDate';
+import { competitorInTekst } from './competitors';
 
 // Ruime marge boven een realistisch artikel (~450 woorden content + korte
 // titel/subregel/intro/quote-velden ≈ 800-1000 tokens als JSON), maar veel
@@ -360,6 +361,17 @@ async function stepResearch(topic: Topic, s: StandaardState): Promise<StandaardS
   const [researchPrompt, taxonomies, constraints] = await Promise.all([
     activePrompt('research'), taxonomyChoices(), standaardConstraints(),
   ]);
+  // Poort 1 — het onderwerp zelf. Een topic dat de merknaam van een concurrent
+  // draagt is een bronkop die niet geredactionaliseerd is (scanner.ts doet dat
+  // sinds 21-07-2026 bij binnenkomst; alles wat daarvóór in de wachtrij kwam
+  // heeft die stap nooit gezien). Vóór de eerste Tavily- of Claude-call, zodat
+  // zo'n topic geen geld kost en met een leesbare reden op "mislukt" komt.
+  const concurrentInTopic = competitorInTekst([topic.title], standaardQuoteSourceBlacklist(constraints));
+  if (concurrentInTopic) {
+    throw new Error(
+      `Onderwerp draagt de naam van concurrent ${concurrentInTopic}. Dit is een overgenomen bronkop, geen eigen onderwerp — herformuleer het naar de zaak of het event zelf, of verwijder het uit de wachtrij.`
+    );
+  }
   const { sources, officialUrl } = await researchWithTavily(topic.title);
   // Research = feiten extraheren uit aangeleverde bronnen, geen creatief werk:
   // Sonnet 5 volstaat en kost een fractie van Opus (zie FAST_WRITE_MODEL in
@@ -402,6 +414,23 @@ async function stepResearch(topic: Topic, s: StandaardState): Promise<StandaardS
   // staan. Moet vóór saveTopicProgress zodat de gecorrigeerde staat wordt bewaard.
   const homepageContent = officialUrl ? (sources.find(src => src.url === officialUrl)?.content ?? '') : '';
   await verifyEntity(s, officialUrl, homepageContent);
+  // Poort 2 — de entiteit. tavily.ts weert concurrent-bronnen al, maar de
+  // research kan een concurrent nog steeds als onderwerp aanwijzen (hun naam
+  // staat in een citaat, een tip-vermelding of een tweedehands bron). Dan is
+  // naam_locatie/website hún merk en loopt alles wat daarna komt — titel,
+  // slug, SEO, beeld-zoekopdracht — op de concurrent. Precies wat artikel
+  // 87365 was. Afkeuren vóór de schrijffase: geen WordPress-draft, geen
+  // beelden, en het topic komt met een leesbare reden op "mislukt".
+  const r = s.research as Record<string, unknown>;
+  const concurrentInEntiteit = competitorInTekst(
+    [optionalString(r.naam_locatie), optionalString(r.website)],
+    standaardQuoteSourceBlacklist(constraints),
+  );
+  if (concurrentInEntiteit) {
+    throw new Error(
+      `De research wijst ${concurrentInEntiteit} aan als onderwerp; dat is een concurrerende stadsgids, geen zaak of event. Kies de onderliggende zaak of het event als onderwerp.`
+    );
+  }
   // Bronnen, gaten en score bewaren voor de volgende fases: de schrijver krijgt
   // de brontekst mee (zie describeSources) en de sufficiëntie-poort hieronder
   // heeft de score nodig.
