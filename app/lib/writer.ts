@@ -12,6 +12,7 @@ import { DEFAULT_STANDAARD_CONSTRAINTS, parseStandaardState, type Article, type 
 import { formatStandardArticleHtml } from './articleHtml';
 import { decodeHtmlEntities } from './htmlEntities';
 import { amsterdamToday, eventEndReference, isPastEvent } from './eventDate';
+import { detectProfiel, profielFocus, profielQueries } from './researchProfiles';
 import { competitorInTekst } from './competitors';
 
 // Ruime marge boven een realistisch artikel (~450 woorden content + korte
@@ -208,6 +209,18 @@ function bronAttributie(s: StandaardState, quote: string): string | undefined {
   if (!q?.herkomst) return undefined;
   const normaliseer = (v: string) => decodeHtmlEntities(v).replace(/[""'']/g, '"').replace(/\s+/g, ' ').trim().toLocaleLowerCase('nl-NL');
   return normaliseer(q.tekst) === normaliseer(quote) ? q.herkomst : undefined;
+}
+
+// Hostname van de in ronde 1 gedetecteerde officiële site, voor de
+// festival-focusregel van de verdiepingsronde (line-up alleen van het eigen
+// domein). Leeg als er geen officiële site bekend is of de URL niet parseert.
+function officialHostOf(s: StandaardState): string | undefined {
+  if (!s.officialUrl) return undefined;
+  try {
+    return new URL(s.officialUrl).hostname.replace(/^www\./, '');
+  } catch {
+    return undefined;
+  }
 }
 
 // Lijst met wat de research NIET vond, defensief uit onbekende JSON.
@@ -485,12 +498,18 @@ async function stepResearch(topic: Topic, s: StandaardState): Promise<StandaardS
   s.researchRounds = 1;
   s.officialUrl = officialUrl;
   s.bronQuote = acceptBronQuote(research.quote, constraints, officialUrl);
-  // Sufficiëntie-poort: te dunne research ging tot nu toe gewoon door naar de
-  // schrijffase, waar het model het tekort opvulde met verzonnen details. Nu
-  // is er een weg terug naar Tavily — hooguit één keer (researchRounds).
-  if (s.factScore < constraints.minFactScore && (s.researchRounds ?? 1) < 2) {
+  // Verdiepingsronde is standaard, niet alleen bij dunne research. De
+  // kalibratie van 25-07 liet zien dat ronde 1 vrijwel altijd op de eigen
+  // homepage en aggregator-blurbs uitkomt: research die er compleet uitziet
+  // (score boven de drempel) maar alleen marketingcopy bevat — een festival
+  // zonder line-up, een restaurant zonder één concreet gerecht. De tweede
+  // ronde zoekt daarom altijd gericht per categorie (zie researchProfiles.ts)
+  // naar wat dít soort artikel inhoud geeft. Kost één extra tik en hooguit
+  // drie Tavily-calls; researchRounds houdt het bij één verdieping.
+  if ((s.researchRounds ?? 1) < 2) {
+    const profiel = detectProfiel(s.research as Record<string, unknown>);
     await saveTopicProgress(topic.id, { status: 'queued', phase: 'research-aanvullend', state: s });
-    return { topic, phase: 'research-aanvullend', done: false, progress: `Research te dun (${s.factScore}/${constraints.minFactScore}) · extra ronde` };
+    return { topic, phase: 'research-aanvullend', done: false, progress: `Research klaar (score ${s.factScore}) · verdieping (${profiel})` };
   }
   await saveTopicProgress(topic.id, { status: 'queued', phase: 'schrijf', state: s });
   return { topic, phase: 'schrijf', done: false, progress: 'Research klaar · schrijven start' };
@@ -510,17 +529,20 @@ async function stepResearchAanvullend(topic: Topic, s: StandaardState): Promise<
     // Adres is specifieker dan de stad (twee vestigingen met dezelfde naam), dus
     // die krijgt voorrang als plaatsbepaling in de zoekterm.
     const plaats = optionalString(r.adres) || optionalString(r.stad) || 'Amsterdam';
-    // Hooguit twee queries: elke query is een Tavily-call van enkele seconden.
-    // Zonder bekende gaten vallen we terug op de twee dingen die vrijwel elk
-    // artikel nodig heeft en die het vaakst ontbraken: praktische info en een
-    // uitspraak van een betrokkene.
-    const gaten = (s.missingFacts ?? []).slice(0, 2);
-    const queries = (gaten.length ? gaten.map(gat => `${naam} ${plaats} ${gat}`) : [
-      `${naam} ${plaats} openingstijden`,
-      `${naam} interview eigenaar`,
-    ]).slice(0, 2);
+    // Categorie-profiel bepaalt de eerste twee queries: wat dít soort artikel
+    // inhoud geeft (festival: line-up + organisatie; restaurant: chef + kaart;
+    // winkel: onderscheid; enz. — zie researchProfiles.ts). Het grootste gat
+    // uit ronde 1 mag er als derde query bij. Drie i.p.v. twee calls kan
+    // binnen de 60s-tik: ze lopen parallel (elk met een timeout van 15s,
+    // zie tavily.ts) en de Claude-extractie erna blijft er één.
+    const profiel = detectProfiel(r);
+    const gaten = (s.missingFacts ?? []).slice(0, 1);
+    const queries = [
+      ...profielQueries(profiel, naam, plaats),
+      ...gaten.map(gat => `${naam} ${plaats} ${gat}`),
+    ].slice(0, 3);
 
-    // De twee zoekopdrachten tegelijk: ze zijn onafhankelijk, en er moet in
+    // De zoekopdrachten tegelijk: ze zijn onafhankelijk, en er moet in
     // deze tik ook nog een Claude-extractie bij binnen de 60s. allSettled i.p.v.
     // all, want een mislukte tweede query mag de opbrengst van de eerste niet
     // weggooien. Dedupliceren gebeurt daarna in queryvolgorde, zodat de uitkomst
@@ -548,7 +570,7 @@ async function stepResearchAanvullend(topic: Topic, s: StandaardState): Promise<
       const alle = [...bestaand, ...nieuwGetrimd];
       const extra = await askClaudeJson(
         researchPrompt.content,
-        `Onderwerp: ${topic.title}\n\nVandaag is ${amsterdamToday()} (Europe/Amsterdam).\n\nBeschikbare WordPress-categorieën: ${taxonomies.categories.join(', ')}\nBeschikbare WordPress-districten: ${taxonomies.districts.join(', ')}\nBeschikbare WordPress-tags: ${taxonomies.tags.join(', ')}\nKies precies één "tag" uit deze lijst: de best passende. Verzin nooit een nieuwe tag. Past geen enkele bestaande tag echt goed, geef dan "" terug.\n\nDit is een AANVULLENDE ronde: er is al research gedaan, maar deze feiten ontbraken nog: ${(s.missingFacts ?? []).join(', ') || '(niet gespecificeerd)'}. Let vooral op die punten. Verzin nooit iets: staat het niet in de bronnen, laat het veld leeg en zet het in "missing_facts".\n\nBronnen:\n${alle.map((src, i) => `\n[${i + 1}] ${src.title}\n${src.url}\n${src.content}`).join('\n')}`,
+        `Onderwerp: ${topic.title}\n\nVandaag is ${amsterdamToday()} (Europe/Amsterdam).\n\nBeschikbare WordPress-categorieën: ${taxonomies.categories.join(', ')}\nBeschikbare WordPress-districten: ${taxonomies.districts.join(', ')}\nBeschikbare WordPress-tags: ${taxonomies.tags.join(', ')}\nKies precies één "tag" uit deze lijst: de best passende. Verzin nooit een nieuwe tag. Past geen enkele bestaande tag echt goed, geef dan "" terug.\n\nDit is een AANVULLENDE ronde: er is al research gedaan, maar deze feiten ontbraken nog: ${(s.missingFacts ?? []).join(', ') || '(niet gespecificeerd)'}. Let vooral op die punten. Verzin nooit iets: staat het niet in de bronnen, laat het veld leeg en zet het in "missing_facts".\n\n${profielFocus(profiel, officialHostOf(s))}\n\nBronnen:\n${alle.map((src, i) => `\n[${i + 1}] ${src.title}\n${src.url}\n${src.content}`).join('\n')}`,
         FAST_WRITE_MODEL, 6000, RESEARCH_SCHEMA, false, `research-aanvullend#${topic.id}`,
       );
       mergeResearch(r, extra);
