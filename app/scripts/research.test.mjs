@@ -9,7 +9,7 @@
 // 400 woorden. De poort hieronder bepaalt wanneer de pipeline in plaats
 // daarvan bijzoekt en korter schrijft.
 import assert from 'node:assert/strict';
-import { researchFactScore } from '../lib/writer.ts';
+import { describeInvalshoek, researchFactScore } from '../lib/writer.ts';
 import { validateArticle } from '../lib/validation.ts';
 import { formatStandardArticleHtml } from '../lib/articleHtml.ts';
 import { DEFAULT_STANDAARD_CONSTRAINTS } from '../lib/types.ts';
@@ -133,6 +133,20 @@ test('formatStandardArticleHtml: mét attributie verschijnt de bronvermelding', 
   const html = formatStandardArticleHtml(`${woorden(30)}\n\n${woorden(30)}\n\n${woorden(30)}`, 'Wij bakken elke ochtend zelf', 'eigenaar Lasse Jensen in Het Parool');
   assert.ok(html.includes('<cite'), 'cite ontbreekt');
   assert.ok(html.includes('eigenaar Lasse Jensen in Het Parool'), 'attributietekst ontbreekt');
+});
+
+// ---------- describeInvalshoek ----------
+
+test('describeInvalshoek: hoek en beats worden een verplicht blok', () => {
+  const blok = describeInvalshoek({ invalshoek: { hoek: 'De chef van Choux begint voor zichzelf in het pand van de oude drogist', beats: ['Chef werkte acht jaar bij Choux', 'Het pand was 40 jaar drogisterij Van Dam'] } });
+  assert.ok(blok.includes('INVALSHOEK'));
+  assert.ok(blok.includes('pand van de oude drogist'));
+  assert.ok(blok.includes('- Chef werkte acht jaar bij Choux'));
+});
+
+test('describeInvalshoek: zonder hoek geen blok (topics van vóór de fase)', () => {
+  assert.equal(describeInvalshoek({}), '');
+  assert.equal(describeInvalshoek({ invalshoek: { hoek: '', beats: [] } }), '');
 });
 
 // ---------- samenvatting ----------
