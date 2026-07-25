@@ -314,20 +314,27 @@ async function polishTitle(article: GeneratedArticle, s: StandaardState, naam: s
     Array.isArray(r.distinctive_features) && r.distinctive_features.length ? `Onderscheidend: ${r.distinctive_features.join('; ')}` : '',
   ].filter(Boolean).join('\n');
 
-  const system = 'Je bent eindredacteur van amsterdamnow.com, een lokale stadsgids door en voor Amsterdammers. Je bedenkt de kop: informeel, direct, nuchter en concreet. Nooit toeristisch, nooit marketingtaal.';
+  const system = 'Je bent eindredacteur van amsterdamnow.com, een lokale stadsgids door en voor Amsterdammers. Je bedenkt de kop zoals de ene Amsterdammer de andere over een plek vertelt: informeel, direct, nuchter en concreet. Nooit toeristisch, nooit marketingtaal.';
   const prompt = [
-    'Bedenk drie mogelijke titels voor dit artikel.',
+    'Bedenk drie mogelijke titels voor dit artikel, elk met een ANDERE zinsbouw.',
     '',
     'REGELS (hard):',
     `- ${constraints.titleWords.min}-${constraints.titleWords.max} woorden.`,
     `- De naam "${naam}" (of de kernnaam ervan) staat erin, bij voorkeur vooraan. Essentieel voor SEO.`,
-    '- Prikkelend en concreet. Gebruik eventueel een dubbele punt voor spanning.',
+    '- Prikkelend en concreet, met een detail dat nieuwsgierig maakt.',
+    // Sturing weg van het dubbele-punt-sjabloon: in de april-steekproef leunde
+    // bijna de helft van de koppen op "Naam: uitleg". De drie kandidaten moeten
+    // drie verschillende structuren zijn, dan wint de beste in plaats van de
+    // gewoonste.
+    '- Drie verschillende structuren: bijvoorbeeld werkwoord-leidend, een komma-bijstelling, een waarom-vraag. Hooguit één van de drie mag een dubbele punt gebruiken.',
+    '- Na een dubbele punt of komma: kleine letter, tenzij het woord een eigennaam is.',
     '- Vermijd saaie constructies als "Nieuw restaurant X opent zijn deuren".',
     constraints.noDashInText ? '- Geen em dash (—) of en dash (–).' : '',
     constraints.noAmsterdamRepeatInTitleSubregelIntro ? '- Het woord "Amsterdam" mag NIET in de titel staan.' : '',
     '',
-    'Goede voorbeelden:',
-    '- BOLIA aan de Utrechtsestraat: Deens design met koffie en maatwerk',
+    'Goede voorbeelden (drie verschillende structuren):',
+    '- BOLIA aan de Utrechtsestraat brengt Deens design met koffie en maatwerk',
+    '- Waarom De Kaaskamer al veertig jaar dezelfde toonbank gebruikt',
     '- Chez Chloé op de Overtoom: klassiek Frans van chef Marcelo Hernandez',
     '',
     'Context uit de research:',
