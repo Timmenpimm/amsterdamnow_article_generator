@@ -13,3 +13,7 @@ public/*.log
 .vercel
 .env*
 .claude/worktrees/
+
+# Machine-lokale cache van de impeccable design-hook (bevat absolute paden
+# naar lokale worktrees en verandert bij elke edit)
+.impeccable/
