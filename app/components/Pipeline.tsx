@@ -43,6 +43,37 @@ function listProgress(t: Topic): string {
   return '';
 }
 
+// Eén complete autofill-run voor één artikel. De server doet per aanroep één
+// stap (zoeken → scoren → plaatsen, daarna per lijstitem één itemfoto), dus we
+// blijven tikken tot done. Zonder opts.force gaat er géén body mee: dat is de
+// bestaande automatische driver. Met force slaat de server de "artikel is al
+// aangeraakt"-bewaking over en vult hij alleen nog lege slots; reset wist
+// daarnaast op de eerste tik de "niets gevonden"-markeringen bij lijstitems.
+async function runAutofillTicks(
+  articleId: number,
+  maxTicks: number,
+  opts?: { force?: boolean; reset?: boolean },
+): Promise<{ placed: number; itemsFilled: number; finished: boolean }> {
+  let placed = 0;
+  let itemsFilled = 0;
+  for (let tick = 0; tick < maxTicks; tick++) {
+    const init: RequestInit = opts?.force
+      ? {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force: true, ...(tick === 0 && opts.reset ? { reset: true } : {}) }),
+      }
+      : { method: 'POST' };
+    const res = await fetch(`/api/articles/${articleId}/candidates/autofill`, init);
+    const body = await res.json();
+    if (!res.ok || body.error) throw new Error(body.error || 'Beelden zoeken mislukt');
+    if (body.placed > 0) placed += body.placed;
+    if (body.filledItem) itemsFilled += 1;
+    if (body.done) return { placed, itemsFilled, finished: true };
+  }
+  return { placed, itemsFilled, finished: false };
+}
+
 function timeLabel(iso: string): string {
   const d = new Date(iso.includes('T') || iso.includes(' ') ? iso.replace(' ', 'T') : iso);
   if (isNaN(d.getTime())) return '';
@@ -99,6 +130,7 @@ export default function Pipeline() {
   const dragId = useRef<number | null>(null);
   const [dragOverId, setDragOverId] = useState<number | null>(null);
   const [publishState, setPublishState] = useState<{ enabled: boolean; nextAt: string | null } | null>(null);
+  const [rerunId, setRerunId] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -153,27 +185,15 @@ export default function Pipeline() {
         // Zoeken (1) + scorebatches (±4) + plaatsen (1) = ±6 tikken; bij een
         // lijst daarbovenop één tik per itemfoto.
         const maxTicks = 10 + (data?.lists?.[fresh.id]?.items ?? 0) + 2;
-        let placedTotal = 0;
-        let itemsFilled = 0;
-        for (let tick = 0; tick < maxTicks; tick++) {
-          const res = await fetch(`/api/articles/${fresh.id}/candidates/autofill`, { method: 'POST' });
-          const body = await res.json();
-          if (!res.ok) throw new Error(body.error);
-          if (body.placed > 0) placedTotal += body.placed;
-          if (body.filledItem) itemsFilled += 1;
-          if (body.done) {
-            autofillDone.current.add(fresh.id);
-            if (placedTotal > 0) {
-              toast(itemsFilled > 0
-                ? `Claude heeft beelden ingevuld bij "${fresh.title}" — waarvan ${itemsFilled} itemfoto${itemsFilled > 1 ? "'s" : ''}`
-                : `Claude heeft ${placedTotal} beelden alvast ingevuld bij "${fresh.title}"`);
-              load();
-            }
-            return;
-          }
+        const { placed, itemsFilled, finished } = await runAutofillTicks(fresh.id, maxTicks);
+        // Klaar, of niet klaar binnen de limiet: in beide gevallen niet blijven hameren.
+        autofillDone.current.add(fresh.id);
+        if (finished && placed > 0) {
+          toast(itemsFilled > 0
+            ? `Claude heeft beelden ingevuld bij "${fresh.title}" — waarvan ${itemsFilled} itemfoto${itemsFilled > 1 ? "'s" : ''}`
+            : `Claude heeft ${placed} beelden alvast ingevuld bij "${fresh.title}"`);
         }
-        autofillDone.current.add(fresh.id); // niet klaar binnen de limiet: niet blijven hameren
-        if (placedTotal > 0) load();
+        if (placed > 0) load();
       } catch {
         autofillDone.current.add(fresh.id); // stil falen; handmatig zoeken kan altijd nog
       } finally {
@@ -324,6 +344,41 @@ export default function Pipeline() {
     if (!res.ok) toast(body.error, { kind: 'error' });
     else toast('Gepubliceerd — live op de site');
     load();
+  }
+
+  // Beeldzoeker opnieuw laten draaien op een bestaand artikel — handig als de
+  // automatische run halverwege omviel (tokens/timeout). Zelfde tikken als de
+  // achtergrond-driver, maar met force: bestaande beelden blijven staan, alleen
+  // lege slots worden gevuld, en de eerste tik reset de eerder overgeslagen
+  // lijstitems. autofillBusy delen we met de driver, zodat de twee nooit
+  // tegelijk aan hetzelfde artikel werken.
+  async function rerunAutofill(a: Article) {
+    if (autofillBusy.current) {
+      toast('De beeldzoeker is al bezig — heel even geduld…');
+      return;
+    }
+    autofillBusy.current = true;
+    setRerunId(a.id);
+    autofillDone.current.delete(a.id);
+    try {
+      const maxTicks = 10 + (data?.lists?.[a.id]?.items ?? 0) + 2;
+      const { placed, itemsFilled } = await runAutofillTicks(a.id, maxTicks, { force: true, reset: true });
+      await load();
+      if (placed > 0) {
+        toast(itemsFilled > 0
+          ? `${placed} beeld(en) geplaatst bij "${a.title}" — waarvan ${itemsFilled} itemfoto${itemsFilled > 1 ? "'s" : ''}.`
+          : `${placed} beeld(en) geplaatst bij "${a.title}".`);
+      } else {
+        toast('Geen bruikbare beelden gevonden — kies handmatig een foto.');
+      }
+    } catch (e: any) {
+      toast(e.message || 'Beelden opnieuw zoeken mislukt', { kind: 'error' });
+    } finally {
+      // Ook na een fout: de driver hoeft dit artikel niet meteen over te nemen.
+      autofillDone.current.add(a.id);
+      autofillBusy.current = false;
+      setRerunId(null);
+    }
   }
 
   async function deleteArticle(a: Article) {
@@ -608,6 +663,15 @@ export default function Pipeline() {
                           Beelden toevoegen →
                         </button>
                       </Link>
+                      <button
+                        className="btn-small"
+                        title="Beelden opnieuw automatisch zoeken en plaatsen"
+                        disabled={rerunId === a.id}
+                        style={{ opacity: rerunId === a.id ? 0.6 : 1 }}
+                        onClick={() => rerunAutofill(a)}
+                      >
+                        {rerunId === a.id ? '⟳' : '↻'}
+                      </button>
                       <button className="btn-small" title="Verwijderen" onClick={() => deleteArticle(a)}>✕</button>
                     </div>
                   </div>
