@@ -1,4 +1,5 @@
 import type { ListConstraints, StandaardConstraints, WordRange } from './types';
+import { competitorInTekst } from './competitors';
 
 export type GeneratedArticle = {
   title: string; subregel: string; introductie_tekst: string; content: string; quote: string;
@@ -156,6 +157,18 @@ export function quoteSourceAllowed(bron: string, blacklist: string[], herkomst =
   return !blacklist.some(b => haystack.includes(b));
 }
 
+// Laatste poort vóór WordPress: staat de naam van een concurrent in de tekst?
+// De bron- en entiteitspoorten (tavily.ts, writer.ts stepResearch) houden de
+// concurrent uit de research; deze vangt wat het schrijfmodel er alsnog bij
+// zet — "zoals Your Little Black Book al schreef", een tip-attributie, een
+// merknaam in de subregel. Gooit met de reden die de herschrijfronde als
+// afkeurmelding meekrijgt, dus die moet zeggen wat er moet gebeuren.
+export function checkNoCompetitor(text: string, extra: string[] = []): string | null {
+  const naam = competitorInTekst([text], extra);
+  if (!naam) return null;
+  return `De tekst noemt ${naam}, een concurrerende stadsgids. Haal de vermelding weg en schrijf het feit in eigen woorden op basis van de research.`;
+}
+
 export function validateListArticle(article: GeneratedListArticle, config: ListConstraints): string[] {
   const meldingen: string[] = [];
   if (article.title.length > config.titleMaxChars) {
@@ -178,8 +191,10 @@ export function validateListArticle(article: GeneratedListArticle, config: ListC
     throw new Error(`Een lijstartikel heeft minimaal ${config.minItems} items (nu ${article.items.length}).`);
   }
 
-  const allText = [article.title, article.subregel, article.introcontent, article.inleiding, article.afsluiting, ...article.items.map(i => i.beschrijving)].join('\n');
+  const allText = [article.title, article.subregel, article.introcontent, article.inleiding, article.afsluiting, ...article.items.map(i => i.beschrijving), ...article.items.map(i => i.naam)].join('\n');
   forbiddenIn('Het artikel', allText, config.forbiddenWords);
+  const concurrent = checkNoCompetitor(allText, config.quoteSourceBlacklist ?? []);
+  if (concurrent) throw new Error(concurrent);
   // Em/en-dash in lopende tekst verboden; het adres-streepje wordt pas bij de
   // HTML-assemblage toegevoegd en valt hier dus buiten.
   if (config.noDashInText && /[—–]/.test(allText)) throw new Error('Het artikel bevat een em-dash of en-dash in de lopende tekst.');
@@ -283,6 +298,11 @@ export function validateArticle(
   if (config.quoteMustBeVerbatimInContent && !normal(article.content).includes(normal(article.quote))) {
     throw new Error('De quote moet letterlijk in de artikeltekst voorkomen.');
   }
+  const concurrent = checkNoCompetitor(
+    [article.title, article.subregel, article.introductie_tekst, article.content, article.quote].join('\n'),
+    standaardQuoteSourceBlacklist(config),
+  );
+  if (concurrent) throw new Error(concurrent);
   const leak = findPromptExampleLeak([article.quote, article.content, article.introductie_tekst, article.subregel].join('\n'), promptExamples);
   if (leak) {
     throw new Error(`Voorbeeldzin uit de prompt letterlijk overgenomen: "${leak}". De voorbeelden tonen alleen stijl; schrijf een eigen zin over dit onderwerp, op basis van de research.`);

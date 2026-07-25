@@ -8,6 +8,7 @@ import {
   recordFindings, topicIdsByTitle, updateSourceScan,
 } from './db';
 import type { ScanResult, Source } from './types';
+import { competitorInTekst } from './competitors';
 
 // Guard tegen het overspoelen van de wachtrij bij een grote/onverwachte pagina.
 const MAX_NEW_PER_SCAN = 20;
@@ -51,6 +52,7 @@ Je krijgt onderwerp-titels die onze bronnenscanner letterlijk uit externe pagina
 Regels:
 1. Feiten blijven staan: namen van events, zaken, venues, buurten en jaartallen neem je over.
 2. Bron-opmaak verdwijnt: aantallen uit lijstjes ("55 X", "top 10", "40+"), rubrieksnamen en huisstijl-formats van de bron laat je weg. Onze redactie bepaalt straks zelf de selectie en het aantal.
+2b. De naam van het medium dat de kop publiceerde hoort NOOIT in het topic. Namen als Your Little Black Book, YLBB, Barts Boekje, Indebuurt, iamsterdam of Time Out zijn concurrenten van ons: uit "Your Little Black Book tipt: 18 X museumtips" wordt "museumtentoonstellingen deze maand", nooit een topic met hun merknaam erin.
 3. Thematische en lijst-onderwerpen krijgen een eigen invalshoek (bijvoorbeeld per buurt, per seizoen, voor een doelgroep, of een andere insteek), maar de zoekintentie blijft herkenbaar: uit "55 X beste terrassen van Amsterdam per wijk" moet nog altijd "beste terrassen Amsterdam" doorklinken.
 4. Losse events, openingen en nieuwtjes blijven concreet (naam + kern), maar formuleer je kort in eigen woorden — niet de bronkop naschrijven.
 5. Nederlands, één bondige onderwerptitel per item, geen aanhalingstekens, nummering of opsommingstekens.
@@ -149,7 +151,20 @@ async function runScan(source: Source): Promise<ScanResult & { contentHash: stri
   // dedup tegen eerdere scans) blijft op de originele bronkop draaien —
   // anders zou elke scan hetzelfde item met een nieuwe herformulering opnieuw
   // aandragen.
-  const topics = await editorializeTitles(fresh.map(f => f.titel));
+  const geredactionaliseerd = await editorializeTitles(fresh.map(f => f.titel));
+
+  // Vangnet op de fail-open van editorializeTitles: valt de call uit (of laat
+  // het model de merknaam staan), dan ging de letterlijke bronkop de wachtrij
+  // in. Bij een concurrent is dat precies hoe artikel 87365 ontstond — hun kop
+  // werd ons onderwerp en daarmee hun merk onze entiteit. Zo'n vondst leggen
+  // we wél vast (dedup-historie: hij komt volgende scan niet terug), maar hij
+  // krijgt geen topic. Vondsten van andere bronnen blijven ongemoeid.
+  const bruikbaar = fresh.map((_, i) => !competitorInTekst([geredactionaliseerd[i]]));
+  const geweerd = bruikbaar.filter(ok => !ok).length;
+  if (geweerd) {
+    console.warn(`[scanner] ${geweerd} vondst(en) geweerd: merknaam van een concurrent bleef in het topic staan`);
+  }
+  const topics = geredactionaliseerd.filter((_, i) => bruikbaar[i]);
 
   // Seed de event-datum op het topic: de datum hoort bij de originele bronkop
   // (fresh[i]); we koppelen 'm aan het editorialized topic dat de wachtrij
@@ -158,16 +173,17 @@ async function runScan(source: Source): Promise<ScanResult & { contentHash: stri
   // items met een concrete startdatum krijgen een seed.
   const seeds = new Map<string, { start: string; eind: string }>();
   fresh.forEach((f, i) => {
-    if (f.start) seeds.set(topics[i].toLowerCase().trim(), { start: f.start, eind: f.eind });
+    if (f.start && bruikbaar[i]) seeds.set(geredactionaliseerd[i].toLowerCase().trim(), { start: f.start, eind: f.eind });
   });
 
   // addTopics ontdubbelt nog eens tegen de globale wachtrij (handmatige invoer of
   // een andere bron die hetzelfde al aandroeg) en zet de seed in list_state.
   const { added, skipped } = await addTopics(topics, new Set(), seeds);
   const idMap = await topicIdsByTitle(topics);
+  // Een geweerde vondst wordt wél vastgelegd (dedup-historie) maar zonder topic.
   const entries = fresh.map((f, i) => ({
     title: f.titel,
-    topicId: idMap.get(topics[i].toLowerCase().trim()) ?? null,
+    topicId: bruikbaar[i] ? idMap.get(geredactionaliseerd[i].toLowerCase().trim()) ?? null : null,
   }));
   await recordFindings(source.id, entries);
 
