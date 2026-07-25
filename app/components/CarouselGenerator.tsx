@@ -1,12 +1,14 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Article } from '@/lib/types';
 import {
-  getCarouselContent, getCarouselMeta, generateCarousel, regenerateSlide,
-  saveCarouselContent, markReady, publishCarousel,
+  getCarouselContent, generateCarousel, regenerateSlide,
+  saveCarouselContent, flushCarouselSave, markReady, publishCarousel,
+  EngineNotConfiguredError,
   type CarouselContent, type CarouselSlide, type CarouselStatus, type CarouselTemplate, type GenerateProgress,
-} from '@/lib/carousel-mock';
+} from '@/lib/carousel';
 import { toast } from './toast';
 import CarouselSlidePreview from './CarouselSlidePreview';
 import CarouselSlideEditor from './CarouselSlideEditor';
@@ -28,6 +30,8 @@ export default function CarouselGenerator({ articleId }: { articleId: number }) 
   const [regenBusy, setRegenBusy] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [engineMissing, setEngineMissing] = useState(false);
+  const [engineError, setEngineError] = useState('');
   const cancelled = useRef(false);
 
   const load = useCallback(async () => {
@@ -37,18 +41,29 @@ export default function CarouselGenerator({ articleId }: { articleId: number }) 
       const { article: a } = await res.json();
       setArticle(a);
       setLoadError('');
-      const meta = getCarouselMeta(articleId);
-      const existing = getCarouselContent(articleId);
+    } catch (e: any) {
+      setLoadError(e.message);
+      return;
+    }
+    try {
+      const { meta, content: existing } = await getCarouselContent(articleId);
       if (existing) setContent(existing);
       if (meta.template) setTemplate(meta.template);
       setStatus(meta.status);
       setSavedAt(meta.savedAt);
+      setEngineMissing(false);
+      setEngineError('');
     } catch (e: any) {
-      setLoadError(e.message);
+      if (e instanceof EngineNotConfiguredError) setEngineMissing(true);
+      else setEngineError(e.message || 'Carousel-status kon niet geladen worden.');
     }
   }, [articleId]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Openstaande (gedebouncede) autosave wegschrijven bij het verlaten van de
+  // pagina, zodat de laatste toetsaanslagen niet verloren gaan.
+  useEffect(() => () => { void flushCarouselSave(); }, []);
 
   async function runGenerate() {
     if (!article || !template) return;
@@ -64,8 +79,12 @@ export default function CarouselGenerator({ articleId }: { articleId: number }) 
       setSlideIndex(0);
     } catch (e: any) {
       if (cancelled.current) return;
-      setGenError(e.message);
-      toast('Genereren mislukt — probeer het opnieuw', { kind: 'error' });
+      if (e instanceof EngineNotConfiguredError) {
+        setEngineMissing(true);
+      } else {
+        setGenError(e.message);
+        toast('Genereren mislukt — probeer het opnieuw', { kind: 'error' });
+      }
     } finally {
       if (!cancelled.current) setProgress(null);
     }
@@ -115,10 +134,14 @@ export default function CarouselGenerator({ articleId }: { articleId: number }) 
     }
   }
 
-  function doMarkReady() {
-    markReady(articleId);
-    setStatus('ready');
-    toast('Klaargezet — wacht op handmatige plaatsing');
+  async function doMarkReady() {
+    try {
+      await markReady(articleId);
+      setStatus('ready');
+      toast('Klaargezet — wacht op handmatige plaatsing');
+    } catch (e: any) {
+      toast(e.message, { kind: 'error' });
+    }
   }
 
   async function doPublish() {
@@ -141,6 +164,20 @@ export default function CarouselGenerator({ articleId }: { articleId: number }) 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: 'calc(100vh - 53px)' }}>
       <SubContext article={article} status={status} savedAt={savedAt} />
+
+      {engineMissing && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px', background: 'var(--amber-bg)', borderBottom: '1px solid var(--amber-border)' }}>
+          <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--amber-dark)' }}>Socials-engine niet gekoppeld</span>
+          <span style={{ fontSize: 12.5, color: 'var(--amber-dark)' }}>Genereren en publiceren werken pas na het instellen van de koppeling.</span>
+          <Link href="/instellingen" className="btn-small" style={{ marginLeft: 'auto', flexShrink: 0 }}>Naar Instellingen → Instagram</Link>
+        </div>
+      )}
+      {engineError && !engineMissing && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px', background: 'var(--red-bg)', borderBottom: '1px solid var(--red-border)' }}>
+          <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--red-dark)' }}>{engineError}</span>
+          <button className="btn-small" style={{ marginLeft: 'auto', flexShrink: 0 }} onClick={load}>Opnieuw proberen</button>
+        </div>
+      )}
 
       {progress ? (
         <LoadingPanel progress={progress} onCancel={cancelGenerate} />

@@ -1,6 +1,6 @@
 'use client';
 
-import type { CarouselSlide } from '@/lib/carousel-mock';
+import type { CarouselSlide } from '@/lib/carousel';
 
 const LAYOUT_LABEL: Record<CarouselSlide['layout'], string> = {
   hero: 'HERO', info: 'INFO', image: 'BEELD', quote: 'QUOTE', cta: 'CTA',

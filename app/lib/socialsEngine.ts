@@ -96,7 +96,9 @@ export async function engineFetch(path: string, init: RequestInit = {}): Promise
         ...(init.headers || {}),
       },
       cache: 'no-store',
-      signal: AbortSignal.timeout(15000),
+      // Standaard 15s; langlopende calls (genereren/publiceren, tot ~60s aan
+      // de engine-kant) geven zelf een ruimere AbortSignal.timeout mee.
+      signal: init.signal ?? AbortSignal.timeout(15000),
     });
   } catch (err) {
     throw new EngineError(

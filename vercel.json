@@ -31,6 +31,12 @@
     { "src": "^/api/audit/tick/?$", "dest": "/app/api/audit/tick" },
     { "src": "^/api/audit/by-post/?$", "dest": "/app/api/audit/by-post" },
     { "src": "^/api/audit/([^/]+)/?$", "dest": "/app/api/audit/[id]?id=$1" },
+    { "src": "^/api/carousel/status/?$", "dest": "/app/api/carousel/status" },
+    { "src": "^/api/carousel/([^/]+)/generate/?$", "dest": "/app/api/carousel/[articleId]/generate?articleId=$1" },
+    { "src": "^/api/carousel/([^/]+)/slide/?$", "dest": "/app/api/carousel/[articleId]/slide?articleId=$1" },
+    { "src": "^/api/carousel/([^/]+)/publish/?$", "dest": "/app/api/carousel/[articleId]/publish?articleId=$1" },
+    { "src": "^/api/carousel/([^/]+)/?$", "dest": "/app/api/carousel/[articleId]?articleId=$1" },
+    { "src": "^/carousel/([^/]+)/?$", "dest": "/app/carousel/[articleId]?articleId=$1" },
     { "src": "^/artikel/([^/]+)/?$", "dest": "/app/artikel/[id]?id=$1" },
     { "src": "/(.*)", "dest": "/app/$1", "check": true }
   ],
