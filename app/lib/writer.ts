@@ -4,7 +4,7 @@ import { RESEARCH_SCHEMA, ARTICLE_SCHEMA, SEO_SCHEMA, ENTITY_VERIFY_SCHEMA, QUOT
 import { createDraft, singleTag, taxonomyChoices } from './wp';
 import { checkTopicAgainstWp } from './dedup';
 import { researchWithTavily } from './tavily';
-import { validateArticle, checkTitle, GeneratedArticle } from './validation';
+import { validateArticle, checkTitle, extractPromptExamples, findPromptExampleLeak, GeneratedArticle } from './validation';
 import { parseStandaardState, type Article, type StandaardConstraints, type StandaardPhase, type StandaardState, type Topic, type WordRange } from './types';
 import { formatStandardArticleHtml } from './articleHtml';
 import { decodeHtmlEntities } from './htmlEntities';
@@ -334,7 +334,9 @@ async function stepSchrijf(topic: Topic, s: StandaardState): Promise<StandaardSt
   );
   try {
     const candidate = buildCandidate(payload);
-    validateArticle(candidate, subjectName(topic, s), constraints);
+    // Voorbeeldzinnen uit de actieve prompt zelf: het model mag ze niet
+    // letterlijk overnemen (zie validation.ts extractPromptExamples).
+    validateArticle(candidate, subjectName(topic, s), constraints, extractPromptExamples(writePrompt.content));
     // Titel apart, vrij (her)genereren voor meer punch — zie polishTitle. Nooit
     // slechter: valt terug op de zojuist gevalideerde titel als geen kandidaat
     // de keuring haalt.
@@ -366,7 +368,7 @@ async function stepSchrijfRetry(topic: Topic, s: StandaardState): Promise<Standa
   let checked: GeneratedArticle;
   try {
     checked = buildCandidate(payload);
-    validateArticle(checked, subjectName(topic, s), constraints);
+    validateArticle(checked, subjectName(topic, s), constraints, extractPromptExamples(writePrompt.content));
   } catch (e: any) {
     // Elke herkansing is sinds de fase-opsplitsing een eigen serverless-tick,
     // dus meerdere rondes kunnen veilig (zelfde patroon als composeAttempts in
@@ -507,19 +509,30 @@ export interface QuoteRewriteOutcome {
 // Gooit door bij elke fout of als de uitkomst niet aan de eisen voldoet; de
 // aanroeper (backfill-quote-length-route) vangt dat af en slaat het artikel
 // dan over — bij twijfel liever skippen dan een artikel fout herschrijven.
-export async function rewriteQuote(article: Article, contentHtml: string): Promise<QuoteRewriteOutcome> {
+export interface RewriteQuoteOptions {
+  // Waarom de bestaande quote weg moet, in de opdracht aan het model. Standaard
+  // "te kort" (de oorspronkelijke backfill); de voorbeeldzin-backfill geeft hier
+  // zijn eigen reden mee.
+  reden?: string;
+  // Zinnen die de nieuwe quote niet mag hergebruiken (voorbeeldzinnen uit de
+  // prompt). Wordt na de call hard gecontroleerd, niet alleen gevraagd.
+  verbodenZinnen?: string[];
+}
+
+export async function rewriteQuote(article: Article, contentHtml: string, opts: RewriteQuoteOptions = {}): Promise<QuoteRewriteOutcome> {
   const block = findExistingQuoteBlock(contentHtml);
   if (!block) throw new Error('Geen herkenbare quote-structuur (blockquote + bronparagraaf) gevonden.');
 
   const constraints = await activeConstraints('standaard');
   const { min: minWords, max: maxWords } = constraints.quoteWords;
   const paragraphText = plainText(block.paragraphHtml);
+  const verboden = opts.verbodenZinnen?.filter(Boolean) || [];
 
-  const system = 'Je bent eindredacteur van amsterdamnow.com, een lokale stadsgids door en voor Amsterdammers. Je herschrijft een te korte pull-quote naar een langere, sterkere quote die zowel als losstaande pull-quote als in de lopende tekst goed leest. Nuchtere, informele toon, geen marketingtaal, je verzint geen nieuwe feiten.';
+  const system = 'Je bent eindredacteur van amsterdamnow.com, een lokale stadsgids door en voor Amsterdammers. Je herschrijft een afgekeurde pull-quote naar een sterkere quote die zowel als losstaande pull-quote als in de lopende tekst goed leest. Nuchtere, informele toon, geen marketingtaal, je verzint geen nieuwe feiten.';
   const prompt = [
     `Artikel: ${article.title}`,
     '',
-    `Bestaande (te korte) quote: "${block.quoteText}"`,
+    `Bestaande (${opts.reden || 'te korte'}) quote: "${block.quoteText}"`,
     '',
     'Bronparagraaf (bevat de quote letterlijk):',
     paragraphText,
@@ -532,6 +545,12 @@ export async function rewriteQuote(article: Article, contentHtml: string): Promi
     '- Herschrijf de bronparagraaf zo dat de NIEUWE quote daar woord voor woord letterlijk in voorkomt, net als de oorspronkelijke opzet. Lopende tekst, geen opsomming.',
     '- Geen em dash (—) of en dash (–).',
     '- Geen vraag en geen meta-taal ("zoals hij zelf zegt", etc.) in de quote zelf.',
+    ...(verboden.length
+      ? [
+          '- De nieuwe quote gaat over DIT artikel en deze zaak. Hergebruik geen van deze zinnen, ook niet gedeeltelijk:',
+          ...verboden.map(z => `  · "${z}"`),
+        ]
+      : []),
     '',
     'Antwoord ALLEEN met JSON: "quote" (de nieuwe quote) en "herschreven_paragraaf" (de volledige, aangepaste bronparagraaf).',
   ].join('\n');
@@ -558,6 +577,11 @@ export async function rewriteQuote(article: Article, contentHtml: string): Promi
   if (constraints.quoteMustBeVerbatimInContent && !normalizeForVerbatim(plainText(html)).includes(normalizeForVerbatim(quote))) {
     throw new Error('De nieuwe quote staat niet letterlijk in de nieuwe artikeltekst.');
   }
+  // Harde controle in plaats van vertrouwen op de instructie: staat er ergens in
+  // het nieuwe artikel nog een voorbeeldzin, dan is de herschrijving mislukt en
+  // slaat de aanroeper het artikel over.
+  const restLeak = findPromptExampleLeak(plainText(html), verboden);
+  if (restLeak) throw new Error(`Voorbeeldzin staat na het herschrijven nog in het artikel: "${restLeak}".`);
 
   return { html, quote };
 }
