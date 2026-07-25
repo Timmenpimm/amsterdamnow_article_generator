@@ -1,6 +1,7 @@
 import { demoDelete, demoGetAll, demoUpsert, ensureDemoSeed, STORAGE } from './db';
 import { DEMO_ARTICLES, DEMO_TOPICS } from './demo-seed';
 import { decodeHtmlEntities } from './htmlEntities';
+import { cleanCredit } from './credit';
 import { formatExistingStandardArticleHtml, hasEditorialFormatting } from './articleHtml';
 import type { Article, MediaRef } from './types';
 
@@ -341,7 +342,7 @@ export async function updateImages(id: number, upd: ImageUpdate, known: MediaRef
       a.inline = upd.inlineId == null ? null : pool.get(upd.inlineId) || null;
       a.contentHtml = spliceInlineImage(a.contentHtml, a.inline);
     }
-    if (upd.fotograaf !== undefined) a.fotograaf = upd.fotograaf;
+    if (upd.fotograaf !== undefined) a.fotograaf = cleanCredit(upd.fotograaf);
     a.modified = new Date().toISOString();
     await demoSave(a);
     return a;
@@ -349,7 +350,11 @@ export async function updateImages(id: number, upd: ImageUpdate, known: MediaRef
   const body: any = { acf: {} };
   if (upd.featuredId !== undefined) body.featured_media = upd.featuredId ?? 0;
   if (upd.sliderIds) body.acf.slider = upd.sliderIds;
-  if (upd.fotograaf !== undefined) body.acf.fotograaf = upd.fotograaf;
+  // Enige schrijfpad naar acf.fotograaf. De schoonmaak zit hier (en niet
+  // alleen bij het opbouwen van de credit) zodat ook handmatig getypte of via
+  // een ouder pad geërfde tekst nooit een onbevestigde licentieclaim in
+  // WordPress zet. Zie lib/credit.ts.
+  if (upd.fotograaf !== undefined) body.acf.fotograaf = cleanCredit(upd.fotograaf);
   if (upd.inlineId !== undefined) {
     const cur = await wpFetch(`/wp/v2/posts/${id}?context=edit&_fields=content`);
     const media = upd.inlineId == null ? null : (known.find(m => m.id === upd.inlineId) || null);

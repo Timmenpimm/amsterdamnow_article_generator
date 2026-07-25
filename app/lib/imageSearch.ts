@@ -1,4 +1,5 @@
 import type { Article, ImageCandidateDraft } from './types';
+import { GOOGLE_LICENSE_NOTE } from './credit';
 
 // Zoekt rechtenvrije kandidaat-beelden bij een artikel. Vier providers:
 // - Openverse (geen key; alleen licenties die commercieel gebruik toestaan)
@@ -167,7 +168,9 @@ async function searchGoogle(query: string): Promise<Draft[]> {
       width: Number(it.imageWidth), height: Number(it.imageHeight),
       source: `Google · ${it.domain || it.source || 'onbekend'}`,
       source_page: (it.link || it.imageUrl) as string,
-      license: 'Creative Commons (Google-rechtenfilter — check de bronpagina)',
+      // Blijft in de kandidaatlijst staan zodat de redactie in de tool ziet
+      // waar de licentieclaim vandaan komt; credit.ts houdt hem uit WordPress.
+      license: GOOGLE_LICENSE_NOTE,
       license_url: '',
       author: (it.source || it.domain || '') as string,
       title: (it.title || '') as string,

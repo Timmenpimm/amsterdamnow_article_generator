@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getArticle, updateArticleContent, updateImages, uploadMediaFromUrl } from '@/lib/wp';
 import type { ImageUpdate } from '@/lib/wp';
 import { searchImageCandidates } from '@/lib/imageSearch';
+import { buildCredit } from '@/lib/credit';
 import { assembleListHtml } from '@/lib/listHtml';
 import {
   addImageCandidates, listImageCandidates, unscoredImageCandidates,
@@ -172,7 +173,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         }
         if (uploaded.length) {
           const best = uploaded[0].candidate;
-          const credit = [best.author, best.source, best.license].filter(Boolean).join(' · ');
+          const credit = buildCredit(best);
           // Standaardartikel: featured + 1 slider + 1 inline. Lijstartikel heeft
           // geen inline-beeld (eigen itemfoto-flow, content wordt
           // her-geassembleerd) → de resterende beelden gaan naar de slider.
