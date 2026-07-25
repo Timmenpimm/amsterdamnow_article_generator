@@ -154,6 +154,34 @@ export function findSourceProseLeak(text: string, sources: { content: string }[]
   return null;
 }
 
+// Sjabloonzinnen die de schrijfprompt al verbiedt (<hard_limit
+// id="no_stock_phrases">) maar die het model toch bleef gebruiken: het verbod
+// stond alléén in de prompt en werd nergens getoetst, dus een overtreding
+// haalde gewoon de site (de wijnzin stond in 11+ gepubliceerde artikelen,
+// waaronder een bakkerij zonder wijnkaart). Genormaliseerde deelzinnen,
+// contains-match via normal(): interpunctie- en hoofdletter-varianten tellen
+// ook. "net zo serieus als de keuken" staat erbij als kern van de wijnzin:
+// elke omweg eromheen ("bij X net zo serieus...") blijft zo ook geblokkeerd,
+// onafhankelijk van welke voorbeeldzin er in de actieve prompt staat.
+const STOCK_PHRASES = [
+  'dat is precies de bedoeling',
+  'weet waar hij moet zijn',
+  'weet je waar je moet zijn',
+  'weet waar je moet zijn',
+  'om in de gaten te houden',
+  'is geen gewone',
+  'heeft weinig weg van een gewone',
+  'en dat merk je',
+  'net zo serieus als de keuken',
+];
+
+// De eerste verboden sjabloonzin die (genormaliseerd) in de tekst staat, of null.
+export function findStockPhrase(text: string): string | null {
+  const haystack = normal(text);
+  if (!haystack) return null;
+  return STOCK_PHRASES.find(phrase => haystack.includes(phrase)) ?? null;
+}
+
 // ---------- lijstartikelen ----------
 
 export interface ListItemDraft {
@@ -347,6 +375,10 @@ export function validateArticle(
     if (bronLeak) {
       throw new Error(`Zin bijna woordelijk overgenomen uit de brontekst: "${bronLeak}…". Gebruik de bron alleen voor feiten, schrijf de zin zelf in eigen woorden.`);
     }
+  }
+  const stockPhrase = findStockPhrase([article.title, article.subregel, article.introductie_tekst, article.content, article.quote].join('\n'));
+  if (stockPhrase) {
+    throw new Error(`Verboden sjabloonzin gebruikt: "${stockPhrase}". Deze formule staat op de no_stock_phrases-lijst; herschrijf de zin met een concreet detail uit de research.`);
   }
   if (config.noDashInText && [article.title, article.subregel, article.introductie_tekst, article.content, article.quote].some(v => /[—–]/.test(v))) {
     throw new Error('Een artikel mag geen em dash of en dash bevatten.');
