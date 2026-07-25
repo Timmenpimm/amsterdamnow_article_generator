@@ -1,3 +1,5 @@
+import { competitorInHost } from './competitors';
+
 type TavilyResult = { title?: string; url?: string; content?: string; raw_content?: string };
 type TavilyResponse = { results?: TavilyResult[]; detail?: string; message?: string };
 
@@ -95,7 +97,15 @@ export async function researchWithTavily(
   const data = await res.json().catch(() => ({})) as TavilyResponse;
   if (!res.ok) throw new Error(`Tavily ${res.status}: ${data.detail || data.message || 'onderzoek mislukt'}`);
 
-  const results = data.results || [];
+  // Concurrenten eruit vóórdat er iets met de resultaten gebeurt. Zij zijn de
+  // reden dat artikel 87365 bestond: hun listicle was de beste treffer op een
+  // van hun eigen koppen, waarna de homepage-detectie hieronder hun site tot
+  // "officiële site van het onderwerp" verklaarde. Weggooien op dit punt dekt
+  // in één keer de bron, de entiteit, de website én de feiten die de schrijver
+  // te zien krijgt.
+  const alleResults = data.results || [];
+  const results = alleResults.filter(r => !competitorInHost(r.url));
+  const geweerd = alleResults.length - results.length;
   const searchSources = results
     .filter(r => r.url && (r.raw_content || r.content))
     .map(r => ({ title: r.title || r.url!, url: r.url!, content: (r.raw_content || r.content || '').slice(0, 12_000) }));
@@ -145,7 +155,17 @@ export async function researchWithTavily(
     seen.add(key);
     sources.push(s);
   }
-  if (!sources.length) throw new Error('Tavily vond geen bruikbare bronnen voor dit onderwerp.');
+  if (!sources.length) {
+    // Bleef er niets over omdat álles van concurrenten kwam, dan is dat de
+    // echte reden — en die hoort in de foutmelding, anders gaat de redactie
+    // zoeken naar een Tavily-storing die er niet is.
+    if (geweerd) {
+      throw new Error(
+        'Alle gevonden bronnen komen van concurrerende stadsgidsen. Dit onderwerp bestaat kennelijk alleen in hún artikel; schrijf het niet over maar kies de onderliggende zaak of het event als onderwerp.'
+      );
+    }
+    throw new Error('Tavily vond geen bruikbare bronnen voor dit onderwerp.');
+  }
   return { sources: sources.slice(0, 6), officialUrl };
 }
 

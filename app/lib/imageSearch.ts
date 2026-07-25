@@ -1,5 +1,6 @@
 import type { Article, ImageCandidateDraft } from './types';
 import { GOOGLE_LICENSE_NOTE } from './credit';
+import { competitorInBron, competitorInTekst } from './competitors';
 
 // Zoekt rechtenvrije kandidaat-beelden bij een artikel. Vier providers:
 // - Openverse (geen key; alleen licenties die commercieel gebruik toestaan)
@@ -54,7 +55,15 @@ export function buildImageQueries(article: Pick<Article, 'title' | 'naam_locatie
   const queries: string[] = [];
   const add = (q: string | undefined | null) => {
     const t = (q || '').trim().replace(/\s+/g, ' ');
-    if (t.length > 2 && !queries.some(x => x.toLowerCase() === t.toLowerCase())) queries.push(t);
+    if (t.length <= 2) return;
+    // Nooit op de merknaam van een concurrent zoeken. Bij artikel 87365 liep
+    // de hele beeldzoektocht op "Your Little Black Book Amsterdam"; wat je dan
+    // vindt is hún beeldbank, hún artikel of — zoals daar gebeurde — een foto
+    // van een derde partij die zíj gebruikten. Backfills draaien ook op
+    // bestaande drafts, dus deze check moet hier staan en niet alleen bij de
+    // entiteitspoort in writer.ts.
+    if (competitorInTekst([t])) return;
+    if (!queries.some(x => x.toLowerCase() === t.toLowerCase())) queries.push(t);
   };
   if (article.naam_locatie) add(`${article.naam_locatie} Amsterdam`);
   add(article.title);
@@ -207,6 +216,10 @@ export async function searchImageCandidates(
       // Centrale liggend-guard: alleen duidelijk rechthoekige, liggende
       // beelden die groot genoeg zijn gaan door naar scoring.
       if (!isLandscapeEnough(d.width, d.height)) continue;
+      // Geen beeld dat bij een concurrent vandaan komt — niet het bestand,
+      // niet de bronpagina, en niet via de credit ("Google · ylbb.nl").
+      if (competitorInBron({ url: d.url, tekst: [d.source, d.author, d.title] })) continue;
+      if (competitorInBron({ url: d.source_page })) continue;
       const key = d.url.split('?')[0];
       if (seen.has(key)) continue;
       seen.add(key);
