@@ -1,6 +1,10 @@
 'use client';
 
-import type { CarouselSlide } from '@/lib/carousel';
+import {
+  isNowSlide,
+  type AnyCarouselSlide, type CarouselSlide, type NowCarouselSlide, type NowFamilySpec,
+} from '@/lib/carousel';
+import CarouselNowPreview from './CarouselNowPreview';
 
 const LAYOUT_LABEL: Record<CarouselSlide['layout'], string> = {
   hero: 'HERO', info: 'INFO', image: 'BEELD', quote: 'QUOTE', cta: 'CTA',
@@ -59,15 +63,46 @@ function SlideFace({ slide, kicker, big }: { slide: CarouselSlide; kicker: strin
 }
 
 export default function CarouselSlidePreview({
-  slides, currentIndex, onSelect, kicker,
+  slides, currentIndex, onSelect, kicker, nowSpec, articleId,
 }: {
-  slides: CarouselSlide[];
+  slides: AnyCarouselSlide[];
   currentIndex: number;
   onSelect: (i: number) => void;
   kicker: string;
+  // Gezet bij een Amsterdam NOW-carousel; dan zijn de slides NowCarouselSlide[]
+  // en tonen we de échte PNG's van de engine in plaats van deze DOM-benadering.
+  nowSpec?: NowFamilySpec | null;
+  // Nodig om de render-proxy aan te roepen (alleen voor het NOW-pad).
+  articleId?: number;
 }) {
-  const total = slides.length;
-  const current = slides[currentIndex];
+  const allNow = slides.length > 0 && slides.every(isNowSlide);
+
+  // NOW-slides zonder spec: het manifest is nog aan het laden. De satori-
+  // benadering hieronder zou een leeg, verkeerd beeld tonen.
+  if (allNow && !nowSpec) {
+    return (
+      <div style={{ flex: 1, minWidth: 0, background: 'var(--sidebar)', display: 'grid', placeItems: 'center', padding: 40 }}>
+        <span style={{ fontSize: 13, color: 'var(--gray)' }}>Sjabloon laden…</span>
+      </div>
+    );
+  }
+
+  if (nowSpec && allNow) {
+    return (
+      <CarouselNowPreview
+        slides={slides as NowCarouselSlide[]}
+        spec={nowSpec}
+        currentIndex={currentIndex}
+        onSelect={onSelect}
+        articleId={articleId}
+      />
+    );
+  }
+
+  // --- satori-pad: ongewijzigd ---
+  const satoriSlides = slides as CarouselSlide[];
+  const total = satoriSlides.length;
+  const current = satoriSlides[currentIndex];
   const goto = (i: number) => onSelect((i + total) % total);
 
   return (
@@ -96,7 +131,7 @@ export default function CarouselSlidePreview({
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-        {slides.map((s, i) => (
+        {satoriSlides.map((s, i) => (
           <span
             key={s.index}
             onClick={() => onSelect(i)}
@@ -109,7 +144,7 @@ export default function CarouselSlidePreview({
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#fff', border: '1px solid var(--border-light)', borderRadius: 12, padding: '10px 12px' }}>
-        {slides.map((s, i) => (
+        {satoriSlides.map((s, i) => (
           <div
             key={s.index}
             onClick={() => onSelect(i)}

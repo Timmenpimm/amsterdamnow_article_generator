@@ -1,6 +1,7 @@
 'use client';
 
-import type { CarouselContent, CarouselSlide } from '@/lib/carousel';
+import { isNowSlide, type CarouselContent, type CarouselSlide, type NowFamilySpec } from '@/lib/carousel';
+import CarouselNowFields from './CarouselNowFields';
 
 const LAYOUT_NAME: Record<CarouselSlide['layout'], string> = {
   hero: 'Hero', info: 'Info', image: 'Beeld', quote: 'Quote', cta: 'CTA',
@@ -8,7 +9,7 @@ const LAYOUT_NAME: Record<CarouselSlide['layout'], string> = {
 
 export default function CarouselSlideEditor({
   content, slideIndex, onChangeSlide, onRegenerateSlide, regenerating,
-  onChangeCaption, onChangeHashtags,
+  onChangeCaption, onChangeHashtags, nowSpec,
 }: {
   content: CarouselContent;
   slideIndex: number;
@@ -17,24 +18,49 @@ export default function CarouselSlideEditor({
   regenerating: boolean;
   onChangeCaption: (v: string) => void;
   onChangeHashtags: (tags: string[]) => void;
+  // Gezet bij een Amsterdam NOW-carousel: dan tonen we per slidetype de tokens
+  // uit het manifest in plaats van kop/body.
+  nowSpec?: NowFamilySpec | null;
 }) {
   const slide = content.slides[slideIndex];
   if (!slide) return null;
+
+  // NOW-slide zonder spec = manifest is nog aan het laden; dan géén satori-velden
+  // tonen (die zouden leeg zijn), maar een korte wachtmelding.
+  const nowSlide = isNowSlide(slide) ? slide : null;
+  const satoriSlide = nowSlide ? null : (slide as CarouselSlide);
+
+  // NOW-slides schrijven `values` terug, satori-slides `headline`/`body` — beide
+  // via dezelfde onChangeSlide-callback, die de parent met `{...s, ...patch}`
+  // toepast en met de bestaande PATCH-autosave bewaart. De cast houdt het
+  // prop-contract van de satori-editor onveranderd.
+  const changeValues = (values: Record<string, string>) =>
+    onChangeSlide({ values } as unknown as Partial<CarouselSlide>);
 
   return (
     <div style={{ width: 380, flexShrink: 0, borderLeft: '1px solid var(--border-light)', background: '#fff', overflowY: 'auto' }}>
       <div style={{ padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 14, fontWeight: 800 }}>Slide {slideIndex + 1} · {LAYOUT_NAME[slide.layout]}</span>
+          <span style={{ fontSize: 14, fontWeight: 800 }}>
+            Slide {slideIndex + 1} · {nowSlide
+              ? nowSlide.slideType.replace(/[-_]/g, ' ').replace(/^\w/, c => c.toUpperCase())
+              : LAYOUT_NAME[satoriSlide!.layout]}
+          </span>
           <button className="btn-small" style={{ marginLeft: 'auto' }} disabled={regenerating} onClick={onRegenerateSlide}>
             {regenerating ? <span className="spin" style={{ display: 'inline-block' }}>↻</span> : '↻'} Regenereer deze slide
           </button>
         </div>
 
+        {nowSlide ? (
+          nowSpec
+            ? <CarouselNowFields slide={nowSlide} spec={nowSpec} onChangeValues={changeValues} />
+            : <span style={{ fontSize: 12.5, color: 'var(--muted)' }}>Sjabloon laden…</span>
+        ) : (
+        <>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <span style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--gray)' }}>Kop</span>
           <textarea
-            value={slide.headline}
+            value={satoriSlide!.headline}
             onChange={e => onChangeSlide({ headline: e.target.value })}
             rows={2}
             style={{
@@ -47,7 +73,7 @@ export default function CarouselSlideEditor({
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <span style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--gray)' }}>Body-tekst</span>
           <textarea
-            value={slide.body}
+            value={satoriSlide!.body}
             onChange={e => onChangeSlide({ body: e.target.value })}
             rows={3}
             style={{
@@ -57,16 +83,18 @@ export default function CarouselSlideEditor({
           />
         </div>
 
-        {slide.imageUrl && (
+        {satoriSlide!.imageUrl && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             <span style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--gray)' }}>Beeld</span>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, border: '1px solid var(--border)', borderRadius: 8, padding: 8, background: 'var(--panel)' }}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={slide.imageUrl} alt="" style={{ width: 44, height: 44, objectFit: 'cover', borderRadius: 6 }} />
+              <img src={satoriSlide!.imageUrl} alt="" style={{ width: 44, height: 44, objectFit: 'cover', borderRadius: 6 }} />
               <span style={{ fontSize: 12, color: 'var(--gray)', lineHeight: 1.4 }}>Beeld van het artikel</span>
               <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--muted)' }}>via ArticleDetail</span>
             </div>
           </div>
+        )}
+        </>
         )}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, borderTop: '1px solid var(--border-light)', paddingTop: 16 }}>

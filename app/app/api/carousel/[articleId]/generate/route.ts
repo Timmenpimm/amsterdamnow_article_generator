@@ -5,6 +5,7 @@ import {
   engineConfigured, engineErrorJson, notConfiguredJson, toContent, toMeta,
   type EngineCarousel,
 } from '@/lib/carouselEngine';
+import { isNowTemplate } from '@/lib/carousel';
 import type { CarouselSlide } from '@/lib/carousel';
 
 export const dynamic = 'force-dynamic';
@@ -20,6 +21,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ art
   }
   if (!(await engineConfigured())) return notConfiguredJson();
 
+  // Template gaat ongewijzigd door naar de engine: zowel de satori-ids
+  // ('modern-news'/…) als de Amsterdam NOW-ids ('now:<family>'). De engine is
+  // de enige die weet welke ids bestaan; hier niet valideren.
   const body = await req.json().catch(() => null);
   const template = typeof body?.template === 'string' ? body.template : undefined;
 
@@ -58,10 +62,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ art
     // Zelfde toewijzing als de oude mock: hero/cta krijgen het uitgelichte
     // beeld, image-slides doorlopen de sliderbeelden. Daarna terugschrijven
     // zodat de engine dezelfde beelden gebruikt bij render/publicatie.
+    //
+    // Alléén voor satori-carousels: NOW-slides hebben geen layout/imageUrl maar
+    // slideType + values, en hun beeld-tokens zitten in het manifest. Die laten
+    // we ongemoeid — nooit in de satori-vorm dwingen.
+    const isNow = isNowTemplate(template) || isNowTemplate(c.template);
     const pool = [article.featured, ...(article.slider || [])]
       .map(m => m?.url)
       .filter((u, i, arr): u is string => Boolean(u) && arr.indexOf(u) === i);
-    if (pool.length && Array.isArray(c.slides)) {
+    if (!isNow && pool.length && Array.isArray(c.slides)) {
       let next = 1;
       c.slides = (c.slides as CarouselSlide[]).map(s => {
         if (s.imageUrl) return s;

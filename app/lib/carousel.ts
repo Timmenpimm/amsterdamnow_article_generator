@@ -16,13 +16,73 @@
 
 import type { Article } from './types';
 
-export type CarouselTemplate = 'modern-news' | 'minimal-business' | 'magazine';
+// ---------------------------------------------------------------------------
+// Templates
+// ---------------------------------------------------------------------------
+// Twee soorten. De generieke satori-templates (engine rendert ze met React →
+// PNG) en de Amsterdam NOW-templates: pixel-exacte HTML-ontwerpen die de engine
+// met een headless browser rendert. NOW-carousels hebben een ander slide-model
+// (slideType + tokens in plaats van headline/body), vandaar de union hieronder.
+//
+// De NOW-structuur (welke families, welke slides, welke tokens) staat NIET in
+// deze repo: die komt van de engine via GET /api/templates/now, geproxyd door
+// /api/carousel/now-templates. Eén bron van waarheid — het manifest in de
+// engine — zodat een nieuw ontwerp hier niets hoeft te wijzigen.
 
-export const CAROUSEL_TEMPLATES: { key: CarouselTemplate; label: string }[] = [
+export type SatoriTemplate = 'modern-news' | 'minimal-business' | 'magazine';
+export type NowFamily = 'hotspot' | 'lijstje' | 'agenda' | 'gids' | 'event';
+export type NowTemplate = `now:${NowFamily}`;
+export type CarouselTemplate = SatoriTemplate | NowTemplate;
+
+export const SATORI_TEMPLATES: { key: SatoriTemplate; label: string }[] = [
   { key: 'modern-news', label: 'modern-news' },
   { key: 'minimal-business', label: 'minimal-business' },
   { key: 'magazine', label: 'magazine' },
 ];
+
+/** @deprecated Gebruik SATORI_TEMPLATES of de families uit useNowTemplates(). */
+export const CAROUSEL_TEMPLATES = SATORI_TEMPLATES;
+
+export function isNowTemplate(template: string | null | undefined): template is NowTemplate {
+  return typeof template === 'string' && template.startsWith('now:');
+}
+
+export function nowFamilyOf(template: string | null | undefined): NowFamily | null {
+  return isNowTemplate(template) ? (template.slice(4) as NowFamily) : null;
+}
+
+// --- NOW-structuur zoals de engine hem uitserveert (GET /api/templates/now) ---
+
+export interface NowPlaceholderSpec {
+  name: string;
+  description: string;
+  isUrl: boolean;
+  enumValues: string[] | null;
+  zeroPadTo: number | null;
+  allowsLineBreak: boolean;
+}
+
+export interface NowStepSpec {
+  slideType: string;
+  min: number;
+  max: number;
+  dimensions: { width: number; height: number };
+  placeholders: NowPlaceholderSpec[];
+}
+
+export interface NowFamilySpec {
+  family: NowFamily;
+  templateId: NowTemplate;
+  label: string;
+  purpose: string;
+  minSlides: number;
+  maxSlides: number;
+  steps: NowStepSpec[];
+}
+
+export function findNowStep(spec: NowFamilySpec, slideType: string): NowStepSpec | undefined {
+  return spec.steps.find((step) => step.slideType === slideType);
+}
 
 export type SlideLayout = 'hero' | 'info' | 'image' | 'quote' | 'cta';
 
@@ -35,9 +95,27 @@ export interface CarouselSlide {
   imageUrl?: string;
 }
 
+/** Slide van een NOW-carousel: tokens per slidetype, zie NowFamilySpec. */
+export interface NowCarouselSlide {
+  index: number;
+  slideType: string;
+  values: Record<string, string>;
+}
+
+export type AnyCarouselSlide = CarouselSlide | NowCarouselSlide;
+
+export function isNowSlide(slide: AnyCarouselSlide): slide is NowCarouselSlide {
+  return 'slideType' in slide && 'values' in slide;
+}
+
 export interface CarouselContent {
   title: string;
-  slides: CarouselSlide[];
+  /**
+   * Satori-slides, of NOW-slides wanneer `template` een `now:`-id is. De
+   * componenten splitsen hierop met isNowSlide(); de engine bewaart beide
+   * vormen als opaque JSON.
+   */
+  slides: AnyCarouselSlide[];
   caption: string;
   hashtags: string[];
 }
@@ -151,6 +229,16 @@ export async function getCarouselMetas(ids: number[]): Promise<Record<number, Ca
 export async function getCarouselMeta(articleId: number): Promise<CarouselMeta> {
   const metas = await getCarouselMetas([articleId]);
   return metas[articleId] || emptyCarouselMeta(articleId);
+}
+
+// NOW-families uit het engine-manifest (via de proxy, die het per proces
+// cachet). Lege lijst = engine kent geen NOW-templates; de UI valt dan terug op
+// alleen de generieke satori-templates.
+export async function getNowFamilies(): Promise<NowFamilySpec[]> {
+  const res = await fetch('/api/carousel/now-templates', { cache: 'no-store' });
+  const body = await readBody(res);
+  if (!res.ok) throw toError(body, res);
+  return Array.isArray(body?.families) ? (body.families as NowFamilySpec[]) : [];
 }
 
 export async function getCarouselContent(

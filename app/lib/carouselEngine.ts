@@ -9,7 +9,10 @@
 
 import { NextResponse } from 'next/server';
 import { EngineError, getEngineSettings } from './socialsEngine';
-import type { CarouselContent, CarouselMeta, CarouselSlide, CarouselStatus, CarouselTemplate } from './carousel';
+import { isNowTemplate } from './carousel';
+import type {
+  AnyCarouselSlide, CarouselContent, CarouselMeta, CarouselStatus, CarouselTemplate, NowCarouselSlide,
+} from './carousel';
 
 export interface EngineCarousel {
   id: string;
@@ -68,15 +71,32 @@ export function newestPerWordpressId(carousels: EngineCarousel[]): Map<number, E
   return map;
 }
 
+// NOW-slides herkennen we aan hun vorm (slideType + values), niet aan het
+// template-id: een carousel kan onderweg van template wisselen.
+function isNowShape(slide: unknown): slide is NowCarouselSlide {
+  const s = slide as NowCarouselSlide | null;
+  return Boolean(s && typeof s === 'object' && typeof s.slideType === 'string' && typeof s.values === 'object' && s.values !== null);
+}
+
+// "Af" voor een NOW-slide = minstens één ingevulde tekstwaarde. Een slide die
+// de engine wel aanmaakte maar (nog) niet vulde telt dus niet mee.
+function nowSlideDone(slide: unknown): boolean {
+  if (!isNowShape(slide)) return false;
+  return Object.values(slide.values).some(v => typeof v === 'string' && v.trim() !== '');
+}
+
 export function toMeta(articleId: number, c: EngineCarousel): CarouselMeta & { carouselId: string } {
   const slides = Array.isArray(c.slides) ? c.slides : [];
   const published = c.status === 'PUBLISHED';
+  const template = (typeof c.template === 'string' ? c.template : null) as CarouselTemplate | null;
   return {
     carouselId: c.id,
     articleId,
     status: mapEngineStatus(c.status),
-    template: (typeof c.template === 'string' ? c.template : null) as CarouselTemplate | null,
-    slidesDone: slides.length,
+    template,
+    // Satori: elke slide telt (de engine levert ze compleet aan). NOW: tellen
+    // hoeveel slides al tekst hebben — een gids kan 4-10 slides lang zijn.
+    slidesDone: isNowTemplate(template) ? slides.filter(nowSlideDone).length : slides.length,
     slidesTotal: slides.length,
     savedAt: c.updatedAt || c.createdAt || null,
     publishedAt: c.publishedAt || (published ? c.updatedAt || c.createdAt || null : null),
@@ -84,10 +104,13 @@ export function toMeta(articleId: number, c: EngineCarousel): CarouselMeta & { c
   };
 }
 
+// Slides gaan opaque door: satori-slides (headline/body/layout) én NOW-slides
+// (slideType/values) blijven exact zoals de engine ze bewaart — nooit in de
+// satori-vorm dwingen, de componenten splitsen zelf met isNowSlide().
 export function toContent(c: EngineCarousel, localTitle?: string): CarouselContent {
   return {
     title: localTitle || c.article?.title || '',
-    slides: (Array.isArray(c.slides) ? c.slides : []) as CarouselSlide[],
+    slides: (Array.isArray(c.slides) ? c.slides : []) as AnyCarouselSlide[],
     caption: typeof c.caption === 'string' ? c.caption : '',
     hashtags: Array.isArray(c.hashtags) ? c.hashtags.map(String) : [],
   };
