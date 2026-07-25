@@ -129,16 +129,31 @@ export default function Pipeline() {
   const autoOnFirstWrite = useRef(true);
   const dragId = useRef<number | null>(null);
   const [dragOverId, setDragOverId] = useState<number | null>(null);
+  // Eén herordening tegelijk: twee snelle tikken zouden allebei van dezelfde
+  // render uitgaan, waarna de tweede de eerste stilletjes ongedaan maakt.
+  const reorderBusy = useRef(false);
+  const [reorderingId, setReorderingId] = useState<number | null>(null);
   const [publishState, setPublishState] = useState<{ enabled: boolean; nextAt: string | null } | null>(null);
   const [rerunId, setRerunId] = useState<number | null>(null);
 
+  // Volgnummer per board-load. De poll (elke 12s) en de load() ná een actie
+  // lopen door elkaar heen; zonder deze guard kan een trager antwoord van een
+  // éérder gestarte poll een net doorgevoerde wijziging (bv. een nieuwe
+  // wachtrijvolgorde) alsnog overschrijven. Alleen het laatst gestarte
+  // verzoek mag setData doen.
+  const loadSeq = useRef(0);
+
   const load = useCallback(async () => {
+    const seq = ++loadSeq.current;
     try {
       const res = await fetch('/api/board');
       if (!res.ok) throw new Error((await res.json()).error || res.statusText);
-      setData(await res.json());
+      const board = await res.json();
+      if (seq !== loadSeq.current) return;
+      setData(board);
       setError('');
     } catch (e: any) {
+      if (seq !== loadSeq.current) return;
       setError(e.message);
     }
   }, []);
@@ -309,32 +324,77 @@ export default function Pipeline() {
     load();
   }
 
+  // Herordent de wachtrij ín de laatst bekende state (niet in de `queued` van
+  // deze render): tussen renderen en klikken kan de writer het bovenste topic
+  // geclaimd hebben, en dan zou een snapshot uit de closure dat topic in twee
+  // kolommen tegelijk tonen. `order` krijgt de actuele queued-topics en geeft
+  // de nieuwe volgorde terug.
+  function reorderLocally(order: (queued: Topic[]) => Topic[]) {
+    setData(d => {
+      if (!d) return d;
+      const q = d.topics.filter(t => t.status === 'queued');
+      return { ...d, topics: [...order(q), ...d.topics.filter(t => t.status !== 'queued')] };
+    });
+  }
+
   async function onDrop(targetId: number) {
     const from = dragId.current;
     dragId.current = null;
     setDragOverId(null);
-    if (from == null || from === targetId) return;
+    if (from == null || from === targetId || reorderBusy.current) return;
     const ids = queued.map(t => t.id);
     const fromIdx = ids.indexOf(from);
     const toIdx = ids.indexOf(targetId);
     if (fromIdx < 0 || toIdx < 0) return;
     ids.splice(toIdx, 0, ...ids.splice(fromIdx, 1));
-    setData(d => d && {
-      ...d,
-      topics: [
-        ...ids.map(id => queued.find(t => t.id === id)!),
-        ...d.topics.filter(t => t.status !== 'queued'),
-      ],
-    });
-    const res = await fetch('/api/topics/reorder', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids }),
-    });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      toast(body.error || 'Volgorde opslaan mislukt', { kind: 'error' });
+    reorderBusy.current = true;
+    setReorderingId(from);
+    reorderLocally(q => ids.map(id => q.find(t => t.id === id)).filter(Boolean) as Topic[]);
+    try {
+      const res = await fetch('/api/topics/reorder', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        toast(body.error || 'Volgorde opslaan mislukt', { kind: 'error' });
+      }
+    } finally {
+      reorderBusy.current = false;
+      setReorderingId(null);
+      load();
     }
-    load();
+  }
+
+  // Eén tik = vooraan in de wachtrij. Op mobiel de enige manier om te
+  // herprioriteren (slepen werkt daar niet), op desktop de snelle route
+  // zonder een kaart langs de hele kolom te hoeven slepen. Bewust één
+  // rij-update (PATCH action 'top') in plaats van /reorder: die laatste eist
+  // dat élk meegestuurd id nog 'queued' is, en faalt dus precies wanneer de
+  // wachtrij druk is — het moment waarop je juist wilt herprioriteren.
+  async function pushToTop(t: Topic) {
+    if (reorderBusy.current) return;
+    reorderBusy.current = true;
+    setReorderingId(t.id);
+    reorderLocally(q => [...q.filter(x => x.id === t.id), ...q.filter(x => x.id !== t.id)]);
+    try {
+      const res = await fetch(`/api/topics/${t.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'top' }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        toast(body.error || 'Bovenaan zetten mislukt', { kind: 'error' });
+      } else {
+        toast('Bovenaan de wachtrij gezet');
+      }
+    } catch {
+      toast('Bovenaan zetten mislukt', { kind: 'error' });
+    } finally {
+      reorderBusy.current = false;
+      setReorderingId(null);
+      load();
+    }
   }
 
   async function publish(a: Article) {
@@ -487,7 +547,7 @@ export default function Pipeline() {
         <div style={{ display: 'flex', gap: 12, padding: '16px 20px 20px', alignItems: 'flex-start', overflowX: 'auto', flex: 1 }}>
           {/* In wachtrij */}
           <Column color="var(--muted)" title="In wachtrij" count={queued.length} hint="volgorde = prioriteit">
-            {queued.map(t => (
+            {queued.map((t, i) => (
               <div
                 key={t.id}
                 className={`card queue-card${dragId.current === t.id ? ' dragging' : ''}${dragOverId === t.id ? ' dragover' : ''}`}
@@ -525,6 +585,28 @@ export default function Pipeline() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 7 }}>
                       <span style={{ fontSize: 11, color: 'var(--muted)' }}>{timeLabel(t.created_at)}</span>
                       <span style={{ marginLeft: 'auto', display: 'flex', gap: 8, fontSize: 12, color: 'var(--gray)' }}>
+                        {i > 0 && (
+                          // Bewust wél focusbaar (de buren ✎/✕ zijn dat niet):
+                          // slepen werkt sowieso niet met een toetsenbord, dus
+                          // dit is de enige toegankelijke manier om te
+                          // herprioriteren.
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            aria-label={`"${t.title}" bovenaan de wachtrij zetten`}
+                            title="Bovenaan de wachtrij zetten"
+                            style={{
+                              cursor: reorderingId ? 'default' : 'pointer', fontWeight: 700,
+                              opacity: reorderingId === t.id ? 0.4 : 1,
+                            }}
+                            onClick={() => pushToTop(t)}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pushToTop(t); }
+                            }}
+                          >
+                            ⤒
+                          </span>
+                        )}
                         <span
                           style={{ cursor: 'pointer' }}
                           title="Bewerken"
@@ -800,6 +882,8 @@ export default function Pipeline() {
           phaseOf={phaseFor}
           labelOf={labelFor}
           onChanged={load}
+          onPushToTop={pushToTop}
+          reorderingId={reorderingId}
           onBulk={() => setBulkOpen(true)}
           onToggleAuto={() => setAutoOn(v => !v)}
           autoOn={autoOn}
@@ -831,13 +915,13 @@ export default function Pipeline() {
 }
 
 function MobileHome({
-  queued, writing, failed, needImages, ready, phaseOf, labelOf, onChanged, onBulk, onToggleAuto, autoOn, writingNow,
+  queued, writing, failed, needImages, ready, phaseOf, labelOf, onChanged, onPushToTop, reorderingId, onBulk, onToggleAuto, autoOn, writingNow,
 }: {
   queued: Topic[]; writing: Topic[]; failed: Topic[];
   needImages: Article[]; ready: Article[];
   phaseOf: (a: Article) => 'needImages' | 'ready' | 'published';
   labelOf: (a: Article) => string;
-  onChanged: () => void; onBulk: () => void;
+  onChanged: () => void; onPushToTop: (t: Topic) => void; reorderingId: number | null; onBulk: () => void;
   onToggleAuto: () => void; autoOn: boolean; writingNow: boolean;
 }) {
   const [value, setValue] = useState('');
@@ -927,12 +1011,26 @@ function MobileHome({
             <span className="dot" style={{ background: 'var(--red)' }} />
           </div>
         ))}
-        {queued.map(t => (
+        {queued.map((t, i) => (
           <div key={t.id} className="card" style={{ borderRadius: 10, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 13.5, fontWeight: 600, lineHeight: 1.35 }}>{t.title}</div>
-              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>{timeLabel(t.created_at)}</div>
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>
+                {i === 0 ? `volgende aan de beurt · ${timeLabel(t.created_at)}` : timeLabel(t.created_at)}
+              </div>
             </div>
+            {i > 0 && (
+              <button
+                className="btn-small"
+                title="Bovenaan de wachtrij zetten"
+                aria-label={`"${t.title}" bovenaan de wachtrij zetten`}
+                disabled={reorderingId != null}
+                onClick={() => onPushToTop(t)}
+                style={{ fontSize: 15, fontWeight: 700, lineHeight: 1, padding: '8px 11px', borderRadius: 8 }}
+              >
+                ⤒
+              </button>
+            )}
             <span className="dot" style={{ background: 'var(--muted)' }} />
           </div>
         ))}

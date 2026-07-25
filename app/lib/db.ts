@@ -494,6 +494,22 @@ export async function reorderTopics(ids: number[]) {
   );
 }
 
+// "Bovenaan zetten" is bewust één rij-update in plaats van een reorderTopics()
+// met de hele wachtrij: de client hoeft geen momentopname van álle queued-ids
+// mee te sturen, dus een topic dat ondertussen door de writer geclaimd is (of
+// in een ander tabblad verwijderd) laat deze actie niet meer stranden. Zelfde
+// MIN(sort)-1-truc als retryTopic — dat is precies wat "bovenaan" betekent.
+// Geeft false terug als het topic niet (meer) in de wachtrij staat.
+export async function pushTopicToTop(id: number): Promise<boolean> {
+  const db = await getDb();
+  const min = await db.get('SELECT COALESCE(MIN(sort), 1) AS m FROM topics');
+  const row = await db.get(
+    `UPDATE topics SET sort = $1 WHERE id = $2 AND status = 'queued' RETURNING id`,
+    [Number(min.m) - 1, id]
+  );
+  return !!row;
+}
+
 export async function retryTopic(id: number) {
   const db = await getDb();
   const min = await db.get('SELECT COALESCE(MIN(sort), 1) AS m FROM topics');
