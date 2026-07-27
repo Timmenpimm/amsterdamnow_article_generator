@@ -1,5 +1,6 @@
 import { competitorInHost } from './competitors';
 import { amsterdamToday } from './eventDate';
+import { getTavilyApiKey } from './tavilyConfig';
 
 type TavilyResult = { title?: string; url?: string; content?: string; raw_content?: string };
 type TavilyResponse = { results?: TavilyResult[]; detail?: string | { error?: string }; message?: string };
@@ -154,7 +155,7 @@ export async function researchWithTavily(
   topic: string,
   opts?: { query?: string; maxResults?: number; detectOfficial?: boolean },
 ): Promise<ResearchResult> {
-  const apiKey = process.env.TAVILY_API_KEY;
+  const apiKey = await getTavilyApiKey();
   if (!apiKey) throw new Error('Tavily is niet geconfigureerd. Voeg TAVILY_API_KEY toe aan de omgevingsvariabelen.');
 
   // Een URL als onderwerp zoekt op het domeinlabel, niet op de letterlijke
@@ -280,7 +281,7 @@ export async function researchWithTavily(
 // Tavily /extract (rendert JS, zoals veel agendapagina's nodig hebben); zonder
 // key of bij een lege/mislukte extract valt het terug op een platte fetch.
 export async function extractPageText(url: string): Promise<string> {
-  const apiKey = process.env.TAVILY_API_KEY;
+  const apiKey = await getTavilyApiKey();
   if (apiKey) {
     try {
       const res = await fetch('https://api.tavily.com/extract', {

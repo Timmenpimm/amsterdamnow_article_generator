@@ -25,6 +25,8 @@
     { "src": "^/api/koppelingen/wordpress/?$", "dest": "/app/api/koppelingen/wordpress" },
     { "src": "^/api/koppelingen/instagram/test/?$", "dest": "/app/api/koppelingen/instagram/test" },
     { "src": "^/api/koppelingen/instagram/?$", "dest": "/app/api/koppelingen/instagram" },
+    { "src": "^/api/koppelingen/tavily/test/?$", "dest": "/app/api/koppelingen/tavily/test" },
+    { "src": "^/api/koppelingen/tavily/?$", "dest": "/app/api/koppelingen/tavily" },
     { "src": "^/api/publish/tick/?$", "dest": "/app/api/publish/tick" },
     { "src": "^/api/publish/settings/?$", "dest": "/app/api/publish/settings" },
     { "src": "^/api/audit/run/?$", "dest": "/app/api/audit/run" },

@@ -10,6 +10,7 @@ import AutoPublishPanel from './AutoPublishPanel';
 import ModelPanel from './ModelPanel';
 import WordPressPanel from './WordPressPanel';
 import InstagramPanel from './InstagramPanel';
+import TavilyPanel from './TavilyPanel';
 import PlaceholderPanel from './PlaceholderPanel';
 import { RAIL_GROUPS, panelMeta, PLACEHOLDER_CARD, type RailKey } from './meta';
 
@@ -73,7 +74,7 @@ export default function Instellingen() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [promptResults, constraintResults, publish, model, wordpress, instagram] = await Promise.all([
+      const [promptResults, constraintResults, publish, model, wordpress, instagram, tavily] = await Promise.all([
         Promise.all(
           PROMPT_KINDS.map(k =>
             fetch(`/api/prompts?kind=${k}`).then(r => r.json()).then(d => [k, d] as const).catch(() => [k, null] as const)
@@ -88,6 +89,7 @@ export default function Instellingen() {
         fetch('/api/model').then(r => (r.ok ? r.json() : null)).catch(() => null),
         fetch('/api/koppelingen/wordpress').then(r => (r.ok ? r.json() : null)).catch(() => null),
         fetch('/api/koppelingen/instagram').then(r => (r.ok ? r.json() : null)).catch(() => null),
+        fetch('/api/koppelingen/tavily').then(r => (r.ok ? r.json() : null)).catch(() => null),
       ]);
       if (cancelled) return;
       const next: Partial<Record<RailKey, Badge>> = {};
@@ -114,6 +116,11 @@ export default function Instellingen() {
       next.instagram = instagram?.connection?.igUsername
         ? { label: `@${instagram.connection.igUsername}`, tone: 'green' }
         : { label: 'niet gekoppeld', tone: 'muted' };
+      next.tavily = tavily?.configured
+        ? tavily.source === 'settings'
+          ? { label: 'eigen instelling', tone: 'green' }
+          : { label: 'env', tone: 'muted' }
+        : { label: 'geen key', tone: 'muted' };
       setBadges(next);
     })();
     return () => { cancelled = true; };
@@ -187,6 +194,8 @@ export default function Instellingen() {
           <WordPressPanel key="wordpress" eyebrow={meta.eyebrow} title={meta.title} description={meta.description} onChanged={onChanged} />
         ) : selected === 'instagram' ? (
           <InstagramPanel key="instagram" eyebrow={meta.eyebrow} title={meta.title} description={meta.description} onChanged={onChanged} />
+        ) : selected === 'tavily' ? (
+          <TavilyPanel key="tavily" eyebrow={meta.eyebrow} title={meta.title} description={meta.description} onChanged={onChanged} />
         ) : selected === 'variabelen' ? (
           <PlaceholderPanel
             key={selected}
