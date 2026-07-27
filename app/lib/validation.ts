@@ -13,9 +13,13 @@ function normal(value: string) {
   return value.toLocaleLowerCase('nl-NL').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 }
 
-function range(label: string, value: string, min: number, max: number) {
+// Woordbereik-check als melding (of null): validateArticle verzamelt sinds de
+// veldgerichte-reparatie-fix álle overtredingen in plaats van bij de eerste te
+// gooien, dus deze helper gooit zelf niet meer.
+function range(label: string, value: string, min: number, max: number): string | null {
   const count = words(value);
-  if (count < min || count > max) throw new Error(`${label} moet ${min}-${max} woorden bevatten (nu ${count}).`);
+  if (count < min || count > max) return `${label} moet ${min}-${max} woorden bevatten (nu ${count}).`;
+  return null;
 }
 
 // De "kern" van een onderwerpnaam: de merknaam vóór een kwalificatie. De
@@ -329,6 +333,36 @@ export function standaardQuoteSourceBlacklist(config: StandaardConstraints): str
   return (config as LooseStandaard).quoteSourceBlacklist ?? [];
 }
 
+// Welk artikelveld een overtreding raakt. 'content' is óók het vangnet voor
+// overtredingen die meerdere velden bestrijken of alleen met een volledige
+// herschrijfronde te repareren zijn (concurrent-vermelding, voorbeeldzin-lek,
+// sjabloonzin, alineatelling).
+export type ValidationField = 'title' | 'subregel' | 'intro' | 'content' | 'quote';
+
+export interface ValidationViolation {
+  field: ValidationField;
+  message: string;
+}
+
+// validateArticle gooit sinds de veldgerichte-reparatie-fix niet meer bij de
+// eerste overtreding, maar verzamelt ze allemaal en gooit dán deze fout. Twee
+// redenen. Eén: de pipeline moet kunnen zien of ALLEEN titel en/of quote
+// faalden — dan is een gerichte reparatie (polishTitle/herstelQuote) genoeg en
+// hoeft het hele artikel niet weggegooid. Twee: de oude gooi-bij-de-eerste
+// veroorzaakte oscillatie in de herschrijfronde: de woordencheck vuurde vóór
+// de tekencheck, dus het model zag afwisselend "te weinig woorden" en "te veel
+// tekens" en bleef tussen die twee heen en weer schrijven zonder ooit beide
+// eisen tegelijk te horen. De message blijft de aaneengeschakelde tekst van
+// alle overtredingen: bestaande aanroepers en tests lezen alleen e.message.
+export class ArticleValidationError extends Error {
+  readonly violations: ValidationViolation[];
+  constructor(violations: ValidationViolation[]) {
+    super(violations.map(v => v.message).join(' '));
+    this.name = 'ArticleValidationError';
+    this.violations = violations;
+  }
+}
+
 // opts.sparse = true → de sufficiëntie-poort heeft vastgesteld dat de research
 // te dun is voor een volwaardig artikel. Alle overige regels blijven onverkort
 // gelden; alleen de lengte-eis voor de hoofdtekst wordt verruimd naar beneden.
@@ -339,33 +373,37 @@ export function validateArticle(
   promptExamples: string[] = [],
   opts?: { sparse?: boolean; sources?: { content: string }[]; quoteTekst?: string },
 ) {
-  range('Titel', article.title, config.titleWords.min, config.titleWords.max);
+  const overtredingen: ValidationViolation[] = [];
+  const meld = (field: ValidationField, message: string | null) => {
+    if (message) overtredingen.push({ field, message });
+  };
+  meld('title', range('Titel', article.title, config.titleWords.min, config.titleWords.max));
   if (article.title.length > config.titleMaxChars) {
-    throw new Error(`Titel is ${article.title.length} tekens; maximaal ${config.titleMaxChars}.`);
+    meld('title', `Titel is ${article.title.length} tekens; maximaal ${config.titleMaxChars}.`);
   }
-  range('Subregel', article.subregel, config.subregelWords.min, config.subregelWords.max);
-  range('Introductie', article.introductie_tekst, config.introWords.min, config.introWords.max);
+  meld('subregel', range('Subregel', article.subregel, config.subregelWords.min, config.subregelWords.max));
+  meld('intro', range('Introductie', article.introductie_tekst, config.introWords.min, config.introWords.max));
   const contentRange = opts?.sparse ? sparseContentRange(config) : config.contentWords;
-  range('Artikeltekst', article.content, contentRange.min, contentRange.max);
-  range('Quote', article.quote, config.quoteWords.min, config.quoteWords.max);
+  meld('content', range('Artikeltekst', article.content, contentRange.min, contentRange.max));
+  meld('quote', range('Quote', article.quote, config.quoteWords.min, config.quoteWords.max));
   if (config.titleMustContainTopic && !subjectInTitle(article.title, topic)) {
     // Noem de vereiste naam letterlijk: deze melding wordt als afkeurreden aan
     // de herschrijfronde meegegeven, en zonder de concrete naam blijft het
     // model gokken welke formulering de check verwacht. De kernnaam (zonder
     // "by X"/"x Y"-toevoeging) volstaat — zie subjectInTitle/coreName.
-    throw new Error(`De titel moet de naam van het onderwerp bevatten ("${topic}", of de kernnaam "${coreName(topic)}").`);
+    meld('title', `De titel moet de naam van het onderwerp bevatten ("${topic}", of de kernnaam "${coreName(topic)}").`);
   }
   if (config.quoteMustBeVerbatimInContent && !normal(article.content).includes(normal(article.quote))) {
-    throw new Error('De quote moet letterlijk in de artikeltekst voorkomen.');
+    meld('quote', 'De quote moet letterlijk in de artikeltekst voorkomen.');
   }
   const concurrent = checkNoCompetitor(
     [article.title, article.subregel, article.introductie_tekst, article.content, article.quote].join('\n'),
     standaardQuoteSourceBlacklist(config),
   );
-  if (concurrent) throw new Error(concurrent);
+  meld('content', concurrent);
   const leak = findPromptExampleLeak([article.quote, article.content, article.introductie_tekst, article.subregel].join('\n'), promptExamples);
   if (leak) {
-    throw new Error(`Voorbeeldzin uit de prompt letterlijk overgenomen: "${leak}". De voorbeelden tonen alleen stijl; schrijf een eigen zin over dit onderwerp, op basis van de research.`);
+    meld('content', `Voorbeeldzin uit de prompt letterlijk overgenomen: "${leak}". De voorbeelden tonen alleen stijl; schrijf een eigen zin over dit onderwerp, op basis van de research.`);
   }
   if (opts?.sources?.length) {
     const bronLeak = findSourceProseLeak(
@@ -373,18 +411,32 @@ export function validateArticle(
       opts.sources, opts.quoteTekst,
     );
     if (bronLeak) {
-      throw new Error(`Zin bijna woordelijk overgenomen uit de brontekst: "${bronLeak}…". Gebruik de bron alleen voor feiten, schrijf de zin zelf in eigen woorden.`);
+      meld('content', `Zin bijna woordelijk overgenomen uit de brontekst: "${bronLeak}…". Gebruik de bron alleen voor feiten, schrijf de zin zelf in eigen woorden.`);
     }
   }
   const stockPhrase = findStockPhrase([article.title, article.subregel, article.introductie_tekst, article.content, article.quote].join('\n'));
   if (stockPhrase) {
-    throw new Error(`Verboden sjabloonzin gebruikt: "${stockPhrase}". Deze formule staat op de no_stock_phrases-lijst; herschrijf de zin met een concreet detail uit de research.`);
+    meld('content', `Verboden sjabloonzin gebruikt: "${stockPhrase}". Deze formule staat op de no_stock_phrases-lijst; herschrijf de zin met een concreet detail uit de research.`);
   }
-  if (config.noDashInText && [article.title, article.subregel, article.introductie_tekst, article.content, article.quote].some(v => /[—–]/.test(v))) {
-    throw new Error('Een artikel mag geen em dash of en dash bevatten.');
+  if (config.noDashInText) {
+    // Per veld gemeld (niet meer één artikelbrede check): een dash in alléén
+    // de titel of quote is dan gericht te repareren zonder hergeneratie.
+    const dashVelden: [ValidationField, string, string][] = [
+      ['title', article.title, 'De titel'],
+      ['subregel', article.subregel, 'De subregel'],
+      ['intro', article.introductie_tekst, 'De introductie'],
+      ['content', article.content, 'De artikeltekst'],
+      ['quote', article.quote, 'De quote'],
+    ];
+    for (const [field, value, label] of dashVelden) {
+      if (/[—–]/.test(value)) meld(field, `${label} mag geen em dash of en dash bevatten.`);
+    }
   }
-  if (config.noAmsterdamRepeatInTitleSubregelIntro && /\bAmsterdam\b/i.test(`${article.title} ${article.subregel} ${article.introductie_tekst}`)) {
-    throw new Error('Amsterdam mag niet in titel, subregel of introductie staan.');
+  if (config.noAmsterdamRepeatInTitleSubregelIntro) {
+    // Ook per veld, om dezelfde reden als de dash-check hierboven.
+    if (/\bAmsterdam\b/i.test(article.title)) meld('title', 'Amsterdam mag niet in de titel staan.');
+    if (/\bAmsterdam\b/i.test(article.subregel)) meld('subregel', 'Amsterdam mag niet in de subregel staan.');
+    if (/\bAmsterdam\b/i.test(article.introductie_tekst)) meld('intro', 'Amsterdam mag niet in de introductie staan.');
   }
   // Bij dunne research schrijft het model bewust korter (250 i.p.v. 400+
   // woorden). Vijf alinea's afdwingen betekent dan alinea's van vijftig
@@ -392,6 +444,7 @@ export function validateArticle(
   // sparse-modus moet voorkomen, dus de eis zakt mee naar drie.
   const minAlineas = opts?.sparse ? Math.min(3, config.minParagraphs) : config.minParagraphs;
   if (article.content.split(/\n\s*\n/).filter(Boolean).length < minAlineas) {
-    throw new Error(`Artikeltekst moet uit minimaal ${minAlineas} alinea's bestaan.`);
+    meld('content', `Artikeltekst moet uit minimaal ${minAlineas} alinea's bestaan.`);
   }
+  if (overtredingen.length) throw new ArticleValidationError(overtredingen);
 }
