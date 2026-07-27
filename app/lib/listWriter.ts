@@ -1,5 +1,5 @@
 import {
-  activeConstraints, activeListTopic, activePrompt, claimNextListTopic, completeTopic, failTopic,
+  activeConstraints, activeListTopic, activePrompt, claimNextListTopic, completeTopic, failTopicClassified,
   getTopic, saveTopicProgress, saveListStructure,
 } from './db';
 import { askClaudeJson, FAST_WRITE_MODEL } from './claude';
@@ -73,7 +73,10 @@ export async function processListStep(topicId?: number): Promise<ListStepResult 
         throw new Error(`Onbekende fase: ${topic.phase}`);
     }
   } catch (error: any) {
-    await failTopic(topic.id, error.message || 'Onbekende fout', `lijstfase: ${topic.phase}`);
+    // Foutclassificatie (lib/errorKind.ts): infra-fouten gaan automatisch
+    // terug de wachtrij in (met quotum-pauze bij accountbrede fouten), al het
+    // andere wordt 'failed' met een soort-label voor het bord.
+    await failTopicClassified(topic.id, error, `lijstfase: ${topic.phase}`);
     throw error;
   }
 }

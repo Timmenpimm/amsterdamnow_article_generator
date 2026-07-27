@@ -1,4 +1,4 @@
-import { activeConstraints, activePrompt, completeTopic, failTopic, saveTopicProgress } from './db';
+import { activeConstraints, activePrompt, completeTopic, failTopicClassified, saveTopicProgress } from './db';
 import { askClaudeJson, FAST_WRITE_MODEL, TITLE_MODEL } from './claude';
 import { RESEARCH_SCHEMA, SEO_SCHEMA, ENTITY_VERIFY_SCHEMA, QUOTE_REWRITE_SCHEMA, INVALSHOEK_SCHEMA, CURATOR_SCHEMA } from './schemas';
 import { createDraft, singleTag, taxonomyChoices } from './wp';
@@ -305,7 +305,10 @@ export async function processStandaardStep(topic: Topic): Promise<StandaardStepR
       case 'seo': return await stepSeo(topic, s);
     }
   } catch (error: any) {
-    await failTopic(topic.id, error.message || 'Onbekende fout', `standaardfase: ${phase}`);
+    // Foutclassificatie (lib/errorKind.ts): infra-fouten gaan automatisch
+    // terug de wachtrij in (met quotum-pauze bij accountbrede fouten), al het
+    // andere wordt 'failed' met een soort-label voor het bord.
+    await failTopicClassified(topic.id, error, `standaardfase: ${phase}`);
     throw error;
   }
 }

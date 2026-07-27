@@ -9,6 +9,7 @@ import type {
 } from './types';
 import type { AuditVerdict } from './types';
 import { DEFAULT_STANDAARD_CONSTRAINTS, DEFAULT_LIST_CONSTRAINTS, worstVerdict } from './types';
+import { classifyError, isQuotumFout, quotumReden, type ErrorKind } from './errorKind';
 import { PROMPT_SEEDS } from './prompt-seeds';
 
 // Vóór dit bestand werden prompts vanuit losse .txt-bestanden onder
@@ -31,7 +32,17 @@ const PG_URL = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || proces
 // 'writing' zijn. 90s laat ruim marge over de 60s-limiet zonder dat gebruikers
 // het gevoel krijgen dat de wachtrij "hangt".
 const JOB_LEASE_MS = 90 * 1000;
-const MAX_JOB_ATTEMPTS = 3;
+// Cap op transiënte herkansingen (infra-fouten én verlopen leases) per topic.
+// Bewust een eigen teller (kolom infra_retries), NIET het bestaande
+// `attempts`-veld: attempts wordt bij ELKE fase-claim opgehoogd (zie
+// claimNext) en meet dus fase-stappen, geen mislukkingen — vanaf fase 4 zat
+// elk topic daardoor al "over de limiet" zonder ooit gefaald te hebben.
+const MAX_INFRA_RETRIES = 3;
+// Wachtrij-brede pauze na een accountbrede quotumfout (Tavily 429/432/433,
+// Claude-tegoed): opgeslagen als app_settings-key, gelezen door
+// processNextQueueJob (lib/queue.ts).
+const QUEUE_PAUSE_KEY = 'queue_paused_until';
+const QUEUE_PAUSE_MS = 30 * 60 * 1000;
 
 export const STORAGE: 'postgres' | 'sqlite' = PG_URL ? 'postgres' : 'sqlite';
 
@@ -230,6 +241,13 @@ async function initSqlite(): Promise<DB> {
   for (const col of ['cluster TEXT']) {
     try { db.exec(`ALTER TABLE publish_meta ADD COLUMN ${col}`); } catch { /* kolom bestaat al */ }
   }
+  // Migratie voor databases van vóór de foutclassificatie: error_kind is de
+  // soort van de laatste fout (lib/errorKind.ts), infra_retries de eigen
+  // teller voor transiënte herkansingen (los van attempts, zie
+  // MAX_INFRA_RETRIES).
+  for (const col of ['error_kind TEXT', 'infra_retries INTEGER NOT NULL DEFAULT 0']) {
+    try { db.exec(`ALTER TABLE topics ADD COLUMN ${col}`); } catch { /* kolom bestaat al */ }
+  }
   return {
     async all(q, p = []) { const [s, sp] = toSqlite(q, p); return db.prepare(s).all(...sp); },
     async get(q, p = []) { const [s, sp] = toSqlite(q, p); return db.prepare(s).get(...sp); },
@@ -426,6 +444,12 @@ async function initPostgres(): Promise<DB> {
   // (soort zaak/gebeurtenis) per artikel, gebruikt door de cluster-cooldown in
   // pickNextForPublish (lib/publisher.ts).
   await pool.query(`ALTER TABLE publish_meta ADD COLUMN IF NOT EXISTS cluster TEXT`);
+  // Migratie voor databases van vóór de foutclassificatie: error_kind is de
+  // soort van de laatste fout (lib/errorKind.ts), infra_retries de eigen
+  // teller voor transiënte herkansingen (los van attempts, zie
+  // MAX_INFRA_RETRIES).
+  await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS error_kind TEXT`);
+  await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS infra_retries INTEGER NOT NULL DEFAULT 0`);
   return {
     async all(q, p = []) { return (await pool.query(q, p)).rows; },
     async get(q, p = []) { return (await pool.query(q, p)).rows[0]; },
@@ -578,17 +602,19 @@ export async function retryTopic(id: number) {
   const db = await getDb();
   const min = await db.get('SELECT COALESCE(MIN(sort), 1) AS m FROM topics');
   const topic = await db.get('SELECT type FROM topics WHERE id = $1', [id]);
-  // Een bewuste retry door de redactie is een verse start: zonder attempts-
-  // reset zou een topic dat ooit MAX_JOB_ATTEMPTS haalde bij de eerstvolgende
-  // verlopen lease direct weer op 'failed' klappen, hoe vaak je ook opnieuw
-  // probeert. Voor standaard-topics ook fase en tussentijdse staat wissen:
+  // Een bewuste retry door de redactie is een verse start: zonder reset van
+  // infra_retries zou een topic dat ooit MAX_INFRA_RETRIES haalde bij de
+  // eerstvolgende verlopen lease direct weer op 'failed' klappen, hoe vaak je
+  // ook opnieuw probeert (attempts gaat voor de volledigheid ook op 0, al
+  // telt die alleen nog fase-stappen voor het "stap N"-label op het bord).
+  // Voor standaard-topics ook fase en tussentijdse staat wissen:
   // anders hervat de retry exact dezelfde afgekeurde schrijf(-retry)-poging
   // met dezelfde afkeurreden, en faalt hij keer op keer op precies dezelfde
   // manier (gezien op productie). Lijst-topics behouden hun staat — de
   // geselecteerde/geverifieerde items zijn kostbaar om opnieuw te doen.
   const resetPhase = topic?.type === 'standaard';
   await db.run(
-    `UPDATE topics SET status = 'queued', error = NULL, error_step = NULL, locked_at = NULL, lock_owner = NULL, attempts = 0, sort = $1${resetPhase ? ', phase = NULL, list_state = NULL' : ''} WHERE id = $2`,
+    `UPDATE topics SET status = 'queued', error = NULL, error_step = NULL, error_kind = NULL, infra_retries = 0, locked_at = NULL, lock_owner = NULL, attempts = 0, sort = $1${resetPhase ? ', phase = NULL, list_state = NULL' : ''} WHERE id = $2`,
     [Number(min.m) - 1, id]
   );
 }
@@ -661,25 +687,32 @@ export async function releaseTopicLock(id: number) {
 
 export async function completeTopic(id: number, postId: number) {
   const db = await getDb();
-  await db.run(`UPDATE topics SET status = 'done', post_id = $1, locked_at = NULL, lock_owner = NULL WHERE id = $2`, [postId, id]);
+  await db.run(`UPDATE topics SET status = 'done', post_id = $1, error = NULL, error_step = NULL, error_kind = NULL, locked_at = NULL, lock_owner = NULL WHERE id = $2`, [postId, id]);
 }
 
 export async function recoverStaleTopics(): Promise<{ requeued: number; failed: number }> {
   const db = await getDb();
   const cutoff = new Date(Date.now() - JOB_LEASE_MS).toISOString();
-  const stale = await db.all(`SELECT id, attempts FROM topics WHERE status = 'writing' AND COALESCE(locked_at, started_at) < $1`, [cutoff]);
+  // Keuze: de herkansing leunt op infra_retries, niet meer op attempts.
+  // attempts wordt bij ELKE fase-claim opgehoogd (zie claimNext), dus vanaf
+  // fase 4 stond elk topic al op attempts >= 3 en ging een verlopen lease
+  // direct naar 'failed' zonder één echte herkansing. Een verlopen lease is
+  // een transiënte conditie (weggevallen tik, netwerkhikje) en deelt daarom
+  // de teller met de infra-herkansingen: samen maximaal MAX_INFRA_RETRIES per
+  // topic. Een bewuste retry door de redactie reset de teller (retryTopic).
+  const stale = await db.all(`SELECT id, infra_retries FROM topics WHERE status = 'writing' AND COALESCE(locked_at, started_at) < $1`, [cutoff]);
   let requeued = 0;
   let failed = 0;
   for (const topic of stale) {
-    if (Number(topic.attempts) >= MAX_JOB_ATTEMPTS) {
+    if (Number(topic.infra_retries) >= MAX_INFRA_RETRIES) {
       await db.run(
-        `UPDATE topics SET status = 'failed', error = $1, error_step = 'wachtrijherstel', locked_at = NULL, lock_owner = NULL WHERE id = $2 AND status = 'writing'`,
+        `UPDATE topics SET status = 'failed', error = $1, error_step = 'wachtrijherstel', error_kind = 'infra', locked_at = NULL, lock_owner = NULL WHERE id = $2 AND status = 'writing'`,
         ['Taak is na meerdere verlopen leases gestopt. Zet hem opnieuw in de wachtrij om opnieuw te proberen.', topic.id]
       );
       failed += 1;
     } else {
       await db.run(
-        `UPDATE topics SET status = 'queued', error = $1, error_step = 'wachtrijherstel', locked_at = NULL, lock_owner = NULL WHERE id = $2 AND status = 'writing'`,
+        `UPDATE topics SET status = 'queued', error = $1, error_step = 'wachtrijherstel', error_kind = 'infra', infra_retries = infra_retries + 1, locked_at = NULL, lock_owner = NULL WHERE id = $2 AND status = 'writing'`,
         ['Vorige verwerking is verlopen; automatisch opnieuw ingepland.', topic.id]
       );
       requeued += 1;
@@ -724,7 +757,17 @@ export async function saveTopicProgress(
     sets.push('locked_at = NULL');
     sets.push('lock_owner = NULL');
   }
-  if (upd.errorClear) { sets.push('error = NULL'); sets.push('error_step = NULL'); }
+  // Voortgang = herstel: deze functie wordt uitsluitend bij een geslaagde
+  // fase-stap aangeroepen (mislukkingen lopen via failTopic), dus een oude
+  // foutmelding — van een verlopen lease of een automatisch herkanste
+  // infra-fout — hoort hier gewist te worden. errorClear stond als opt-in in
+  // de signatuur maar werd nergens gezet, waardoor oude fouten na herstel
+  // bleven staan; nu is wissen de default, met errorClear: false als opt-out.
+  if (upd.errorClear !== false && (upd.errorClear === true || sets.length > 0)) {
+    sets.push('error = NULL');
+    sets.push('error_step = NULL');
+    sets.push('error_kind = NULL');
+  }
   if (!sets.length) return;
   params.push(id);
   await db.run(`UPDATE topics SET ${sets.join(', ')} WHERE id = $${params.length}`, params);
@@ -770,9 +813,75 @@ export async function listStructures(): Promise<Record<number, ListArticleStruct
   return out;
 }
 
-export async function failTopic(id: number, error: string, step: string) {
+export async function failTopic(id: number, error: string, step: string, kind?: ErrorKind) {
   const db = await getDb();
-  await db.run(`UPDATE topics SET status = 'failed', error = $1, error_step = $2, locked_at = NULL, lock_owner = NULL WHERE id = $3`, [error, step, id]);
+  const errorKind = kind ?? classifyError(error);
+  await db.run(
+    `UPDATE topics SET status = 'failed', error = $1, error_step = $2, error_kind = $3, locked_at = NULL, lock_owner = NULL WHERE id = $4`,
+    [error, step, errorKind, id]
+  );
+}
+
+// Centrale foutafhandeling voor de fase-catch in writer.ts en listWriter.ts.
+// Classificeert de fout (lib/errorKind.ts) en handelt per soort af:
+// - infra: het topic gaat automatisch terug de wachtrij in (cap
+//   MAX_INFRA_RETRIES via de eigen infra_retries-teller); is de fout
+//   accountbreed (Tavily-quotum, Claude-tegoed), dan gaat bovendien de hele
+//   wachtrij QUEUE_PAUSE_MS in pauze — elk volgend onderwerp zou tegen
+//   dezelfde muur lopen.
+// - alle andere soorten (en infra boven de cap): gewoon failTopic, met de
+//   soort in error_kind zodat het bord de juiste uitleg en knoppen toont.
+export async function failTopicClassified(
+  id: number, err: unknown, step: string
+): Promise<{ kind: ErrorKind; requeued: boolean }> {
+  const melding = err instanceof Error
+    ? (err.message || 'Onbekende fout')
+    : String(err || 'Onbekende fout');
+  const kind = classifyError(err);
+  if (kind === 'infra') {
+    if (isQuotumFout(err)) await pauseQueue(quotumReden(err) || melding);
+    const db = await getDb();
+    // Atomisch: teller ophogen én requeuen in één UPDATE, met de cap in de
+    // WHERE — twee gelijktijdige afhandelingen kunnen zo nooit voorbij de cap.
+    const row = await db.get(
+      `UPDATE topics
+       SET status = 'queued', error = $1, error_step = $2, error_kind = 'infra',
+           infra_retries = infra_retries + 1, locked_at = NULL, lock_owner = NULL
+       WHERE id = $3 AND status = 'writing' AND infra_retries < $4
+       RETURNING id`,
+      [melding, step, id, MAX_INFRA_RETRIES]
+    );
+    if (row) return { kind, requeued: true };
+  }
+  await failTopic(id, melding, step, kind);
+  return { kind, requeued: false };
+}
+
+// ---------- wachtrij-pauze (accountbrede quotumfouten) ----------
+
+export interface QueuePause {
+  until: string; // ISO-tijdstip waarop de wachtrij weer mag draaien
+  reden: string; // leesbare reden voor op het bord
+}
+
+export async function pauseQueue(reden: string, ms = QUEUE_PAUSE_MS) {
+  const until = new Date(Date.now() + ms).toISOString();
+  await setSetting(QUEUE_PAUSE_KEY, JSON.stringify({ until, reden }));
+}
+
+// Geeft de actieve pauze terug, of null als er geen is of hij verstreken is.
+// Een verstreken pauze wordt niet actief opgeruimd: de until-check is
+// voldoende en scheelt een schrijfronde per tik.
+export async function getQueuePause(): Promise<QueuePause | null> {
+  const raw = await getSetting(QUEUE_PAUSE_KEY);
+  if (!raw) return null;
+  try {
+    const p = JSON.parse(raw) as Partial<QueuePause>;
+    if (!p?.until || new Date(p.until).getTime() <= Date.now()) return null;
+    return { until: p.until, reden: String(p.reden || 'quotum- of tegoedfout') };
+  } catch {
+    return null;
+  }
 }
 
 // ---------- prompts ----------

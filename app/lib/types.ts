@@ -1,4 +1,5 @@
 import { COMPETITOR_ALIASSEN } from './competitors';
+import type { ErrorKind } from './errorKind';
 
 export type TopicStatus = 'queued' | 'writing' | 'review' | 'failed' | 'done';
 export type TopicType = 'standaard' | 'lijst';
@@ -75,6 +76,14 @@ export interface Topic {
   locked_at?: string | null;
   lock_owner?: string | null;
   dedup_override: number; // 1 = force-toegevoegd; slaat de herkans-check vóór createDraft over
+  // Soort van de laatste fout (zie lib/errorKind.ts); null/afwezig bij rijen
+  // van vóór de foutclassificatie — het bord classificeert dan zelf op de
+  // foutmelding.
+  error_kind?: ErrorKind | null;
+  // Eigen teller voor transiënte herkansingen (infra-fouten + verlopen
+  // leases), cap MAX_INFRA_RETRIES in lib/db.ts. Los van `attempts`, dat bij
+  // elke fase-claim wordt opgehoogd en dus fase-stappen telt.
+  infra_retries?: number;
 }
 
 export function parseListState(topic: Topic): ListState | null {
@@ -310,6 +319,9 @@ export interface BoardData {
   // Compacte tellingen per lijstartikel (postId → items/withMedia), zodat het
   // bord itemfoto's kan meetellen zonder de volledige structuur te laden.
   lists?: Record<number, { items: number; withMedia: number }>;
+  // Actieve wachtrij-pauze na een accountbrede quotumfout (zie getQueuePause
+  // in lib/db.ts); null/afwezig als de wachtrij gewoon draait.
+  queuePause?: { until: string; reden: string } | null;
 }
 
 export type ConstraintKind = 'standaard' | 'lijst';
