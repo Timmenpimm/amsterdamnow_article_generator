@@ -4,7 +4,9 @@
 uitpluizen. Lees eerst dít bestand, importeer het verse design, diff de
 schermlabels tegen de tabel hieronder, en bouw alléén de delta.
 
-_Laatst bijgewerkt: 26 juli 2026 (Amsterdam NOW-templates in de tool: de
+_Laatst bijgewerkt: 27 juli 2026 (Tavily-paneel in Instellingen → koppelingen:
+API-key beheren zonder Vercel-env-vars, zie de Tavily-rij hieronder. Daarvoor:
+Amsterdam NOW-templates in de tool: de
 template-kiezer haalt de NOW-families uit het engine-manifest via de nieuwe
 proxy `GET /api/carousel/now-templates`, NOW-carousels bewaren slides als
 `{index, slideType, values}` — zie rij 4b/4c hieronder. Daarvoor:
@@ -60,6 +62,7 @@ codewijziging._
 | — | Instellingen · Model & koppelingen (provider-switch Claude↔Omniroute) | `app/app/instellingen/ModelPanel.tsx` + `app/app/api/model/route.ts` (+ `/api/model/models`) + `app/lib/modelConfig.ts` (app_settings-key `model_provider`, apiKey gemaskeerd in GET) |
 | — | Instellingen · WordPress (koppeling, juli 2026) | `app/app/instellingen/WordPressPanel.tsx` + `app/app/api/koppelingen/wordpress/route.ts` (GET redact, POST leeg wachtwoord = behouden) + `…/wordpress/test/route.ts` (GET `{url}/wp-json/wp/v2/users/me`) + `app/lib/wpConfig.ts` (app_settings-key `wordpress_connection`, env-fallback WP_URL/WP_USER/WP_APP_PASSWORD). `lib/wp.ts` exporteert niet langer `WP_URL`/`LIVE` maar async `getWpUrl()`/`isLive()`; `lib/wpSync.ts`/`lib/auditor.ts`/`lib/seoBackfill.ts`/`api/board` gebruiken die resolver. |
 | — | Instellingen · Instagram (socials-engine-koppeling, juli 2026) | `app/app/instellingen/InstagramPanel.tsx` + `app/app/api/koppelingen/instagram/route.ts` (proxy naar engine `GET/POST /api/settings/instagram`) + `…/instagram/test/route.ts` (proxy engine-test) + `app/lib/socialsEngine.ts` (app_settings-key `socials_engine`, Bearer-key server-side, env-fallback SOCIALS_ENGINE_URL/SOCIALS_ENGINE_API_KEY) |
+| — | Instellingen · Tavily (API-key-koppeling, juli 2026) | `app/app/instellingen/TavilyPanel.tsx` + `app/app/api/koppelingen/tavily/route.ts` (GET status met gemaskeerde key — alleen laatste 4 tekens, POST nieuwe key, DELETE = override weg → terug naar env) + `…/tavily/test/route.ts` (POST → Tavily `GET /usage`, kost geen credits; nette melding bij 401/429/432/433 en bij quotum-op) + `app/lib/tavilyConfig.ts` (app_settings-key `tavily_api_key`, env-fallback TAVILY_API_KEY, 10s-cache). `lib/tavily.ts` leest de key via async `getTavilyApiKey()` i.p.v. `process.env` |
 | — | Instellingen · Variabelen & context | `app/app/instellingen/PlaceholderPanel.tsx` — rail-item onder "Algemeen" met "Binnenkort"-paneel; **nog geen backend** |
 | — | Archief | `app/app/archief/page.tsx` |
 | **3a/3b/3c** | Bronnen (agenda-scanner) | `app/app/bronnen/page.tsx`; nav in `TopBar.tsx`; backend §4 |

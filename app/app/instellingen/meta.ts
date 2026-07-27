@@ -1,8 +1,8 @@
 import type { ConstraintKind, PromptKind } from '@/lib/types';
 
 // Interne selectie-key voor de rail: prompts, criteria, publiceren, de
-// koppelingen (wordpress, instagram) en de placeholder (variabelen).
-export type RailKey = PromptKind | ConstraintKind | 'publiceren' | 'variabelen' | 'model' | 'wordpress' | 'instagram';
+// koppelingen (wordpress, instagram, tavily) en de placeholder (variabelen).
+export type RailKey = PromptKind | ConstraintKind | 'publiceren' | 'variabelen' | 'model' | 'wordpress' | 'instagram' | 'tavily';
 
 export interface RailItem {
   key: RailKey;
@@ -49,6 +49,7 @@ export const RAIL_GROUPS: RailGroup[] = [
       { key: 'model', label: 'Model & koppelingen' },
       { key: 'wordpress', label: 'WordPress' },
       { key: 'instagram', label: 'Instagram' },
+      { key: 'tavily', label: 'Tavily' },
     ],
   },
 ];
@@ -74,6 +75,7 @@ const TITLES: Record<RailKey, string> = {
   model: 'Model & koppelingen',
   wordpress: 'WordPress',
   instagram: 'Instagram',
+  tavily: 'Tavily',
 };
 
 const DESCRIPTIONS: Record<RailKey, string> = {
@@ -96,6 +98,7 @@ const DESCRIPTIONS: Record<RailKey, string> = {
   model: 'Kies waar de AI draait: rechtstreeks naar Claude (Anthropic) of via je eigen Omniroute-gateway om tokens te sparen.',
   wordpress: 'Koppeling met WordPress (drafts & publicatie). Instellingen hier winnen van de omgevingsvariabelen.',
   instagram: 'Koppeling met de socials-engine en Instagram. De engine bezit het Instagram-account; deze tool praat er server-side mee.',
+  tavily: 'API-key voor Tavily (research & bronextractie). Een key hier ingesteld wint van de omgevingsvariabele — handig als het quotum op is en je snel wilt wisselen.',
 };
 
 export interface PanelMeta {
@@ -112,7 +115,7 @@ function eyebrowFor(key: RailKey): string {
   if (key === 'standaard') return 'Standaardartikel · redactionele criteria';
   if (key === 'lijst') return 'Lijstartikel · redactionele criteria';
   if (key === 'publiceren') return 'Algemeen · publiceren';
-  if (key === 'wordpress' || key === 'instagram') return 'Algemeen · koppelingen';
+  if (key === 'wordpress' || key === 'instagram' || key === 'tavily') return 'Algemeen · koppelingen';
   return 'Algemeen'; // variabelen, model
 }
 
