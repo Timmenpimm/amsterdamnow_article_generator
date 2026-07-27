@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Article, BoardData, Topic } from '@/lib/types';
 import { articlePhase, imageCount, listImagesReady, parseListState, REQUIRED_IMAGES } from '@/lib/types';
+import { classifyError, uitlegVoorKind, type ErrorKind } from '@/lib/errorKind';
 import TopBar from './TopBar';
 import AuditPanel, { runTime, verdictStyle } from './AuditPanel';
 import BulkModal from './BulkModal';
@@ -132,6 +133,13 @@ async function runAutofillTicks(
     if (body.done) return { placed, itemsFilled, finished: true };
   }
   return { placed, itemsFilled, finished: false };
+}
+
+// Soort van de fout op een mislukt topic. Rijen van vóór de
+// error_kind-kolom (of een board-payload zonder het veld) classificeren we
+// hier alsnog op de melding — zelfde patronen als de server gebruikt.
+function foutKind(t: Topic): ErrorKind {
+  return t.error_kind || classifyError(t.error || '');
 }
 
 function timeLabel(iso: string): string {
@@ -560,6 +568,16 @@ export default function Pipeline() {
         const body = await res.json();
         if (!res.ok) throw new Error(body.error || 'Schrijven mislukt');
         if (!body.topic) {
+          // Wachtrij-brede quotum-pauze (Tavily-quotum, Claude-tegoed): niets
+          // claimen tot het tijdstip verstreken is. De banner boven het bord
+          // toont de reden; hier alleen stoppen met tikken.
+          if (body.paused) {
+            if (!opts?.silent) {
+              toast(`Wachtrij gepauzeerd: ${body.paused.reden}`, { kind: 'error' });
+            }
+            load();
+            return;
+          }
           // blocked = er ligt werk, maar er is al een taak actief (bv. een
           // ander tabblad, of een net weggevallen tik die nog moet herstellen)
           // — geen lege wachtrij, dus even opnieuw proberen in plaats van
@@ -708,6 +726,26 @@ export default function Pipeline() {
           <span>
             — wijzigingen gaan verloren bij een nieuwe serverstart. Zet <code style={{ fontFamily: 'var(--mono)' }}>DATABASE_URL</code>{' '}
             (Supabase-connectiestring) in de Vercel-omgevingsvariabelen.
+          </span>
+        </div>
+      )}
+
+      {/* Wachtrij-brede quotum-pauze (zie getQueuePause in lib/db.ts): één
+          accountbrede fout (Tavily-quotum, Claude-tegoed) pauzeert de hele
+          wachtrij — dat hoort als één melding boven het bord, niet als losse
+          rode kaarten per onderwerp. Buiten desktop-only, dus ook op mobiel. */}
+      {data?.queuePause && (
+        <div
+          style={{
+            display: 'flex', alignItems: 'center', gap: 10, padding: '9px 20px',
+            background: 'var(--amber-bg)', borderBottom: '1px solid var(--amber-border)',
+            fontSize: 12.5, color: 'var(--amber-dark)',
+          }}
+        >
+          <span style={{ fontWeight: 800 }}>⏸ Wachtrij gepauzeerd</span>
+          <span>
+            — {data.queuePause.reden}. Schrijven gaat automatisch verder rond{' '}
+            {new Date(data.queuePause.until).toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' })}.
           </span>
         </div>
       )}
@@ -1062,35 +1100,65 @@ export default function Pipeline() {
 
           {/* Mislukt */}
           <Column color="var(--red)" title="Mislukt" count={failed.length}>
-            {failed.map(t => (
-              <div key={t.id} className="card" style={{ padding: 12, borderColor: 'var(--red-border)' }}>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <div style={{ fontSize: 13.5, fontWeight: 600, lineHeight: 1.35, flex: 1 }}>{t.title}</div>
-                  <span style={{ fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap' }}>poging {t.attempts || 1}</span>
-                </div>
-                <div
-                  style={{
-                    marginTop: 8, fontSize: 12, color: 'var(--red-dark)', background: 'var(--red-bg)',
-                    borderRadius: 6, padding: '7px 9px', lineHeight: 1.4, fontFamily: 'var(--mono)',
-                  }}
-                >
-                  {t.error_step ? `${t.error_step} · ` : ''}{t.error || 'Onbekende fout'}
-                </div>
-                <div style={{ fontSize: 12, color: 'var(--gray)', marginTop: 8, lineHeight: 1.45 }}>
-                  Het onderwerp blijft bewaard. Opnieuw proberen zet het bovenaan de wachtrij.
-                </div>
-                <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-                  <button
-                    className="btn-primary"
-                    style={{ flex: 1, fontSize: 12.5, fontWeight: 700, padding: 8, borderRadius: 6 }}
-                    onClick={() => retryTopic(t)}
+            {failed.map(t => {
+              const kind = foutKind(t);
+              return (
+                <div key={t.id} className="card" style={{ padding: 12, borderColor: 'var(--red-border)' }}>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <div style={{ fontSize: 13.5, fontWeight: 600, lineHeight: 1.35, flex: 1 }}>{t.title}</div>
+                    {/* attempts telt fase-claims, geen mislukte pogingen — dus
+                        "stap N", niet "poging N" (zie claimNext in lib/db.ts). */}
+                    <span style={{ fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap' }}>stap {t.attempts || 1}</span>
+                  </div>
+                  <div style={{ marginTop: 8, fontSize: 12, fontWeight: 700, color: 'var(--red-dark)', lineHeight: 1.4 }}>
+                    {uitlegVoorKind(kind, t.error || '')}
+                  </div>
+                  <div
+                    style={{
+                      marginTop: 6, fontSize: 12, color: 'var(--red-dark)', background: 'var(--red-bg)',
+                      borderRadius: 6, padding: '7px 9px', lineHeight: 1.4, fontFamily: 'var(--mono)',
+                    }}
                   >
-                    Opnieuw proberen
-                  </button>
-                  <button className="btn-small" onClick={() => removeTopic(t)}>✕</button>
+                    {t.error_step ? `${t.error_step} · ` : ''}{t.error || 'Onbekende fout'}
+                  </div>
+                  {kind === 'definitief' ? (
+                    <>
+                      {/* Bewuste redactionele poort (event voorbij, duplicaat):
+                          een retry levert gegarandeerd dezelfde uitkomst op,
+                          dus die knop staat hier bewust niet. */}
+                      <div style={{ fontSize: 12, color: 'var(--gray)', marginTop: 8, lineHeight: 1.45 }}>
+                        Opnieuw proberen heeft geen zin — pas het onderwerp aan of verwijder het.
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                        <button
+                          className="btn"
+                          style={{ flex: 1, fontSize: 12.5, fontWeight: 700, padding: 8, borderRadius: 6 }}
+                          onClick={() => removeTopic(t)}
+                        >
+                          Verwijderen
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div style={{ fontSize: 12, color: 'var(--gray)', marginTop: 8, lineHeight: 1.45 }}>
+                        Het onderwerp blijft bewaard. Opnieuw proberen zet het bovenaan de wachtrij.
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                        <button
+                          className="btn-primary"
+                          style={{ flex: 1, fontSize: 12.5, fontWeight: 700, padding: 8, borderRadius: 6 }}
+                          onClick={() => retryTopic(t)}
+                        >
+                          Opnieuw proberen
+                        </button>
+                        <button className="btn-small" onClick={() => removeTopic(t)}>✕</button>
+                      </div>
+                    </>
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
             {data && failed.length === 0 && (
               <div style={{ fontSize: 11.5, color: 'var(--muted)', textAlign: 'center', padding: '14px 6px' }}>
                 geen fouten 🎉
@@ -1242,15 +1310,23 @@ function MobileHome({
             <span className="dot" style={{ background: t.status === 'review' ? 'var(--amber)' : 'var(--blue)' }} />
           </div>
         ))}
-        {failed.map(t => (
-          <div key={t.id} className="card" style={{ borderRadius: 10, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10, borderColor: 'var(--red-border)' }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 13.5, fontWeight: 600, lineHeight: 1.35 }}>{t.title}</div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--red-dark)', marginTop: 3 }}>Mislukt — probeer opnieuw op desktop</div>
+        {failed.map(t => {
+          const kind = foutKind(t);
+          return (
+            <div key={t.id} className="card" style={{ borderRadius: 10, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10, borderColor: 'var(--red-border)' }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13.5, fontWeight: 600, lineHeight: 1.35 }}>{t.title}</div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--red-dark)', marginTop: 3 }}>
+                  Mislukt (stap {t.attempts || 1}) · {uitlegVoorKind(kind, t.error || '')}
+                </div>
+                {kind !== 'definitief' && (
+                  <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>Opnieuw proberen doe je op desktop.</div>
+                )}
+              </div>
+              <span className="dot" style={{ background: 'var(--red)' }} />
             </div>
-            <span className="dot" style={{ background: 'var(--red)' }} />
-          </div>
-        ))}
+          );
+        })}
         {queued.map((t, i) => (
           <div key={t.id} className="card" style={{ borderRadius: 10, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
             <div style={{ flex: 1 }}>

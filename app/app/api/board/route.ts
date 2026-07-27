@@ -1,12 +1,14 @@
 import { NextResponse } from 'next/server';
-import { listStructures, listTopics, STORAGE } from '@/lib/db';
+import { getQueuePause, listStructures, listTopics, STORAGE } from '@/lib/db';
 import { listArticles, isLive } from '@/lib/wp';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
-    const [topics, articles, structures] = await Promise.all([listTopics(), listArticles(), listStructures()]);
+    const [topics, articles, structures, queuePause] = await Promise.all([
+      listTopics(), listArticles(), listStructures(), getQueuePause(),
+    ]);
     // Compact per lijstartikel: aantal items en aantal met foto, voor de
     // beeldenteller op het bord.
     const lists: Record<number, { items: number; withMedia: number }> = {};
@@ -20,6 +22,7 @@ export async function GET() {
       topics,
       articles,
       lists,
+      queuePause,
     });
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });

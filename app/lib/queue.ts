@@ -1,4 +1,4 @@
-import { claimNextQueued, hasQueuedTopics, recoverStaleTopics } from './db';
+import { claimNextQueued, getQueuePause, hasQueuedTopics, recoverStaleTopics } from './db';
 import { processListStep } from './listWriter';
 import { processStandaardStep } from './writer';
 
@@ -10,6 +10,12 @@ import { processStandaardStep } from './writer';
 // 'queued' zodat de volgende aanroep 'm via claimNextQueued() weer oppakt.
 export async function processNextQueueJob() {
   const recovered = await recoverStaleTopics();
+  // Accountbrede quotum-pauze (Tavily-quotum, Claude-tegoed, zie
+  // failTopicClassified in lib/db.ts): zolang die loopt claimen we niets —
+  // elk onderwerp zou tegen dezelfde muur lopen. De frontend krijgt `paused`
+  // mee en toont de reden boven de wachtrij.
+  const paused = await getQueuePause();
+  if (paused) return { topic: null, article: null, recovered, blocked: false, paused };
   const next = await claimNextQueued();
   if (!next) {
     // null betekent hier ook "er ligt werk maar er is al iets actief" — dat
