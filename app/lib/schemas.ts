@@ -140,17 +140,22 @@ export const ENTITY_VERIFY_SCHEMA: Record<string, unknown> = {
 
 // invalshoek-fase → writer.ts stepInvalshoek. Bepaalt de local-tip-hoek van
 // het artikel vóór de schrijffase, en fungeert als poort: research zonder
-// bruikbare hoek (of met interne tegenspraak) levert geen artikel op.
+// bruikbare hoek levert geen artikel op. Een tegenspraak is bewust GEKOPPELD
+// aan publicabel: alleen als de tegenspraak het artikel echt onmogelijk maakt
+// hoort publicabel op false — een losse tegenspraak-zin is voor de pipeline
+// slechts een waarschuwing aan de schrijffase (zie stepInvalshoek). Het veld
+// is required (structured output), dus het model wordt geprikkeld om íets in
+// te vullen; daarom mag een gevulde tegenspraak op zichzelf nooit fataal zijn.
 export const INVALSHOEK_SCHEMA: Record<string, unknown> = {
   type: 'object',
   additionalProperties: false,
   required: ['publicabel', 'hoek', 'beats', 'tegenspraak', 'reden'],
   properties: {
-    publicabel: { type: 'boolean', description: 'True als er uit de research een concrete local-tip-hoek te halen is. False als de feiten te dun of te generiek zijn voor een artikel met inhoud, of als de research zichzelf tegenspreekt op een kernpunt.' },
+    publicabel: { type: 'boolean', description: 'True als er uit de research een concrete local-tip-hoek te halen is. False als de feiten te dun of te generiek zijn voor een artikel met inhoud, of als een tegenspraak over een kernfeit van het onderwerp zelf een kloppend artikel onmogelijk maakt.' },
     hoek: { type: 'string', description: 'De invalshoek in één zin: waaróm tipt de ene Amsterdammer de andere dit? Leeg als publicabel false is.' },
     beats: { type: 'array', items: { type: 'string' }, description: 'Twee à drie concrete story beats (elk één zin) uit de research die de hoek dragen. Alleen feiten die letterlijk in de research of bronnen staan.' },
-    tegenspraak: { type: 'string', description: 'Korte NL-zin als de research zichzelf tegenspreekt op een kernpunt (bv. "line-up wordt niet onthuld" naast een volledige line-up-lijst), anders lege string.' },
-    reden: { type: 'string', description: 'Alleen bij publicabel false: één leesbare NL-zin waarom dit onderwerp (nu) geen artikel oplevert.' },
+    tegenspraak: { type: 'string', description: 'Korte NL-zin ALLEEN als de research zichzelf tegenspreekt op een kernfeit van het onderwerp zelf: de naam, wie erachter zit, of het event überhaupt bestaat. GEEN tegenspraak: capaciteit, openingstijden, prijzen, datumverschillen tussen bronnen, of bronnen die over een ander onderwerp gaan (negeer die volledig). Twijfel of niets aan de hand: lege string.' },
+    reden: { type: 'string', description: 'Alleen bij publicabel false: één leesbare NL-zin waarom dit onderwerp (nu) geen artikel oplevert. Noem daarin concreet welk feit of gegeven ontbreekt.' },
   },
 };
 

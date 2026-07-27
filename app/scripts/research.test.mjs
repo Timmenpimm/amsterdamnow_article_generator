@@ -149,6 +149,22 @@ test('describeInvalshoek: zonder hoek geen blok (topics van vóór de fase)', ()
   assert.equal(describeInvalshoek({ invalshoek: { hoek: '', beats: [] } }), '');
 });
 
+test('describeInvalshoek: niet-blokkerende tegenspraak gaat als waarschuwing mee', () => {
+  const blok = describeInvalshoek({
+    invalshoek: { hoek: 'Nieuw museum in een oud badhuis', beats: [] },
+    invalshoekWaarschuwing: 'FAQ noemt max 10 personen per groep, boekingspagina max 5',
+  });
+  assert.ok(blok.includes('LET OP'));
+  assert.ok(blok.includes('max 10 personen'));
+  assert.ok(blok.includes('NIET als feit'));
+});
+
+test('describeInvalshoek: waarschuwing verschijnt ook zonder hoek', () => {
+  const blok = describeInvalshoek({ invalshoekWaarschuwing: 'Bronnen verschillen over de einddatum' });
+  assert.ok(blok.includes('LET OP'));
+  assert.ok(!blok.includes('INVALSHOEK ('), 'geen leeg invalshoek-blok');
+});
+
 // ---------- samenvatting ----------
 
 console.log(`\n${passed} geslaagd, ${failures.length} mislukt`);

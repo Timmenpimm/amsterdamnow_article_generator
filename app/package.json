@@ -18,6 +18,7 @@
     "test:research": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/research.test.mjs",
     "test:auditor": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/auditor.test.mjs",
     "test:competitors": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/competitors.test.mjs",
+    "test:relevance": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/relevance.test.mjs",
     "test:tokenlog": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/tokenlog.test.mjs"
   },
   "dependencies": {

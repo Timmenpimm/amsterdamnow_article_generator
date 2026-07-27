@@ -13,6 +13,7 @@ import { formatStandardArticleHtml } from './articleHtml';
 import { decodeHtmlEntities } from './htmlEntities';
 import { amsterdamToday, eventEndReference, isPastEvent } from './eventDate';
 import { detectProfiel, profielFocus, profielQueries } from './researchProfiles';
+import { filterOpRelevantie, kernwoorden, onderwerpTokens } from './relevance';
 import { competitorInTekst } from './competitors';
 
 // Ruime marge boven een realistisch artikel (~450 woorden content + korte
@@ -537,8 +538,13 @@ async function stepResearch(topic: Topic, s: StandaardState): Promise<StandaardS
   }
   // Bronnen, gaten en score bewaren voor de volgende fases: de schrijver krijgt
   // de brontekst mee (zie describeSources) en de sufficiëntie-poort hieronder
-  // heeft de score nodig.
-  s.researchSources = trimSources(sources);
+  // heeft de score nodig. Eerst het relevantiefilter (lib/relevance.ts):
+  // bronnen zonder één onderscheidende onderwerptoken gaan over iets ánders en
+  // horen niet in de invalshoek- of schrijfprompt. Blijven er minder dan twee
+  // relevante bronnen over, dan komen de overige gedegradeerd (als laatste)
+  // terug — zie filterOpRelevantie voor die afweging.
+  const relevantieTokens = onderwerpTokens(topic.title, optionalString(r.naam_locatie));
+  s.researchSources = trimSources(filterOpRelevantie(sources, relevantieTokens));
   s.missingFacts = missingFactsOf(research);
   s.factScore = researchFactScore(research);
   s.researchRounds = 1;
@@ -562,13 +568,21 @@ async function stepResearch(topic: Topic, s: StandaardState): Promise<StandaardS
 }
 
 // Aanvullende researchronde: gericht zoeken op wat de eerste ronde niet vond.
-// Bewust bescheiden binnen de 60s-limiet — hooguit twee Tavily-calls en één
+// Bewust bescheiden binnen de 60s-limiet — hooguit drie Tavily-calls en één
 // Claude-call — en volledig fail-open: gaat hier iets mis, dan schrijven we met
 // wat we al hebben, want het topic heeft al bruikbare research.
+//
+// Tweede rol sinds de invalshoek-herstelfix: wijst de invalshoek-poort een
+// topic af (publicabel false), dan stuurt stepInvalshoek het topic éénmalig
+// terug naar deze fase mét de afwijsreden in s.invalshoekAfwijzing. De queries
+// worden dan niet door het categorie-profiel gestuurd maar door die reden en
+// de openstaande missing_facts — gericht zoeken naar precies het gat waarop
+// het topic sneuvelde, waarna de poort opnieuw oordeelt.
 async function stepResearchAanvullend(topic: Topic, s: StandaardState): Promise<StandaardStepResult> {
   if (!s.research) throw new Error('Research ontbreekt voor de aanvullende researchronde.');
   const r = s.research as Record<string, unknown>;
   const constraints = await standaardConstraints();
+  const herstel = !!s.invalshoekAfwijzing;
   let gevonden = 0;
   try {
     const naam = optionalString(r.naam_locatie) || topic.title;
@@ -581,12 +595,22 @@ async function stepResearchAanvullend(topic: Topic, s: StandaardState): Promise<
     // uit ronde 1 mag er als derde query bij. Drie i.p.v. twee calls kan
     // binnen de 60s-tik: ze lopen parallel (elk met een timeout van 15s,
     // zie tavily.ts) en de Claude-extractie erna blijft er één.
+    // In de herstelronde sturen de afwijsreden en missing_facts de queries;
+    // de profielqueries zijn dan al eens gedraaid en zouden deterministisch
+    // dezelfde bronnen (en hetzelfde oordeel) opleveren. Naam tussen
+    // aanhalingstekens, net als in profielQueries: strakke binding aan het
+    // onderwerp houdt vreemd materiaal buiten de deur.
     const profiel = detectProfiel(r);
-    const gaten = (s.missingFacts ?? []).slice(0, 1);
-    const queries = [
+    const gaten = (s.missingFacts ?? []).slice(0, herstel ? 2 : 1);
+    const nQ = `"${naam.replace(/"/g, '')}"`;
+    const herstelQueries = [
+      `${nQ} ${kernwoorden(s.invalshoekAfwijzing ?? '')}`.trim(),
+      ...gaten.map(gat => `${nQ} ${plaats} ${gat}`),
+    ].filter(q => q.length > nQ.length + 1);
+    const queries = (herstel && herstelQueries.length ? herstelQueries : [
       ...profielQueries(profiel, naam, plaats),
       ...gaten.map(gat => `${naam} ${plaats} ${gat}`),
-    ].slice(0, 3);
+    ]).slice(0, 3);
 
     // De zoekopdrachten tegelijk: ze zijn onafhankelijk, en er moet in
     // deze tik ook nog een Claude-extractie bij binnen de 60s. allSettled i.p.v.
@@ -597,16 +621,22 @@ async function stepResearchAanvullend(topic: Topic, s: StandaardState): Promise<
       queries.map(query => researchWithTavily(topic.title, { query, maxResults: 3 })),
     );
     const bekend = new Set((s.researchSources ?? []).map(src => src.url.replace(/\/+$/, '').toLowerCase()));
-    const nieuw: ResearchSource[] = [];
+    const binnengekomen: ResearchSource[] = [];
     for (const uitkomst of uitkomsten) {
       if (uitkomst.status !== 'fulfilled') continue;
       for (const src of uitkomst.value.sources) {
         const key = src.url.replace(/\/+$/, '').toLowerCase();
         if (bekend.has(key)) continue;
         bekend.add(key);
-        nieuw.push(src);
+        binnengekomen.push(src);
       }
     }
+    // Relevantiefilter, hier STRIKT (minBronnen 0): een ronde-2-bron zonder
+    // één onderwerptoken gaat over iets anders (de DGTL-pagina bij een
+    // ADE-onderwerp) en mag nooit een relevante ronde-1-bron verdringen —
+    // de ronde-1-bronnen liggen er al als vangnet, dus weglaten is veilig.
+    const relevantieTokens = onderwerpTokens(topic.title, naam);
+    const nieuw = filterOpRelevantie(binnengekomen, relevantieTokens, 0);
     gevonden = nieuw.length;
 
     if (nieuw.length) {
@@ -614,9 +644,15 @@ async function stepResearchAanvullend(topic: Topic, s: StandaardState): Promise<
       const nieuwGetrimd = trimSources(nieuw);
       const [researchPrompt, taxonomies] = await Promise.all([activePrompt('research'), taxonomyChoices()]);
       const alle = [...bestaand, ...nieuwGetrimd];
+      // In de herstelronde weet de extractie waaróm de invalshoek-poort het
+      // topic afwees, zodat ze gericht op dat gat let in plaats van generiek
+      // te verzamelen.
+      const focus = herstel
+        ? `De invalshoek-poort wees dit onderwerp af met deze reden: "${s.invalshoekAfwijzing}". Zoek in de bronnen gericht naar concrete feiten die precies dat gat dichten.\n\n${profielFocus(profiel, officialHostOf(s))}`
+        : profielFocus(profiel, officialHostOf(s));
       const extra = await askClaudeJson(
         researchPrompt.content,
-        `Onderwerp: ${topic.title}\n\nVandaag is ${amsterdamToday()} (Europe/Amsterdam).\n\nBeschikbare WordPress-categorieën: ${taxonomies.categories.join(', ')}\nBeschikbare WordPress-districten: ${taxonomies.districts.join(', ')}\nBeschikbare WordPress-tags: ${taxonomies.tags.join(', ')}\nKies precies één "tag" uit deze lijst: de best passende. Verzin nooit een nieuwe tag. Past geen enkele bestaande tag echt goed, geef dan "" terug.\n\nDit is een AANVULLENDE ronde: er is al research gedaan, maar deze feiten ontbraken nog: ${(s.missingFacts ?? []).join(', ') || '(niet gespecificeerd)'}. Let vooral op die punten. Verzin nooit iets: staat het niet in de bronnen, laat het veld leeg en zet het in "missing_facts".\n\n${profielFocus(profiel, officialHostOf(s))}\n\nBronnen:\n${alle.map((src, i) => `\n[${i + 1}] ${src.title}\n${src.url}\n${src.content}`).join('\n')}`,
+        `Onderwerp: ${topic.title}\n\nVandaag is ${amsterdamToday()} (Europe/Amsterdam).\n\nBeschikbare WordPress-categorieën: ${taxonomies.categories.join(', ')}\nBeschikbare WordPress-districten: ${taxonomies.districts.join(', ')}\nBeschikbare WordPress-tags: ${taxonomies.tags.join(', ')}\nKies precies één "tag" uit deze lijst: de best passende. Verzin nooit een nieuwe tag. Past geen enkele bestaande tag echt goed, geef dan "" terug.\n\nDit is een AANVULLENDE ronde: er is al research gedaan, maar deze feiten ontbraken nog: ${(s.missingFacts ?? []).join(', ') || '(niet gespecificeerd)'}. Let vooral op die punten. Verzin nooit iets: staat het niet in de bronnen, laat het veld leeg en zet het in "missing_facts".\n\n${focus}\n\nBronnen:\n${alle.map((src, i) => `\n[${i + 1}] ${src.title}\n${src.url}\n${src.content}`).join('\n')}`,
         FAST_WRITE_MODEL, 6000, RESEARCH_SCHEMA, false, `research-aanvullend#${topic.id}`,
       );
       mergeResearch(r, extra);
@@ -634,13 +670,19 @@ async function stepResearchAanvullend(topic: Topic, s: StandaardState): Promise<
   } catch {
     // FAIL-OPEN: we schrijven met de research van ronde 1.
   }
-  // Altijd door naar de invalshoek-poort, nooit een derde researchronde.
+  // Altijd door naar de invalshoek-poort, nooit een derde reguliere ronde. Ook
+  // de herstelronde komt hier terug: de poort oordeelt dan opnieuw, en de
+  // teller invalshoekHerstelRounds (gezet in stepInvalshoek) bewaakt dat er
+  // hooguit één herstelronde is.
   s.researchRounds = 2;
   s.factScore = researchFactScore(s.research as Record<string, unknown>);
   await saveTopicProgress(topic.id, { status: 'queued', phase: 'invalshoek', state: s });
+  const bronnenTekst = `${gevonden} extra bron${gevonden === 1 ? '' : 'nen'}`;
   return {
     topic, phase: 'invalshoek', done: false,
-    progress: `Aanvullende research (${gevonden} extra bron${gevonden === 1 ? '' : 'nen'}, score ${s.factScore}) · invalshoek bepalen`,
+    progress: herstel
+      ? `Herstelronde (${bronnenTekst}, score ${s.factScore}) · invalshoek opnieuw beoordelen`
+      : `Aanvullende research (${bronnenTekst}, score ${s.factScore}) · invalshoek bepalen`,
   };
 }
 
@@ -651,11 +693,21 @@ async function stepResearchAanvullend(topic: Topic, s: StandaardState): Promise<
 // niets beslist of er eigenlijk wel iets te vertellen valt (Circoloco zonder
 // line-up, Veganees zonder één concreet gerecht). Drie uitkomsten:
 // - hoek gevonden → de hoek en story beats gaan als blok mee de schrijffase in;
-// - geen hoek te halen uit de feiten → topic mislukt mét leesbare reden,
-//   vóór er een draft of beeldzoektocht aan wordt uitgegeven;
-// - de research spreekt zichzelf tegen op een kernpunt (draft 87452: "line-up
-//   wordt niet onthuld" naast een volledige line-up van de verzamelsite) →
-//   idem, want doorschrijven betekent gokken welke helft klopt.
+// - geen hoek te halen uit de feiten → éénmalig een gerichte herstelronde
+//   (terug naar research-aanvullend, gestuurd door de afwijsreden); sneuvelt
+//   het topic daarna opnieuw → mislukt mét leesbare reden, vóór er een draft
+//   of beeldzoektocht aan wordt uitgegeven. Direct failen was zinloos streng:
+//   een retry op dezelfde research geeft deterministisch hetzelfde oordeel
+//   (het "poging 3"-label op het bord is een fase-teller, geen herkansing),
+//   dus de enige zinvolle herkansing is er een mét nieuwe research;
+// - de research spreekt zichzelf tegen: alléén fataal als het model dat zelf
+//   zwaar genoeg vindt voor publicabel false. Het tegenspraak-veld is required
+//   in het schema, dus het model vult er onder druk van structured output
+//   graag íets in — productie failde zo op capaciteits- en datumtrivia
+//   (Neoseum: "FAQ zegt tot 10 vs tot 5 personen") die de schrijffase prima
+//   kan omzeilen en die de event-poort (datums) al gezaghebbend afdekt. Een
+//   niet-blokkerende tegenspraak gaat daarom als waarschuwing mee naar de
+//   schrijffase (describeInvalshoek) in plaats van het topic te killen.
 async function stepInvalshoek(topic: Topic, s: StandaardState): Promise<StandaardStepResult> {
   if (!s.research) throw new Error('Research ontbreekt voor de invalshoek-fase.');
   const naam = subjectName(topic, s);
@@ -669,20 +721,39 @@ async function stepInvalshoek(topic: Topic, s: StandaardState): Promise<Standaar
     '- publicabel: is hier een concreet, niet-generiek verhaal uit te halen? "Een nieuwe plek met een fijne sfeer" is GEEN verhaal; "de chef van restaurant X begint voor zichzelf in het pand van Y" wel. Te dun of alleen marketingtaal: false.',
     '- hoek: de local-tip in één zin. Niet wat de zaak over zichzelf zegt, maar wat een Amsterdammer erover doorvertelt.',
     '- beats: twee à drie concrete feiten uit de research die de hoek dragen.',
-    '- tegenspraak: spreekt de research zichzelf tegen op een kernpunt (datum, line-up, wie erachter zit)? Noem het kort; anders lege string.',
-    '- reden: alleen bij publicabel false één leesbare zin waarom niet.',
+    '- tegenspraak: spreekt de research zichzelf tegen op een kernfeit van HET ONDERWERP ZELF — de naam, wie erachter zit, of het event überhaupt bestaat? Noem het kort; anders lege string. GEEN tegenspraak zijn: capaciteit, openingstijden, prijzen, datumverschillen tussen bronnen (de event-poort dekt datums al), en bronnen die over een ánder onderwerp of event gaan — negeer zulke bronnen volledig.',
+    '- reden: alleen bij publicabel false één leesbare zin waarom niet, met daarin welk concreet feit ontbreekt.',
     '',
     `Research-JSON:\n${JSON.stringify(s.research)}`,
     describeSources(s),
   ].join('\n');
   const payload = await askClaudeJson(system, prompt, FAST_WRITE_MODEL, 1500, INVALSHOEK_SCHEMA, false, `invalshoek#${topic.id}`);
   const tegenspraak = optionalString(payload.tegenspraak);
-  if (tegenspraak) {
-    throw new Error(`Research spreekt zichzelf tegen: ${tegenspraak}. Controleer het onderwerp handmatig voordat het opnieuw de wachtrij in gaat.`);
-  }
+  // Poortvolgorde bewust omgedraaid t.o.v. de eerste versie: eerst publicabel,
+  // dán tegenspraak. Een tegenspraak is alleen fataal als het model 'm zelf
+  // zwaar genoeg vond om publicabel op false te zetten.
   if (payload.publicabel !== true) {
-    throw new Error(`Geen artikel waard volgens de invalshoek-poort: ${optionalString(payload.reden) || 'de research bevat te weinig concreet verhaal'}.`);
+    const afwijzing = optionalString(payload.reden)
+      || (tegenspraak ? `de research spreekt zichzelf tegen op een kernfeit: ${tegenspraak}` : 'de research bevat te weinig concreet verhaal');
+    // Eénmalige herstelronde: terug naar research-aanvullend, met de
+    // afwijsreden als querysturing. Meer dan één keer is zinloos — als ook de
+    // gerichte ronde het gat niet dicht, is het gat echt.
+    if ((s.invalshoekHerstelRounds ?? 0) < 1) {
+      s.invalshoekHerstelRounds = 1;
+      s.invalshoekAfwijzing = afwijzing;
+      await saveTopicProgress(topic.id, { status: 'queued', phase: 'research-aanvullend', state: s });
+      return {
+        topic, phase: 'research-aanvullend', done: false,
+        progress: `Invalshoek-poort: nog niet publicabel (${afwijzing.slice(0, 60)}) · gerichte herstelronde`,
+      };
+    }
+    throw new Error(`Geen artikel waard volgens de invalshoek-poort, ook niet na een gerichte extra researchronde: ${afwijzing}.`);
   }
+  // Publicabel: een eventuele herstel-sturing is niet meer nodig, en een
+  // niet-blokkerende tegenspraak gaat als waarschuwing mee de schrijffase in
+  // zodat het omstreden detail niet als feit in het artikel belandt.
+  delete s.invalshoekAfwijzing;
+  if (tegenspraak) s.invalshoekWaarschuwing = tegenspraak;
   const hoek = optionalString(payload.hoek);
   const beats = Array.isArray(payload.beats) ? payload.beats.filter((b): b is string => typeof b === 'string' && !!b.trim()).slice(0, 3) : [];
   // Publicabel zonder hoek is een halfslachtig antwoord; dan schrijven we
@@ -694,18 +765,28 @@ async function stepInvalshoek(topic: Topic, s: StandaardState): Promise<Standaar
 }
 
 // Het invalshoek-blok voor de schrijffase: de hoek als kapstok, de beats als
-// verplichte dragers. Leeg als de invalshoek-fase geen hoek opleverde (of voor
-// topics van vóór deze fase die al in de schrijffase hangen).
+// verplichte dragers, plus (sinds de tegenspraak-fix) een eventuele
+// niet-blokkerende tegenspraak als waarschuwing — het omstreden detail mag
+// niet als feit in het artikel belanden. Leeg als de invalshoek-fase niets
+// opleverde (of voor topics van vóór deze fase die al in de schrijffase
+// hangen).
 export function describeInvalshoek(s: StandaardState): string {
   const i = s.invalshoek;
-  if (!i?.hoek) return '';
-  return [
-    '',
-    'INVALSHOEK (door de chef-redactie bepaald, verplicht aanhouden):',
-    i.hoek,
-    ...(i.beats.length ? ['Draag de invalshoek met deze story beats, verspreid over het artikel:', ...i.beats.map(b => `- ${b}`)] : []),
-    'Open het artikel vanuit deze invalshoek, niet met een algemene beschrijving van de zaak.',
-  ].join('\n');
+  const waarschuwing = s.invalshoekWaarschuwing;
+  if (!i?.hoek && !waarschuwing) return '';
+  const regels: string[] = [''];
+  if (i?.hoek) {
+    regels.push(
+      'INVALSHOEK (door de chef-redactie bepaald, verplicht aanhouden):',
+      i.hoek,
+      ...(i.beats.length ? ['Draag de invalshoek met deze story beats, verspreid over het artikel:', ...i.beats.map(b => `- ${b}`)] : []),
+      'Open het artikel vanuit deze invalshoek, niet met een algemene beschrijving van de zaak.',
+    );
+  }
+  if (waarschuwing) {
+    regels.push(`LET OP: de bronnen spreken elkaar tegen op dit punt: ${waarschuwing}. Neem dit omstreden detail NIET als feit in het artikel op; laat het gewoon weg.`);
+  }
+  return regels.join('\n');
 }
 
 // Merge-regel van de aanvullende ronde: AANVULLEN, nooit overschrijven. De
