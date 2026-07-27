@@ -39,6 +39,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ art
       contentHtml: article.contentHtml,
       excerpt: article.intro || article.subregel || undefined,
       imageUrl: article.featured?.url || undefined,
+      // NOW-templates gebruiken het eerste beeld als cover en verdelen de
+      // rest over detail-/itemslides. Zonder deze lijst kreeg de engine alleen
+      // de featured-foto en viel iedere fotoslide daarop terug.
+      imageUrls: [article.featured, ...(article.slider || []), article.inline]
+        .map(m => m?.url)
+        .filter((url, i, urls): url is string => Boolean(url) && urls.indexOf(url) === i),
       categories: [article.category].filter(Boolean),
       tags: article.tags,
     },
