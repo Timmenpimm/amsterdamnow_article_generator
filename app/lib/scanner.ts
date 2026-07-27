@@ -9,9 +9,24 @@ import {
 } from './db';
 import type { ScanResult, Source } from './types';
 import { competitorInTekst } from './competitors';
+import { checkTopicAgainstWp } from './dedup';
 
 // Guard tegen het overspoelen van de wachtrij bij een grote/onverwachte pagina.
 const MAX_NEW_PER_SCAN = 20;
+const DEDUP_CONCURRENCY = 3;
+
+async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await fn(items[index]);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
 
 const SCAN_SYSTEM = `Je bent redactie-assistent van Amsterdam NOW, een online stadsmagazine over Amsterdam (restaurants, cultuur, uitgaan, winkels, buurten, lifestyle).
 
@@ -165,7 +180,18 @@ async function runScan(source: Source): Promise<ScanResult & { contentHash: stri
   if (geweerd) {
     console.warn(`[scanner] ${geweerd} vondst(en) geweerd: merknaam van een concurrent bleef in het topic staan`);
   }
-  const topics = geredactionaliseerd.filter((_, i) => bruikbaar[i]);
+  // Een scan mag best wat langer duren: hier is de WP-dedup juist nuttig,
+  // omdat externe agenda's vaak onderwerpen aandragen die al op de site
+  // staan. Handmatige invoer slaat deze check bewust over voor directe UX.
+  const dedupResults = await mapWithConcurrency(
+    geredactionaliseerd.map((title, index) => ({ title, index })).filter(({ index }) => bruikbaar[index]),
+    DEDUP_CONCURRENCY,
+    async ({ title, index }) => ({ index, result: await checkTopicAgainstWp(title) }),
+  );
+  const duplicateIndexes = new Set(
+    dedupResults.filter(({ result }) => result.verdict === 'duplicate').map(({ index }) => index),
+  );
+  const topics = geredactionaliseerd.filter((_, i) => bruikbaar[i] && !duplicateIndexes.has(i));
 
   // Seed de event-datum op het topic: de datum hoort bij de originele bronkop
   // (fresh[i]); we koppelen 'm aan het editorialized topic dat de wachtrij
@@ -188,7 +214,7 @@ async function runScan(source: Source): Promise<ScanResult & { contentHash: stri
   }));
   await recordFindings(source.id, entries);
 
-  return { sourceId: source.id, ok: true, added: added.length, skipped: skipped.length, contentHash };
+  return { sourceId: source.id, ok: true, added: added.length, skipped: skipped.length + duplicateIndexes.size, contentHash };
 }
 
 // Voor de cron/"alle bronnen"-run: elke actieve bron sequentieel, best-effort.

@@ -4,10 +4,32 @@ import { listArticles, isLive } from '@/lib/wp';
 
 export const dynamic = 'force-dynamic';
 
+// Het bord wordt na acties en elke twaalf seconden opnieuw geladen. Topics en
+// lijststructuren komen lokaal uit de database en blijven dus altijd vers;
+// alleen de WordPress-spiegel is duur. Een korte process-cache voorkomt dat
+// elke interface-actie opnieuw alle drafts, recente publicaties en media uit
+// WordPress ophaalt, zonder het bord lang achter te laten lopen.
+const ARTICLES_CACHE_MS = 15_000;
+let articlesCache: { value: Awaited<ReturnType<typeof listArticles>>; expiresAt: number } | null = null;
+let articlesInFlight: Promise<Awaited<ReturnType<typeof listArticles>>> | null = null;
+
+async function boardArticles() {
+  if (articlesCache && articlesCache.expiresAt > Date.now()) return articlesCache.value;
+  if (!articlesInFlight) {
+    articlesInFlight = listArticles()
+      .then(value => {
+        articlesCache = { value, expiresAt: Date.now() + ARTICLES_CACHE_MS };
+        return value;
+      })
+      .finally(() => { articlesInFlight = null; });
+  }
+  return articlesInFlight;
+}
+
 export async function GET() {
   try {
     const [topics, articles, structures, queuePause] = await Promise.all([
-      listTopics(), listArticles(), listStructures(), getQueuePause(),
+      listTopics(), boardArticles(), listStructures(), getQueuePause(),
     ]);
     // Compact per lijstartikel: aantal items en aantal met foto, voor de
     // beeldenteller op het bord.
