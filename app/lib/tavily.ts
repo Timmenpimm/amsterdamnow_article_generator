@@ -2,7 +2,7 @@ import { competitorInHost } from './competitors';
 import { amsterdamToday } from './eventDate';
 
 type TavilyResult = { title?: string; url?: string; content?: string; raw_content?: string };
-type TavilyResponse = { results?: TavilyResult[]; detail?: string; message?: string };
+type TavilyResponse = { results?: TavilyResult[]; detail?: string | { error?: string }; message?: string };
 
 export type ResearchSource = { title: string; url: string; content: string };
 
@@ -12,10 +12,32 @@ export type ResearchSource = { title: string; url: string; content: string };
 // lease-cyclus verliest. 15s is ruim voor een advanced search.
 const TAVILY_TIMEOUT_MS = 15_000;
 
+// HTTP-fout van de Tavily-API. Draagt de status mee zodat de aanroeper
+// infrastructuurfouten (rate limit, credits op, storing) kan onderscheiden van
+// inhoudelijke fouten — patroon: ProviderHttpError in lib/claude.ts.
+export class TavilyHttpError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'TavilyHttpError';
+    this.status = status;
+  }
+}
+
+// True als de fout een Tavily-infrastructuurprobleem is (geen inhoudelijk
+// oordeel over het onderwerp): 429 (rate limit), 432/433 (plan-/creditlimiet)
+// of 5xx (storing). De foutclassificatie in de queue gebruikt dit om zulke
+// topics niet onterecht op "mislukt" te zetten.
+export function isTavilyInfraError(err: unknown): boolean {
+  const status = err instanceof TavilyHttpError ? err.status : 0;
+  return status === 429 || status === 432 || status === 433 || status >= 500;
+}
+
 // Resultaat van researchWithTavily: de bronnen én de gedetecteerde officiële
 // origin (site-root) van het onderwerp, of null als die niet te bepalen was.
-// De caller (writer.ts) gebruikt officialUrl om research.website te overschrijven
-// met de homepage.
+// De caller (writer.ts) gebruikt officialUrl om research.website te
+// overschrijven met de homepage — mits die origin aantoonbaar bij het
+// onderwerp hoort (zie originHoortBijOnderwerp in writer.ts).
 export type ResearchResult = { sources: ResearchSource[]; officialUrl: string | null };
 
 // Hosts die vrijwel nooit de officiële site van het onderwerp zijn maar wél
@@ -59,8 +81,12 @@ export function hostLabel(url: URL): string {
 // en zou stads-/portaaldomeinen (amsterdam.nl e.d.) vals als "officieel" matchen.
 const TOKEN_STOPWORDS = new Set(['amsterdam']);
 function topicTokens(topic: string): string[] {
-  return topic.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/)
-    .filter(w => w.length >= 4 && !TOKEN_STOPWORDS.has(w));
+  // Gededupliceerd: "De Boule De Boule" gaf ["boule","boule"], waardoor
+  // looksOfficial's tweetokens-eis door één herhaald token werd gehaald.
+  return [...new Set(
+    topic.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/)
+      .filter(w => w.length >= 4 && !TOKEN_STOPWORDS.has(w))
+  )];
 }
 
 // Is deze host een aggregator (agenda/tickets/social/reviews)? Dan nooit "de
@@ -96,6 +122,29 @@ function looksOfficial(url: string, tokens: string[]): boolean {
   }
 }
 
+// Hoort deze URL aantoonbaar bij deze naam/dit onderwerp? Zelfde strikte
+// domeinlabel-match als looksOfficial, maar dan als losse poort voor callers
+// (writer.ts, backfill-route) die willen weten of een gedetecteerde origin
+// naam-gerelateerd is voordat ze 'm als website in de research schrijven.
+export function hostMatchesTopic(url: string, topic: string): boolean {
+  return looksOfficial(url, topicTokens(topic));
+}
+
+// Verwantschapspoort voor de laatste kandidaat-trap: een zoekresultaat komt
+// alleen in aanmerking als de PAGINATITEL aantoonbaar over het onderwerp gaat
+// (token-overlap met de onderwerpnaam). Dit verving de blinde fallback "eerste
+// niet-aggregator-resultaat", die vijf productie-topics evident verkeerde
+// websites gaf (een Storyblok-CDN-URL, blogs en gidsen van derden). Geen match
+// betekent: geen officialUrl — dat is legitiem, de research-prompt staat een
+// lege website toe.
+function titleMatchesTopic(result: TavilyResult, tokens: string[]): boolean {
+  if (!result.url || isAggregatorHost(result.url)) return false;
+  if (!tokens.length) return false;
+  const titel = (result.title || '').toLowerCase();
+  const matched = tokens.filter(t => titel.includes(t)).length;
+  return matched >= Math.min(2, tokens.length);
+}
+
 // opts stuurt de aanvullende researchronde (writer.ts stepResearchAanvullend):
 // die zoekt gericht op wat de eerste ronde niet vond ("<naam> <stad>
 // openingstijden") in plaats van breed op het onderwerp, met een kleinere
@@ -103,7 +152,7 @@ function looksOfficial(url: string, tokens: string[]): boolean {
 // exact als voorheen — de eerste ronde mag hier niets van merken.
 export async function researchWithTavily(
   topic: string,
-  opts?: { query?: string; maxResults?: number },
+  opts?: { query?: string; maxResults?: number; detectOfficial?: boolean },
 ): Promise<ResearchResult> {
   const apiKey = process.env.TAVILY_API_KEY;
   if (!apiKey) throw new Error('Tavily is niet geconfigureerd. Voeg TAVILY_API_KEY toe aan de omgevingsvariabelen.');
@@ -135,7 +184,12 @@ export async function researchWithTavily(
     cache: 'no-store',
   });
   const data = await res.json().catch(() => ({})) as TavilyResponse;
-  if (!res.ok) throw new Error(`Tavily ${res.status}: ${data.detail || data.message || 'onderzoek mislukt'}`);
+  if (!res.ok) {
+    // Tavily geeft detail soms als string, soms als object {"error": "..."}.
+    // Die laatste werd voorheen als "[object Object]" gelogd.
+    const detail = typeof data.detail === 'string' ? data.detail : data.detail?.error;
+    throw new TavilyHttpError(`Tavily ${res.status}: ${detail || data.message || 'onderzoek mislukt'}`, res.status);
+  }
 
   // Concurrenten eruit vóórdat er iets met de resultaten gebeurt. Zij zijn de
   // reden dat artikel 87365 bestond: hun listicle was de beste treffer op een
@@ -157,15 +211,18 @@ export async function researchWithTavily(
   // Eén extra call (bounded i.v.m. de 60s-limiet), best-effort: mislukt het,
   // dan gewoon de zoekresultaten. Vervangt het oude n8n-gedrag dat de tool
   // kwijt was — zie writer.ts stepResearch.
-  // Harde eis: de officiële homepage moet ALTIJD bekeken worden voor basale
-  // info (adres, openingstijden, canonieke naam). Eerst een resultaat dat
-  // looksOfficial haalt; haalt niets dat, dan tóch de origin van het eerste
-  // niet-aggregator zoekresultaat (best passende kandidaat) — die mag nooit
-  // gemist worden. De gekozen origin geven we ook naar buiten (officialUrl).
-  // Bij een eigen query (aanvullende ronde) slaan we dit over: de homepage is
-  // in ronde 1 al gecrawld en staat al bij de bewaarde bronnen, dus een tweede
-  // extract-call zou alleen tijd kosten binnen dezelfde 60s-tik. officialUrl
-  // blijft dan null; de caller heeft die in ronde 2 niet meer nodig.
+  // De officiële homepage moet bekeken worden voor basale info (adres,
+  // openingstijden, canonieke naam) — maar alleen als een kandidaat aantoonbaar
+  // bij het onderwerp hoort. Ladder: geplakte URL → resultaat waarvan het
+  // domeinlabel de onderwerpnaam draagt (looksOfficial) → resultaat waarvan de
+  // paginatitel over het onderwerp gaat (titleMatchesTopic). Matcht niets, dan
+  // is officialUrl null — legitiem, de research-prompt staat een lege website
+  // toe. De oude blinde fallback ("eerste niet-aggregator-resultaat") maakte
+  // hier willekeurige derden tot officiële site en is geschrapt.
+  // Bij een eigen query (aanvullende ronde) slaan we dit standaard over: de
+  // homepage is in ronde 1 al gecrawld en staat al bij de bewaarde bronnen.
+  // officialUrl blijft dan null; alleen de entiteits-herkansing (writer.ts)
+  // zet detectOfficial aan om mét een eigen query tóch te detecteren.
   // Is het onderwerp zelf een URL, dan is DÁT de officiële site — geen
   // detectie nodig (mits geen aggregator of concurrent, dan gedraagt de
   // pipeline zich als voorheen en zoekt de detectie de echte site).
@@ -173,20 +230,24 @@ export async function researchWithTavily(
   const resultUrls = results.map(r => r.url).filter((u): u is string => !!u);
   const geplakteUrl = topicUrl && !isAggregatorHost(topicUrl.href) && !competitorInHost(topicUrl.href)
     ? topicUrl.href : null;
-  const chosen = opts?.query
+  const chosen = opts?.query && !opts.detectOfficial
     ? null
     : geplakteUrl
       ?? resultUrls.find(u => looksOfficial(u, tokens))
-      ?? resultUrls.find(u => !isAggregatorHost(u))
+      ?? results.find(r => titleMatchesTopic(r, tokens))?.url
       ?? null;
   let officialUrl: string | null = null;
   let homepage: ResearchSource | null = null;
   if (chosen) {
     try {
       const origin = new URL(chosen).origin;
-      officialUrl = origin;
       const text = (await extractPageText(origin)).trim();
-      if (text) homepage = { title: `Officiële site — ${new URL(origin).hostname.replace(/^www\./, '')}`, url: origin, content: text.slice(0, 12_000) };
+      // officialUrl pas ná een geslaagde, niet-lege extract: een onleesbare of
+      // lege pagina mag niet alsnog de canonieke website van het topic worden.
+      if (text) {
+        officialUrl = origin;
+        homepage = { title: `Officiële site — ${new URL(origin).hostname.replace(/^www\./, '')}`, url: origin, content: text.slice(0, 12_000) };
+      }
     } catch { /* best-effort: val terug op de zoekresultaten */ }
   }
 

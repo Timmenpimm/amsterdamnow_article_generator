@@ -100,6 +100,10 @@ export interface StandaardState {
   // entiteitConsistent undefined en de waarschuwing leeg.
   entiteitConsistent?: boolean;
   entiteitWaarschuwing?: string;
+  // Aantal gerichte herkansings-zoekrondes na een gefaalde entiteitscontrole
+  // ("<naam> officiële website", zie stepResearch). Analoog aan schrijfAttempts:
+  // bewaakt dat die herkansing max één keer draait voordat het topic faalt.
+  entiteitZoekAttempts?: number;
   // De door tavily.ts gedetecteerde officiële homepage-origin (of null), bewaard
   // voor de aanvullende researchronde: acceptBronQuote moet ook dáár een quote
   // kunnen afwijzen die van de eigen site van de zaak komt (zie bronQuote).

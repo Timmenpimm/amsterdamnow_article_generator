@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { listArticles, updateArticleFields } from '@/lib/wp';
 import { getListStructure } from '@/lib/db';
-import { researchWithTavily } from '@/lib/tavily';
+import { researchWithTavily, hostMatchesTopic } from '@/lib/tavily';
 import { verifyEntityFields } from '@/lib/writer';
 
 export const dynamic = 'force-dynamic';
@@ -65,6 +65,7 @@ export async function POST(req: NextRequest) {
         const { sources, officialUrl } = await researchWithTavily(a.title);
         const homepageContent = officialUrl ? (sources.find(src => src.url === officialUrl)?.content ?? '') : '';
         const result = await verifyEntityFields({
+          onderwerp: a.title,
           naam: a.naam_locatie,
           adres: a.adres,
           website: a.website,
@@ -73,7 +74,14 @@ export async function POST(req: NextRequest) {
           homepageContent,
         });
         const naamLocatie = result.canonical_naam_locatie || a.naam_locatie;
-        const website = officialUrl || a.website;
+        // Zelfde verwantschapspoort als de research-fase (writer.ts): een
+        // origin die niet aantoonbaar bij de titel of de naam van de zaak
+        // hoort, wordt NIET naar de draft geschreven — dan blijft de
+        // bestaande website staan.
+        const originVerwant = officialUrl
+          && (hostMatchesTopic(officialUrl, a.title)
+            || (a.naam_locatie.trim() && hostMatchesTopic(officialUrl, a.naam_locatie)));
+        const website = (originVerwant ? officialUrl : null) || a.website;
         if (naamLocatie === a.naam_locatie && website === a.website) {
           skipped.push({ id: a.id, title: a.title, reason: 'geen wijziging nodig' });
           continue;

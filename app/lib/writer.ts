@@ -3,7 +3,7 @@ import { askClaudeJson, FAST_WRITE_MODEL, TITLE_MODEL } from './claude';
 import { RESEARCH_SCHEMA, SEO_SCHEMA, ENTITY_VERIFY_SCHEMA, QUOTE_REWRITE_SCHEMA, INVALSHOEK_SCHEMA, CURATOR_SCHEMA } from './schemas';
 import { createDraft, singleTag, taxonomyChoices } from './wp';
 import { checkTopicAgainstWp } from './dedup';
-import { researchWithTavily, type ResearchSource } from './tavily';
+import { researchWithTavily, hostMatchesTopic, topicAsUrl, type ResearchSource } from './tavily';
 // GeneratedArticle expliciet als type importeren: de testrunner draait op
 // --experimental-strip-types en die kan een type niet als waarde-import
 // oplossen ("does not provide an export named GeneratedArticle").
@@ -403,6 +403,17 @@ async function polishTitle(
   return article.title;
 }
 
+// Mag een gedetecteerde origin research.website overschrijven? Alleen als hij
+// aantoonbaar bij het onderwerp hoort: het domeinlabel draagt de onderwerptitel
+// of de gevonden naam_locatie (hostMatchesTopic in tavily.ts). Een geplakte
+// URL als onderwerp is per definitie de eigen site. Zo lekt een verkeerd
+// gekozen zoekresultaat (blog, gids, CDN) niet meer als "website" de draft in;
+// zonder match blijft het antwoord van het researchmodel gewoon staan.
+function originHoortBijOnderwerp(origin: string, topicTitle: string, naamLocatie: string): boolean {
+  if (topicAsUrl(topicTitle)) return true;
+  return hostMatchesTopic(origin, topicTitle) || (!!naamLocatie && hostMatchesTopic(origin, naamLocatie));
+}
+
 async function stepResearch(topic: Topic, s: StandaardState): Promise<StandaardStepResult> {
   const [researchPrompt, taxonomies, constraints] = await Promise.all([
     activePrompt('research'), taxonomyChoices(), standaardConstraints(),
@@ -418,7 +429,7 @@ async function stepResearch(topic: Topic, s: StandaardState): Promise<StandaardS
       `Onderwerp draagt de naam van concurrent ${concurrentInTopic}. Dit is een overgenomen bronkop, geen eigen onderwerp — herformuleer het naar de zaak of het event zelf, of verwijder het uit de wachtrij.`
     );
   }
-  const { sources, officialUrl } = await researchWithTavily(topic.title);
+  let { sources, officialUrl } = await researchWithTavily(topic.title);
   // Research = feiten extraheren uit aangeleverde bronnen, geen creatief werk:
   // Sonnet 5 volstaat en kost een fractie van Opus (zie FAST_WRITE_MODEL in
   // lib/claude.ts). Bronnen worden hier ook getrimd op 8000 tekens — relevante
@@ -449,17 +460,22 @@ async function stepResearch(topic: Topic, s: StandaardState): Promise<StandaardS
       `Event is voorbij: liep t/m ${eindDatum}. Dit onderwerp wordt niet geschreven — pas het aan of verwijder het uit de wachtrij.`
     );
   }
-  // De homepage/origin is de betrouwbaarste bron voor de website: overschrijf
-  // altijd met de gedetecteerde origin (de site-root, geen diepe link) wanneer
-  // die bekend is. Alleen zonder officialUrl vertrouwen we op wat het model gaf.
-  if (officialUrl) (research as Record<string, unknown>).website = officialUrl;
+  // De homepage/origin is de betrouwbaarste bron voor de website — maar alleen
+  // als die aantoonbaar bij het onderwerp hoort (originHoortBijOnderwerp).
+  // Anders blijft staan wat het researchmodel zelf als website gaf: een
+  // ongerelateerde origin onvoorwaardelijk overschrijven was precies hoe blogs
+  // en gidsen van derden als "officiële site" in drafts belandden.
+  const naamLocatie = optionalString((research as Record<string, unknown>).naam_locatie);
+  if (officialUrl && originHoortBijOnderwerp(officialUrl, topic.title, naamLocatie)) {
+    (research as Record<string, unknown>).website = officialUrl;
+  }
   s.research = research;
   // Entiteitsverificatie: controleer dat naam_locatie, adres en website bij
   // dezelfde echte zaak horen (en canoniseer de naam) op basis van de gecrawlde
   // officiële homepage. Fail-open: bij een hapering blijven de originele waarden
   // staan. Moet vóór saveTopicProgress zodat de gecorrigeerde staat wordt bewaard.
   const homepageContent = officialUrl ? (sources.find(src => src.url === officialUrl)?.content ?? '') : '';
-  await verifyEntity(s, officialUrl, homepageContent, topic.id);
+  await verifyEntity(s, officialUrl, homepageContent, topic.id, topic.title);
   // Entiteitsconsistentie-poort. verifyEntity berekende tot nu toe wel
   // entiteitConsistent/entiteitWaarschuwing, maar niets las het ooit terug —
   // een expliciete "false" (naam/adres/website horen NIET bij dezelfde zaak)
@@ -469,6 +485,34 @@ async function stepResearch(topic: Topic, s: StandaardState): Promise<StandaardS
   // `=== false` (niet `!== true`): undefined betekent dat verifyEntity zelf
   // faalde (fail-open, zie verifyEntity) en mag de topic niet blokkeren — alleen
   // een expliciete, geslaagde afkeuring doet dat.
+  // Herkansing vóór de harde poort: één gerichte Tavily-zoekronde op
+  // "<naam> officiële website". De eerste detectie kan de verkeerde site
+  // hebben gekozen (blog, gids, CDN) — dan is de entiteit terecht inconsistent,
+  // maar bestaat de echte site vaak wél. Vind 'm gericht, zet de website
+  // opnieuw (met dezelfde verwantschapspoort) en beoordeel de entiteit
+  // nogmaals. entiteitZoekAttempts bewaakt dat dit max één keer gebeurt;
+  // best-effort: faalt de herkansing zelf, dan beslist de poort hieronder.
+  if (s.entiteitConsistent === false && !(s.entiteitZoekAttempts ?? 0)) {
+    s.entiteitZoekAttempts = 1;
+    try {
+      const rr = research as Record<string, unknown>;
+      const zoekNaam = optionalString(rr.naam_locatie) || topic.title;
+      const herkansing = await researchWithTavily(topic.title, {
+        query: `${zoekNaam} officiële website`, detectOfficial: true,
+      });
+      if (herkansing.officialUrl) {
+        officialUrl = herkansing.officialUrl;
+        const homepage = herkansing.sources.find(src => src.url === herkansing.officialUrl) ?? null;
+        if (homepage && !sources.some(src => src.url.replace(/\/+$/, '').toLowerCase() === homepage.url.replace(/\/+$/, '').toLowerCase())) {
+          sources = [homepage, ...sources];
+        }
+        if (originHoortBijOnderwerp(officialUrl, topic.title, optionalString(rr.naam_locatie))) {
+          rr.website = officialUrl;
+        }
+        await verifyEntity(s, officialUrl, homepage?.content ?? '', topic.id, topic.title);
+      }
+    } catch { /* herkansing is best-effort; de poort hieronder beslist */ }
+  }
   if (s.entiteitConsistent === false) {
     throw new Error(
       `Entiteitscontrole faalt: ${s.entiteitWaarschuwing || 'naam, adres en website lijken niet bij dezelfde zaak te horen'}. Controleer het onderwerp handmatig.`
@@ -700,6 +744,11 @@ function mergeResearch(doel: Record<string, unknown>, extra: Record<string, unkn
 }
 
 export interface EntityVerifyInput {
+  // De wachtrijtitel: het onderwerp waarvoor dit artikel gevraagd is. Zonder
+  // deze context kon de check een gekaapte website niet herkennen — naam,
+  // adres en website van een verkeerd gekozen site zijn onderling immers
+  // keurig consistent.
+  onderwerp: string;
   naam: string;
   adres: string;
   website: string;
@@ -726,11 +775,12 @@ export interface EntityVerifyResult {
 export async function verifyEntityFields(
   input: EntityVerifyInput, label = 'entiteit',
 ): Promise<EntityVerifyResult> {
-  const { naam, adres, website, rubriek, officialUrl, homepageContent } = input;
-  const system = 'Je bent verificatieredacteur voor amsterdamnow.com. Je controleert of de naam, het adres en de website die de research opleverde bij ÉÉN en dezelfde echte zaak of instelling horen, op basis van de aangeleverde officiële homepage-tekst. Je verzint niets.';
+  const { onderwerp, naam, adres, website, rubriek, officialUrl, homepageContent } = input;
+  const system = 'Je bent verificatieredacteur voor amsterdamnow.com. Je controleert of de naam, het adres en de website die de research opleverde bij ÉÉN en dezelfde echte zaak of instelling horen — én of die zaak het gevraagde onderwerp is — op basis van de aangeleverde officiële homepage-tekst. Je verzint niets.';
   const prompt = [
     'Controleer de onderstaande entiteit en geef ALLEEN JSON terug.',
     '',
+    `Gevraagd onderwerp (wachtrijtitel): ${onderwerp || '(onbekend)'}`,
     `Rubriek: ${rubriek || '(onbekend)'}`,
     `naam_locatie: ${naam || '(leeg)'}`,
     `adres: ${adres || '(leeg)'}`,
@@ -742,7 +792,7 @@ export async function verifyEntityFields(
     '',
     'Bepaal:',
     '- canonical_naam_locatie: de echte, beknopte merk-/organisatienaam zoals die op de officiële site staat. Strip Google-Maps-achtige toevoegingen (keukentype, gerecht, plaatsnaam, "Museum"), bv. "Jinweide Lanzhou Beef Noodles Amsterdam Museum" wordt "Jinweide". Bij een evenement is dit de organiserende plek/instelling, niet de titel van het evenement. Leeg laten als je het niet betrouwbaar kunt bepalen.',
-    '- entiteit_consistent: horen naam, adres en website bij dezelfde zaak?',
+    '- entiteit_consistent: horen naam, adres en website bij dezelfde zaak, én hoort de homepage bij het GEVRAAGDE onderwerp hierboven? Een homepage van een andere partij dan het onderwerp zelf — een nieuwssite of blog die óver het onderwerp schrijft, een stadsgids, een ticket- of verzamelsite, een CDN — maakt de entiteit inconsistent, ook als naam en adres verder kloppen.',
     '- waarschuwing: korte NL-zin bij een probleem, anders lege string.',
   ].join('\n');
   const payload = await askClaudeJson(system, prompt, FAST_WRITE_MODEL, 1000, ENTITY_VERIFY_SCHEMA, false, label);
@@ -758,7 +808,7 @@ export async function verifyEntityFields(
 // fout gaan we door met de originele waarden en een lege waarschuwing. Logt
 // niets gevoeligs.
 async function verifyEntity(
-  s: StandaardState, officialUrl: string | null, homepageContent: string, topicId: number,
+  s: StandaardState, officialUrl: string | null, homepageContent: string, topicId: number, onderwerp: string,
 ): Promise<void> {
   const r = s.research as Record<string, unknown> | undefined;
   if (!r) return;
@@ -768,7 +818,7 @@ async function verifyEntity(
   const rubriek = optionalString(r.rubriek);
   try {
     const result = await verifyEntityFields(
-      { naam, adres, website, rubriek, officialUrl, homepageContent },
+      { onderwerp, naam, adres, website, rubriek, officialUrl, homepageContent },
       `entiteit#${topicId}`,
     );
     if (result.canonical_naam_locatie) r.naam_locatie = result.canonical_naam_locatie;
