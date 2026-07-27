@@ -136,6 +136,22 @@ export interface StandaardState {
   // story beats die de hoek dragen. Alleen gevuld als de poort het topic
   // publicabel achtte; anders is het topic al mislukt vóór de schrijffase.
   invalshoek?: { hoek: string; beats: string[] };
+  // Aantal gerichte herstelrondes na een afwijzing door de invalshoek-poort.
+  // Max 1: een retry op identieke research levert deterministisch hetzelfde
+  // oordeel op, dus herkansen heeft alleen zin mét nieuwe research. Na één
+  // herstelronde die nog steeds op publicabel false uitkomt → failTopic.
+  invalshoekHerstelRounds?: number;
+  // De afwijsreden van de eerste invalshoek-beoordeling. Dubbelrol: stuurt de
+  // zoekqueries van de herstelronde (stepResearchAanvullend zoekt gericht op
+  // wat er volgens de poort ontbreekt) en markeert dat die ronde een herstel-
+  // ronde is. Wordt gewist zodra de poort het topic alsnog publicabel acht.
+  invalshoekAfwijzing?: string;
+  // Niet-blokkerende tegenspraak uit de invalshoek-fase: de research spreekt
+  // zichzelf ergens tegen, maar niet op een kernfeit dat het artikel onmogelijk
+  // maakt (capaciteit, openingstijden e.d.). Gaat als waarschuwing mee de
+  // schrijffase in (describeInvalshoek) zodat het omstreden detail niet als
+  // feit in het artikel belandt.
+  invalshoekWaarschuwing?: string;
   // Aantal keren dat de stijlcurator dit artikel al terugstuurde. Bewaakt dat
   // curator → herschrijven → curator geen lus wordt: na één curatorronde gaat
   // de beste versie fail-open door naar seo (het blijft een draft die de

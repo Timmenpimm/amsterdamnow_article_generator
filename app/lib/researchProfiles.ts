@@ -51,16 +51,24 @@ export function detectProfiel(research: Record<string, unknown> | null | undefin
 // researchWithTavily plakt dat al achter élke query. `plaats` (adres of stad)
 // alleen bij vaste zaken; bij events/voorstellingen is de naam zelf
 // onderscheidend genoeg en vervuilt een adres de treffers.
+//
+// De naam staat tussen aanhalingstekens: zonder die binding matchen de
+// generieke termen ("line-up programma") net zo hard als de naam zelf, en
+// haalt de query pagina's van vréémde festivals of zaken binnen — zo kwam er
+// bij een ADE-onderwerp een DGTL-pagina mee die de invalshoek-poort vervolgens
+// als "tegenspraak" las. Het relevantiefilter (lib/relevance.ts) is het vangnet
+// daarachter; deze quotes verkleinen de instroom aan de bron.
 export function profielQueries(profiel: ProfielKey, naam: string, plaats: string): string[] {
+  const n = `"${naam.replace(/"/g, '')}"`;
   switch (profiel) {
-    case 'festival': return [`${naam} line-up programma`, `${naam} organisatie interview`];
-    case 'voorstelling': return [`${naam} regisseur gezelschap`, `${naam} recensie interview`];
-    case 'tentoonstelling': return [`${naam} kunstenaar curator`, `${naam} recensie`];
-    case 'restaurant': return [`${naam} ${plaats} chef menukaart`, `${naam} interview eigenaar interieur`];
-    case 'winkel': return [`${naam} ${plaats} assortiment concept`, `${naam} interview oprichter`];
-    case 'lifestyle': return [`${naam} trend achtergrond`, `${naam} interview oprichter`];
-    case 'evenement': return [`${naam} programma editie`, `${naam} organisatie interview`];
-    case 'locatie': return [`${naam} ${plaats} openingstijden`, `${naam} interview eigenaar`];
+    case 'festival': return [`${n} line-up programma`, `${n} organisatie interview`];
+    case 'voorstelling': return [`${n} regisseur gezelschap`, `${n} recensie interview`];
+    case 'tentoonstelling': return [`${n} kunstenaar curator`, `${n} recensie`];
+    case 'restaurant': return [`${n} ${plaats} chef menukaart`, `${n} interview eigenaar interieur`];
+    case 'winkel': return [`${n} ${plaats} assortiment concept`, `${n} interview oprichter`];
+    case 'lifestyle': return [`${n} trend achtergrond`, `${n} interview oprichter`];
+    case 'evenement': return [`${n} programma editie`, `${n} organisatie interview`];
+    case 'locatie': return [`${n} ${plaats} openingstijden`, `${n} interview eigenaar`];
   }
 }
 
