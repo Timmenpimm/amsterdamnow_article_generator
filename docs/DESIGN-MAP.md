@@ -48,7 +48,7 @@ codewijziging._
 |---|---|---|
 | topbar (overal) | Navigatie, snelle invoer, modus-indicator | `app/components/TopBar.tsx` |
 | **1a** | Statusboard (kanban) | `app/components/Pipeline.tsx` (7 kolommen, poll `/api/board`, `listProgress`); gerenderd door `app/app/page.tsx`. **Wachtrij herordenen (juli 2026)**: slepen schrijft de hele volgorde weg via `POST /api/topics/reorder`; daarnaast een **⤒ "bovenaan zetten"**-knop per kaart (niet op de bovenste) → `PATCH /api/topics/[id]` met `{action:'top'}` → `pushTopicToTop()` in `db.ts` (`sort = MIN(sort)-1` op één rij, zelfde truc als `retryTopic`; 409 als het topic niet meer `queued` is). Bewust géén reorder-snapshot: die eist dat élk meegestuurd id nog `queued` is en faalt dus juist als de writer bezig is. De knop zit óók in `MobileHome` — daar de enige manier om te herprioriteren, want slepen werkt niet op touch. `load()` gebruikt een volgnummer (`loadSeq`) zodat een trage poll een verse volgorde niet terugdraait; `reorderBusy` staat één herordening tegelijk toe. |
-| **1b** | Bulk toevoegen (modal) | `app/components/BulkModal.tsx`. Sectie **"Bestaat al op de site"** na submit: per titel die de WP-dedup-check afwijst (§4) een rij met de bestaande WP-titel als link, status-chip en reden, plus knop "Toch toevoegen" (herhaalt `POST /api/topics` met `forceTitles`). Zie §4 (WP-dedup-index). |
+| **1b** | Bulk toevoegen (modal) | `app/components/BulkModal.tsx`. Handmatige invoer gaat direct de wachtrij in en ontdubbelt alleen tegen bestaande wachtrij-items. De zwaardere WordPress-dedup gebeurt pas bij bronscans en vlak vóór het maken van een draft, zie §4. |
 | **1c** | Artikel-detail / beeldwerk | `app/components/ArticleDetail.tsx`; route `app/app/artikel/[id]/page.tsx`. **Beeld-slots (standaard):** 1 featured, 2 slider (streefwaarde **1**), 3 **inline in tekst**, 4 kandidaten. Het inline-beeld leeft ín de content-HTML als `<figure class="an-inline">` (splice/parse in `lib/wp.ts` — `spliceInlineImage`/`parseInline`, tussen alinea 2/3 of achteraan); `Article.inline` + `imageCount` in `types.ts`; `inlineId` door `updateImages`, PATCH `/api/articles/[id]`, media `?role=inline`, autofill. **Alleen standaard-artikelen** (lijst houdt itemfoto-flow). Backfill bestaande concepten: `POST /api/admin/backfill-inline` (Bearer `CRON_SECRET`, laatste slider → inline). **Klaar-regel (juli 2026)**: standaard = 3 beelden (`REQUIRED_IMAGES`); **lijstartikel = featured + ≥1 slider + élke item een foto** (`listImagesReady`/`articlePhase` in `types.ts`; geldt voor de kanban-kolommen, de publiceer-knop/route én de auto-publisher). UI toont bij lijsten een itemfoto-teller (x/y) i.p.v. x/3. |
 | **1c** (sectie) | Voorgestelde beelden (beeldselectie + autofill top-3 + itemfoto-autofill) | sectie + `CandidateCard` in `ArticleDetail.tsx`; autofill-driver ook in `Pipeline.tsx`; backend `lib/imageSearch.ts` + `lib/imageScore.ts` + `api/articles/[id]/candidates{,/search,/score,/autofill}`; briefing `BRIEFING-claude-design-addendum-beeldselectie.md`; spec `docs/superpowers/specs/2026-07-20-beeldselectie-design.md`. **Itemfoto-autofill (juli 2026)**: bij lijstartikelen vult dezelfde autofill-route ná featured+slider per aanroep máx één itemfoto (zoeken op itemnaam+buurt → één scorebatch → upload + her-assemblage via `assembleListHtml`); geen vondst ≥ drempel → melding in `list.meldingen`, item wordt daarna overgeslagen. Client-drivers loopen tot `done: true` (respons: `filledItem`/`skippedItem`/`remainingItems`). **Handmatig opnieuw laten draaien (juli 2026)**: `POST …/candidates/autofill` accepteert body `{ force: true }` — de onaangeraakt-eis vervalt en de route vult alléén de nog lége slots (featured / 1× slider / inline), bestaande beelden blijven staan; is er niets bruikbaars meer in de pool, dan zoekt hij opnieuw (db dedupt op URL, dus afgewezen beelden komen niet terug). Extra `{ reset: true }` op de éérste tik wist bij lijstartikelen de "Geen geschikte itemfoto gevonden"-meldingen zodat overgeslagen items opnieuw meedoen. Knoppen: `↻` per kaart in kanban-kolom "Klaar — beelden nodig" (`Pipeline.tsx`) en in de sectiekop "Voorgestelde beelden" (`ArticleDetail.tsx`). |
 | **3d** | Voorgestelde beelden — states (leeg/bezig/lijstartikel item-kiezer) | losse states-doc van dezelfde sectie/component als 1c hierboven — geen eigen scherm, geen eigen bestand. Bij lijstartikelen loopt autofill door in de itemfoto's (voortgang "Claude zoekt itemfoto's… nog N items" in `ArticleDetail.tsx`). |
@@ -202,15 +202,13 @@ codewijziging._
     leeg is) triggert `checkTopicAgainstWp` zelf een incrementele sync.
     **Fail-open**: WP onbereikbaar of de Haiku-call faalt → `unknown`, topic
     mag door (wel gelogd); een exacte titelmatch blokkeert altijd, ook dan.
-  - **Hooks**: `POST /api/topics` (`app/app/api/topics/route.ts`) checkt elke
-    titel (met een concurrency-cap van 3 gelijktijdige Haiku-calls) en geeft
-    naast `added`/`skipped` ook `duplicates: [{ title, existing: { wp_id,
-    title, link, status }, reason }]` terug. Body `force: true` slaat de
-    check voor alle titels over; `forceTitles: string[]` alleen voor die
-    titels — beide zetten `dedup_override=1` via `addTopics()`. Vlak vóór
-    `createDraft()` in de writer hercheckt dezelfde functie (topics kunnen
-    lang in de wachtrij staan); zonder override gaat de topic naar `failed`
-    met "Duplicaat van {link}", mét override gaat 'm gewoon door.
+  - **Hooks**: `POST /api/topics` (`app/app/api/topics/route.ts`) voegt
+    handmatige onderwerpen direct toe en controleert alleen tegen de lokale
+    wachtrij. `lib/scanner.ts` voert bij een bronscan wel een WP-dedup-check
+    uit, met een concurrency-cap van 3 gelijktijdige Haiku-calls. Vlak vóór
+    `createDraft()` in de writer hercheckt dezelfde functie, omdat topics lang
+    in de wachtrij kunnen staan. Zonder bestaande override gaat een duplicaat
+    naar `failed` met "Duplicaat van {link}".
   - **UI**: zie tabel hierboven (§2, rij **1b**) voor `BulkModal.tsx`.
 - **Auto-publisher (juli 2026)** — publiceert zelf artikelen uit "Klaar voor
   publicatie" (exact dezelfde ready-regel als Pipeline.tsx/`articlePhase()`:
