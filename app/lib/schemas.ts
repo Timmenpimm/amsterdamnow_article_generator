@@ -183,7 +183,7 @@ export const QUOTE_REWRITE_SCHEMA: Record<string, unknown> = {
   additionalProperties: false,
   required: ['quote', 'herschreven_paragraaf'],
   properties: {
-    quote: { type: 'string', description: 'Herschreven pull-quote van 25-40 woorden: een krachtige zin met een concreet feit uit de paragraaf. Geen em dash of en dash, geen vraag, geen meta-taal.' },
+    quote: { type: 'string', description: 'Herschreven pull-quote in het woordbereik uit de opdracht: een krachtige zin met een concreet feit uit de paragraaf. Geen em dash of en dash, geen vraag, geen meta-taal.' },
     herschreven_paragraaf: { type: 'string', description: 'De volledige, aangepaste bronparagraaf (lopende tekst, geen opsomming) waarin de nieuwe quote woord voor woord letterlijk voorkomt.' },
   },
 };

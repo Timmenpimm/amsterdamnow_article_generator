@@ -7,7 +7,7 @@ import { researchWithTavily, hostMatchesTopic, topicAsUrl, type ResearchSource }
 // GeneratedArticle expliciet als type importeren: de testrunner draait op
 // --experimental-strip-types en die kan een type niet als waarde-import
 // oplossen ("does not provide an export named GeneratedArticle").
-import { validateArticle, checkTitle, quoteSourceAllowed, standaardQuoteSourceBlacklist, extractPromptExamples, findPromptExampleLeak, type GeneratedArticle } from './validation';
+import { validateArticle, checkTitle, quoteSourceAllowed, standaardQuoteSourceBlacklist, extractPromptExamples, findPromptExampleLeak, ArticleValidationError, type GeneratedArticle } from './validation';
 import { DEFAULT_STANDAARD_CONSTRAINTS, parseStandaardState, type Article, type StandaardConstraints, type StandaardPhase, type StandaardState, type Topic, type WordRange } from './types';
 import { formatStandardArticleHtml } from './articleHtml';
 import { decodeHtmlEntities } from './htmlEntities';
@@ -94,8 +94,18 @@ function describeStandaardConstraints(c: StandaardConstraints, naam: string, opt
   // precies welke tekenreeks er in de titel moet, niet alleen "de naam van het
   // onderwerp" — daar maakte het model zelf een kortere variant van (bv.
   // "AMAZE" waar naam_locatie "AMAZE by ID&T" is), die de check dan afkeurt.
+  // De tekenlimiet voor de titel hoort hier expliciet bij het woordenbereik:
+  // hij stond wél in validateArticle (titleMaxChars) maar niet in deze regels,
+  // terwijl de schrijfprompt voor lengtes juist naar deze REGELS verwijst. En
+  // de twee eisen schuren: 12 Nederlandse woorden is al gauw 78-85 tekens,
+  // rekenkundig strijdig met 70. Daarom als bindend paar geformuleerd, met een
+  // woord-bovengrens één lager dan het maximum en een expliciet mikpunt —
+  // zonder dat mikpunt bleef het model op de bovengrens schrijven en daarmee
+  // structureel door de tekenlimiet heen.
+  const titelMaxWoorden = Math.max(c.titleWords.min, c.titleWords.max - 1);
+  const titelMik = Math.floor((c.titleWords.min + titelMaxWoorden) / 2);
   const lines = [
-    `- Titel: ${c.titleWords.min}-${c.titleWords.max} woorden${c.titleMustContainTopic ? `, met daarin letterlijk: "${naam}"` : ''}.`,
+    `- Titel: ${c.titleWords.min}-${titelMaxWoorden} woorden en maximaal ${c.titleMaxChars} tekens (spaties en leestekens tellen mee); mik op ~${titelMik}-${Math.min(titelMaxWoorden, titelMik + 1)} woorden, want ${c.titleWords.max} woorden past zelden binnen ${c.titleMaxChars} tekens${c.titleMustContainTopic ? `. Met daarin letterlijk: "${naam}"` : ''}.`,
     `- Subregel: ${c.subregelWords.min}-${c.subregelWords.max} woorden.`,
     `- Introductie: ${c.introWords.min}-${c.introWords.max} woorden; mik op ~${mid(c.introWords)}.`,
     `- Artikeltekst: ${contentWords.min}-${contentWords.max} woorden; mik op ~${mid(contentWords)}, verdeeld over minimaal ${c.minParagraphs} alinea's.${opts?.sparse ? ' Er is weinig harde research: blijf aan de ONDERKANT van dit bereik en rek de tekst niet op.' : ' Schrijf liever iets te ruim dan te krap.'}`,
@@ -362,7 +372,10 @@ async function polishTitle(
     'Bedenk drie mogelijke titels voor dit artikel, elk met een ANDERE zinsbouw.',
     '',
     'REGELS (hard):',
-    `- ${constraints.titleWords.min}-${constraints.titleWords.max} woorden.`,
+    // Zelfde bindende paar als describeStandaardConstraints: woorden én
+    // tekens. checkTitle keurt op titleMaxChars, dus een kandidaat die alleen
+    // het woordenbereik hoort blijft anders op 71+ tekens hangen.
+    `- ${constraints.titleWords.min}-${Math.max(constraints.titleWords.min, constraints.titleWords.max - 1)} woorden en maximaal ${constraints.titleMaxChars} tekens, inclusief spaties en leestekens. Tel na: een langere kop wordt afgekeurd.`,
     `- De naam "${naam}" (of de kernnaam ervan) staat erin, bij voorkeur vooraan. Essentieel voor SEO.`,
     '- Prikkelend en concreet, met een detail dat nieuwsgierig maakt.',
     // Sturing weg van het dubbele-punt-sjabloon: in de april-steekproef leunde
@@ -376,7 +389,11 @@ async function polishTitle(
     constraints.noAmsterdamRepeatInTitleSubregelIntro ? '- Het woord "Amsterdam" mag NIET in de titel staan.' : '',
     '',
     'Goede voorbeelden (drie verschillende structuren):',
-    '- BOLIA aan de Utrechtsestraat brengt Deens design met koffie en maatwerk',
+    // Het oude BOLIA-voorbeeld ("…brengt Deens design met koffie en maatwerk")
+    // was zelf 71 tekens en overtrad daarmee de limiet die deze prompt
+    // afdwingt; een regel-overtredend voorbeeld traint het model precies de
+    // verkeerde kant op. Zelfde fix als in de schrijf-seed (prompt-seeds.ts).
+    '- BOLIA aan de Utrechtsestraat brengt Deens design en maatwerk',
     '- Waarom De Kaaskamer al veertig jaar dezelfde toonbank gebruikt',
     '- Chez Chloé op de Overtoom: klassiek Frans van chef Marcelo Hernandez',
     '',
@@ -958,27 +975,179 @@ async function stepSchrijf(topic: Topic, s: StandaardState): Promise<StandaardSt
     // dezelfde aanroep): een validatiefout (te weinig woorden, dash, quote
     // niet letterlijk, …) gaat mét afkeurreden en de vorige versie naar de
     // volgende tik, in plaats van het topic direct op "mislukt" te zetten.
+    // De veld-tags gaan mee: faalden alleen titel en/of quote, dan probeert
+    // stepSchrijfRetry eerst een gerichte reparatie (goedkope call) in plaats
+    // van het hele artikel weg te gooien. De reparatie zit bewust in de
+    // retry-tik en niet hier: de schrijfcall heeft dan al tot ~40s van de
+    // 60s-functielimiet opgesnoept.
     s.draftPayload = payload;
     s.rejectReason = e.message;
+    s.rejectReasons = [e.message];
+    s.rejectViolations = e instanceof ArticleValidationError ? e.violations : undefined;
     await saveTopicProgress(topic.id, { status: 'queued', phase: 'schrijf-retry', state: s });
     return { topic, phase: 'schrijf-retry', done: false, progress: `Afgekeurd (${String(e.message).slice(0, 60)}…) · herkansing start` };
   }
 }
 
+// Alle afkeurredenen tot nu toe, nieuwste eerst en ontdubbeld. rejectReason
+// staat er altijd bij (de curator zet alléén dat veld, zonder rejectReasons
+// aan te raken); zo werkt de cumulatieve lijst ook voor afkeuringen die niet
+// via de schrijf-catches lopen.
+function cumulatieveRedenen(s: StandaardState): string[] {
+  const alles = [...(s.rejectReasons ?? [])];
+  if (s.rejectReason && !alles.includes(s.rejectReason)) alles.push(s.rejectReason);
+  const uniek: string[] = [];
+  for (const reden of alles.reverse()) {
+    if (!uniek.includes(reden)) uniek.push(reden);
+  }
+  return uniek;
+}
+
+// De actuele meting van de vorige versie, naast de eis. Het model telt zelf
+// niet betrouwbaar; zonder deze regel zag de retry alleen de laatste
+// afkeurreden en oscilleerde hij tussen twee regels (titel 76 tekens →
+// inkorten → 7 woorden → verlengen → weer te veel tekens). Defensief uit de
+// ruwe payload gelezen: die kan velden missen als buildCandidate al faalde.
+function beschrijfMeting(payload: Record<string, unknown>, c: StandaardConstraints, sparse: boolean): string {
+  const veld = (key: string) => (typeof payload[key] === 'string' ? (payload[key] as string) : '');
+  const titel = veld('title');
+  const quote = veld('quote');
+  const content = veld('content');
+  const contentRange = sparse ? c.sparseContentWords : c.contentWords;
+  const regels: string[] = [];
+  if (titel) regels.push(`titel nu ${wordCount(titel)} woorden en ${titel.length} tekens (eis: ${c.titleWords.min}-${c.titleWords.max} woorden én maximaal ${c.titleMaxChars} tekens)`);
+  if (quote) regels.push(`quote nu ${wordCount(quote)} woorden (eis: ${c.quoteWords.min}-${c.quoteWords.max})`);
+  if (content) regels.push(`artikeltekst nu ${wordCount(content)} woorden (eis: ${contentRange.min}-${contentRange.max})`);
+  return regels.length ? `\nActuele meting van je vorige versie: ${regels.join('; ')}.` : '';
+}
+
+// Kiest de alinea waarop de gerichte quote-reparatie mag werken: bij voorkeur
+// de alinea die de quote letterlijk bevat (quoteMustBeVerbatimInContent eist
+// dat die bestaat als alleen de lengte fout is), anders — bij een
+// niet-verbatim-fout bestaat zo'n alinea per definitie niet — de alinea met de
+// grootste woordoverlap met de quote.
+function vindQuoteAlinea(content: string, quote: string): { index: number; alinea: string; letterlijk: boolean } | null {
+  const alineas = content.split(/\n\s*\n/).map(a => a.trim()).filter(Boolean);
+  if (!alineas.length) return null;
+  const needle = normalizeForVerbatim(quote);
+  const letterlijkIndex = alineas.findIndex(a => normalizeForVerbatim(a).includes(needle));
+  if (letterlijkIndex !== -1) return { index: letterlijkIndex, alinea: alineas[letterlijkIndex], letterlijk: true };
+  const quoteWoorden = new Set(needle.split(' ').filter(Boolean));
+  let besteIndex = 0;
+  let besteScore = -1;
+  alineas.forEach((alinea, i) => {
+    const score = normalizeForVerbatim(alinea).split(' ').filter(w => quoteWoorden.has(w)).length;
+    if (score > besteScore) { besteScore = score; besteIndex = i; }
+  });
+  return { index: besteIndex, alinea: alineas[besteIndex], letterlijk: false };
+}
+
+// Gerichte quote-reparatie in de pipeline: dezelfde reparateur als de
+// admin-backfills (vraagQuoteHerschrijving, de kern van rewriteQuote), maar
+// dan op de platte artikeltekst van een nog niet gepubliceerd kandidaat-
+// artikel. Omdat de quote woord voor woord in de content moet staan
+// (quoteMustBeVerbatimInContent) is quote-reparatie altijd óók een
+// content-reparatie: de bronalinea wordt mee herschreven. Gooit bij elke
+// twijfel; de aanroeper valt dan terug op de volledige herschrijfronde.
+async function herstelQuote(
+  kandidaat: GeneratedArticle, s: StandaardState, constraints: StandaardConstraints,
+  redenen: string[], verboden: string[], topicId: number,
+): Promise<{ content: string; quote: string }> {
+  const plek = vindQuoteAlinea(kandidaat.content, kandidaat.quote);
+  if (!plek) throw new Error('Geen alinea gevonden om de quote-reparatie op uit te voeren.');
+  // Staat de geverifieerde bronquote (een écht citaat van een betrokkene) in
+  // deze alinea, dan moet die uitspraak daar woord voor woord blijven staan:
+  // aan een echt citaat mag de reparatie nooit iets veranderen. De nieuwe
+  // pull-quote wordt dan een redactiezin naast het citaat — precies wat
+  // describeQuoteInstruction voorschrijft als de bronquote niet in het
+  // quote-bereik past.
+  const bronTekst = s.bronQuote?.tekst;
+  const behoudLetterlijk = bronTekst && normalizeForVerbatim(plek.alinea).includes(normalizeForVerbatim(bronTekst)) ? bronTekst : undefined;
+  const uitkomst = await vraagQuoteHerschrijving({
+    titel: kandidaat.title,
+    bestaandeQuote: kandidaat.quote,
+    reden: `afgekeurd: ${redenen.join(' ') || 'voldoet niet aan de eisen'}`,
+    bronParagraaf: plek.alinea,
+    quoteStaatInParagraaf: plek.letterlijk,
+    contextTekst: kandidaat.content.slice(0, 6000),
+    minWords: constraints.quoteWords.min,
+    maxWords: constraints.quoteWords.max,
+    verboden,
+    behoudLetterlijk,
+    label: `quote-herstel#${topicId}`,
+  });
+  const alineas = kandidaat.content.split(/\n\s*\n/).map(a => a.trim()).filter(Boolean);
+  alineas[plek.index] = uitkomst.paragraaf.trim();
+  return { content: alineas.join('\n\n'), quote: uitkomst.quote };
+}
+
 async function stepSchrijfRetry(topic: Topic, s: StandaardState): Promise<StandaardStepResult> {
   if (!s.research || !s.draftPayload || !s.rejectReason) throw new Error('Onvolledige staat voor de herschrijfronde.');
+  // Lokale referentie: TS verliest de narrowing van s.draftPayload na de
+  // awaits hieronder, en de vorige versie is overal dezelfde.
+  const vorigePayload = s.draftPayload;
   const [writePrompt, constraints] = await Promise.all([activePrompt('schrijf'), standaardConstraints()]);
   const sparse = isSparseResearch(s, constraints);
-  const rules = describeStandaardConstraints(constraints, subjectName(topic, s), { sparse });
+  const naam = subjectName(topic, s);
+  const promptExamples = extractPromptExamples(writePrompt.content);
+  const valideerOpts = { sparse, sources: s.researchSources, quoteTekst: s.bronQuote?.tekst };
+
+  // Stap 1 — veldgerichte reparatie vóór de volledige herschrijfronde.
+  // Faalden ALLEEN titel en/of quote, dan is het artikel zelf goed en is
+  // hergeneratie zonde: de vorige aanpak gooide dan 400 gevalideerde woorden
+  // weg om een kop van 76 tekens, en de verse versie kon op een nieuwe regel
+  // stranden. polishTitle (keurt via checkTitle, inclusief de 70-tekens-grens)
+  // en herstelQuote (herschrijft quote + bronalinea naar het juiste bereik,
+  // inclusief de verbatim-eis) repareren gericht; daarna keurt validateArticle
+  // het geheel opnieuw. Lukt de reparatie niet, dan valt de fase geruisloos
+  // terug op de volledige herschrijfronde hieronder.
+  const falendeVelden = new Set((s.rejectViolations ?? []).map(v => v.field));
+  const alleenTitelOfQuote = falendeVelden.size > 0 && [...falendeVelden].every(f => f === 'title' || f === 'quote');
+  if (alleenTitelOfQuote) {
+    try {
+      const kandidaat = buildCandidate(vorigePayload);
+      // Altijd via polishTitle: bij een titelfout is dit de reparatie, bij een
+      // quote-only-fout dezelfde punch-up die de gewone succesroute ook
+      // krijgt. Nooit slechter: valt terug op de bestaande titel.
+      kandidaat.title = await polishTitle(kandidaat, s, naam, constraints, topic.id);
+      if (falendeVelden.has('quote')) {
+        const quoteRedenen = (s.rejectViolations ?? []).filter(v => v.field === 'quote').map(v => v.message);
+        const fix = await herstelQuote(kandidaat, s, constraints, quoteRedenen, promptExamples, topic.id);
+        kandidaat.content = fix.content;
+        kandidaat.quote = fix.quote;
+      }
+      validateArticle(kandidaat, naam, constraints, promptExamples, valideerOpts);
+      s.article = kandidaat;
+      s.draftPayload = undefined;
+      s.rejectReason = undefined;
+      s.rejectReasons = undefined;
+      s.rejectViolations = undefined;
+      s.schrijfAttempts = undefined;
+      await saveTopicProgress(topic.id, { status: 'queued', phase: 'curator', state: s });
+      return { topic, phase: 'curator', done: false, progress: 'Gericht gerepareerd (titel/quote) · stijlcurator' };
+    } catch {
+      // Reparatie niet gelukt of het geheel keurt alsnog af: door naar de
+      // volledige herschrijfronde, met alle redenen op een rij.
+    }
+  }
+
+  // Stap 2 — volledige herschrijfronde, met álle afkeurredenen én de actuele
+  // meting. Alleen de laatste reden meegeven veroorzaakte oscillatie: het
+  // model loste "te lang" op door te kort te worden en andersom.
+  const rules = describeStandaardConstraints(constraints, naam, { sparse });
+  const redenen = cumulatieveRedenen(s);
+  const redenenBlok = redenen.length === 1
+    ? `Afkeurreden: ${redenen[0]}`
+    : `Afkeurredenen (nieuwste eerst; ook de oudere blijven gelden):\n${redenen.map((r, i) => `${i + 1}. ${r}`).join('\n')}`;
   const payload = await askClaudeJson(
     writePrompt.content,
-    `Je vorige versie van dit artikel is afgekeurd door de eindredactie.\n\nOnderwerp: ${topic.title}\nAfkeurreden: ${s.rejectReason}\n\nLever het VOLLEDIGE artikel opnieuw aan als JSON met exact dezelfde velden (title, subregel, introductie_tekst, content, quote). Los de afkeurreden op en houd de rest zoveel mogelijk intact. Alle regels blijven gelden:\n${rules}\n\nJe vorige versie:\n${JSON.stringify(s.draftPayload)}${describeSources(s)}${describeInvalshoek(s)}${describeQuoteInstruction(s, constraints)}`,
+    `Je vorige versie van dit artikel is afgekeurd door de eindredactie.\n\nOnderwerp: ${topic.title}\n${redenenBlok}${beschrijfMeting(vorigePayload, constraints, sparse)}\n\nLever het VOLLEDIGE artikel opnieuw aan als JSON met exact dezelfde velden (title, subregel, introductie_tekst, content, quote). Los ALLE afkeurredenen tegelijk op en houd de rest zoveel mogelijk intact; een eerdere afkeurreden opnieuw introduceren betekent opnieuw afgekeurd. Alle regels blijven gelden:\n${rules}\n\nJe vorige versie:\n${JSON.stringify(vorigePayload)}${describeSources(s)}${describeInvalshoek(s)}${describeQuoteInstruction(s, constraints)}`,
     FAST_WRITE_MODEL, WRITE_MAX_TOKENS, undefined, false, `schrijf-retry#${topic.id}`,
   );
   let checked: GeneratedArticle;
   try {
     checked = buildCandidate(payload);
-    validateArticle(checked, subjectName(topic, s), constraints, extractPromptExamples(writePrompt.content), { sparse, sources: s.researchSources, quoteTekst: s.bronQuote?.tekst });
+    validateArticle(checked, naam, constraints, promptExamples, valideerOpts);
   } catch (e: any) {
     // Elke herkansing is sinds de fase-opsplitsing een eigen serverless-tick,
     // dus meerdere rondes kunnen veilig (zelfde patroon als composeAttempts in
@@ -992,13 +1161,17 @@ async function stepSchrijfRetry(topic: Topic, s: StandaardState): Promise<Standa
     s.schrijfAttempts = attempts;
     s.draftPayload = payload;
     s.rejectReason = e.message;
+    s.rejectReasons = [...redenen].reverse().concat(redenen.includes(e.message) ? [] : [e.message]);
+    s.rejectViolations = e instanceof ArticleValidationError ? e.violations : undefined;
     await saveTopicProgress(topic.id, { status: 'queued', phase: 'schrijf-retry', state: s });
     return { topic, phase: 'schrijf-retry', done: false, progress: `Afgekeurd (${String(e.message).slice(0, 60)}…) · herkansing ${attempts + 1} start` };
   }
-  checked.title = await polishTitle(checked, s, subjectName(topic, s), constraints, topic.id);
+  checked.title = await polishTitle(checked, s, naam, constraints, topic.id);
   s.article = checked;
   s.draftPayload = undefined;
   s.rejectReason = undefined;
+  s.rejectReasons = undefined;
+  s.rejectViolations = undefined;
   s.schrijfAttempts = undefined;
   await saveTopicProgress(topic.id, { status: 'queued', phase: 'curator', state: s });
   return { topic, phase: 'curator', done: false, progress: 'Artikel geschreven en gevalideerd · stijlcurator' };
@@ -1182,53 +1355,103 @@ export interface RewriteQuoteOptions {
   verbodenZinnen?: string[];
 }
 
-export async function rewriteQuote(article: Article, contentHtml: string, opts: RewriteQuoteOptions = {}): Promise<QuoteRewriteOutcome> {
-  const block = findExistingQuoteBlock(contentHtml);
-  if (!block) throw new Error('Geen herkenbare quote-structuur (blockquote + bronparagraaf) gevonden.');
+// Invoer voor de gedeelde reparatiecall hieronder. `quoteStaatInParagraaf`
+// stuurt alleen de kopregel boven de alinea: de backfills werken per definitie
+// op een alinea die de quote letterlijk bevat, de pipeline kan ook een
+// niet-verbatim-fout aanleveren. `behoudLetterlijk` is een uitspraak (de
+// geverifieerde bronquote) die de herschreven alinea woord voor woord moet
+// blijven bevatten — aan een echt citaat verandert de reparatie niets.
+interface QuoteHerschrijfInput {
+  titel: string;
+  bestaandeQuote: string;
+  reden: string;
+  bronParagraaf: string;
+  quoteStaatInParagraaf: boolean;
+  contextTekst: string;
+  minWords: number;
+  maxWords: number;
+  verboden: string[];
+  behoudLetterlijk?: string;
+  label: string;
+}
 
-  const constraints = await activeConstraints('standaard');
-  const { min: minWords, max: maxWords } = constraints.quoteWords;
-  const paragraphText = plainText(block.paragraphHtml);
-  const verboden = opts.verbodenZinnen?.filter(Boolean) || [];
-
+// Gedeelde kern van de quote-reparatie: één goedkope Claude-call
+// (FAST_WRITE_MODEL) die de afgekeurde quote herschrijft naar het gevraagde
+// woordbereik én de bronalinea zo aanpast dat de nieuwe quote daar woord voor
+// woord letterlijk in staat. Gebruikt door rewriteQuote (admin-backfills, op
+// content-HTML) en herstelQuote (pipeline, op platte artikeltekst). Gooit
+// zodra de uitkomst niet aan de harde eisen voldoet; de aanroeper bepaalt de
+// terugval.
+async function vraagQuoteHerschrijving(input: QuoteHerschrijfInput): Promise<{ quote: string; paragraaf: string }> {
   const system = 'Je bent eindredacteur van amsterdamnow.com, een lokale stadsgids door en voor Amsterdammers. Je herschrijft een afgekeurde pull-quote naar een sterkere quote die zowel als losstaande pull-quote als in de lopende tekst goed leest. Nuchtere, informele toon, geen marketingtaal, je verzint geen nieuwe feiten.';
   const prompt = [
-    `Artikel: ${article.title}`,
+    `Artikel: ${input.titel}`,
     '',
-    `Bestaande (${opts.reden || 'te korte'}) quote: "${block.quoteText}"`,
+    `Bestaande (${input.reden}) quote: "${input.bestaandeQuote}"`,
     '',
-    'Bronparagraaf (bevat de quote letterlijk):',
-    paragraphText,
+    input.quoteStaatInParagraaf
+      ? 'Bronparagraaf (bevat de quote letterlijk):'
+      : 'Bronparagraaf (de alinea die inhoudelijk het dichtst bij de quote ligt; de quote staat er nu níet letterlijk in):',
+    input.bronParagraaf,
     '',
     'Volledige artikeltekst, ter context (pas alleen de bronparagraaf hierboven aan):',
-    plainText(contentHtml).slice(0, 6000),
+    input.contextTekst,
     '',
     'Opdracht:',
-    `- Herschrijf de quote naar ${minWords}-${maxWords} woorden. Behoud de kernboodschap en toon; voeg geen nieuwe feiten toe die niet al in de tekst staan.`,
+    `- Herschrijf de quote naar ${input.minWords}-${input.maxWords} woorden. Behoud de kernboodschap en toon; voeg geen nieuwe feiten toe die niet al in de tekst staan.`,
     '- Herschrijf de bronparagraaf zo dat de NIEUWE quote daar woord voor woord letterlijk in voorkomt, net als de oorspronkelijke opzet. Lopende tekst, geen opsomming.',
+    ...(input.behoudLetterlijk
+      ? [`- Deze letterlijke uitspraak uit de bronnen staat in de alinea en moet daar woord voor woord blijven staan, inclusief attributie: "${input.behoudLetterlijk}"`]
+      : []),
     '- Geen em dash (—) of en dash (–).',
     '- Geen vraag en geen meta-taal ("zoals hij zelf zegt", etc.) in de quote zelf.',
-    ...(verboden.length
+    ...(input.verboden.length
       ? [
           '- De nieuwe quote gaat over DIT artikel en deze zaak. Hergebruik geen van deze zinnen, ook niet gedeeltelijk:',
-          ...verboden.map(z => `  · "${z}"`),
+          ...input.verboden.map(z => `  · "${z}"`),
         ]
       : []),
     '',
     'Antwoord ALLEEN met JSON: "quote" (de nieuwe quote) en "herschreven_paragraaf" (de volledige, aangepaste bronparagraaf).',
   ].join('\n');
 
-  const payload = await askClaudeJson(system, prompt, FAST_WRITE_MODEL, 1200, QUOTE_REWRITE_SCHEMA, false, `quote#${article.id}`);
+  const payload = await askClaudeJson(system, prompt, FAST_WRITE_MODEL, 1200, QUOTE_REWRITE_SCHEMA, false, input.label);
   const quote = string(payload.quote, 'quote');
-  const herschrevenParagraaf = string(payload.herschreven_paragraaf, 'herschreven_paragraaf');
+  const paragraaf = string(payload.herschreven_paragraaf, 'herschreven_paragraaf');
 
   const count = wordCount(quote);
-  if (count < minWords || count > maxWords) {
-    throw new Error(`Herschreven quote is ${count} woorden; moet ${minWords}-${maxWords} zijn.`);
+  if (count < input.minWords || count > input.maxWords) {
+    throw new Error(`Herschreven quote is ${count} woorden; moet ${input.minWords}-${input.maxWords} zijn.`);
   }
-  if (!normalizeForVerbatim(herschrevenParagraaf).includes(normalizeForVerbatim(quote))) {
+  if (!normalizeForVerbatim(paragraaf).includes(normalizeForVerbatim(quote))) {
     throw new Error('Herschreven quote staat niet letterlijk in de herschreven bronparagraaf.');
   }
+  if (input.behoudLetterlijk && !normalizeForVerbatim(paragraaf).includes(normalizeForVerbatim(input.behoudLetterlijk))) {
+    throw new Error('De letterlijke bronuitspraak is uit de herschreven alinea verdwenen.');
+  }
+  return { quote, paragraaf };
+}
+
+export async function rewriteQuote(article: Article, contentHtml: string, opts: RewriteQuoteOptions = {}): Promise<QuoteRewriteOutcome> {
+  const block = findExistingQuoteBlock(contentHtml);
+  if (!block) throw new Error('Geen herkenbare quote-structuur (blockquote + bronparagraaf) gevonden.');
+
+  const constraints = await activeConstraints('standaard');
+  const { min: minWords, max: maxWords } = constraints.quoteWords;
+  const verboden = opts.verbodenZinnen?.filter(Boolean) || [];
+
+  const { quote, paragraaf: herschrevenParagraaf } = await vraagQuoteHerschrijving({
+    titel: article.title,
+    bestaandeQuote: block.quoteText,
+    reden: opts.reden || 'te korte',
+    bronParagraaf: plainText(block.paragraphHtml),
+    quoteStaatInParagraaf: true,
+    contextTekst: plainText(contentHtml).slice(0, 6000),
+    minWords,
+    maxWords,
+    verboden,
+    label: `quote#${article.id}`,
+  });
 
   const newParagraphHtml = `<${block.paragraphTag}>${herschrevenParagraaf.replace(/\n/g, '<br>')}</${block.paragraphTag}>`;
   const newBlockquoteHtml = `<blockquote><p>${escapeQuoteHtml(plainText(quote))}</p></blockquote>`;

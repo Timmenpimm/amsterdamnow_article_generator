@@ -98,6 +98,19 @@ export interface StandaardState {
   draftPayload?: Record<string, unknown>; // afgekeurde Claude-JSON, input voor de herkansing
   rejectReason?: string;                  // afkeurreden van de vorige poging
   schrijfAttempts?: number;               // aantal afgekeurde herkansingen tot nu toe
+  // Alle afkeurredenen van deze schrijfronde, oudste eerst. rejectReason
+  // blijft de láátste (bestaand veld; de curator zet alleen dat veld), maar de
+  // herschrijfprompt krijgt deze volledige lijst mee: wie alleen de laatste
+  // reden hoort, lost die op door de vorige fout opnieuw te maken en blijft
+  // oscilleren (te lang → inkorten → te weinig woorden → verlengen).
+  rejectReasons?: string[];
+  // Veld-tags van de laatste afkeuring (ArticleValidationError.violations in
+  // lib/validation.ts). Faalden alleen titel en/of quote, dan probeert de
+  // schrijf-retry eerst een gerichte reparatie (polishTitle/herstelQuote)
+  // voordat het hele artikel opnieuw wordt gegenereerd. Leeg/undefined bij een
+  // afkeuring zonder veldinformatie (curator, kapotte JSON): dan volgt direct
+  // de volledige herschrijfronde.
+  rejectViolations?: { field: string; message: string }[];
   // Door de bronscanner aangedragen event-datum (JJJJ-MM-DD), als beginstaat op
   // het topic gezet in addTopics. stepResearch prefereert deze boven de
   // research-gok — de bronpagina is de betrouwbaarste datumbron.
