@@ -42,9 +42,24 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ art
       // NOW-templates gebruiken het eerste beeld als cover en verdelen de
       // rest over detail-/itemslides. Zonder deze lijst kreeg de engine alleen
       // de featured-foto en viel iedere fotoslide daarop terug.
-      imageUrls: [article.featured, ...(article.slider || []), article.inline]
+      //
+      // Volgorde is functioneel, geen smaak: de featured-foto moet vooraan
+      // staan zodat de engine hem als cover kiest, en de contentbeelden komen
+      // dáárna maar vóór de slider. De engine haalt de cover uit de lijst en
+      // pakt per lijst-item het n-de resterende beeld; alleen zo landt
+      // itemfoto N op itemslide N. Stonden de sliderbeelden ertussen, dan
+      // schoof elk itembeeld op. Itemfoto's zitten niet in slider/inline maar
+      // los in de content-HTML (lib/listHtml.ts), vandaar contentImages.
+      //
+      // De cap is er omdat de engine imageUrls valideert als
+      // z.array(z.string().url()).max(20): één relatief pad of het 21e beeld
+      // laat hem het HELE generatieverzoek afwijzen op "Invalid input". Een
+      // lijstje met 20+ itemfoto's is dus geen randgeval maar de norm.
+      imageUrls: [article.featured, ...(article.contentImages || []), ...(article.slider || []), article.inline]
         .map(m => m?.url)
-        .filter((url, i, urls): url is string => Boolean(url) && urls.indexOf(url) === i),
+        .filter((url, i, urls): url is string =>
+          Boolean(url) && /^https?:\/\//i.test(url!) && urls.indexOf(url) === i)
+        .slice(0, 20),
       categories: [article.category].filter(Boolean),
       tags: article.tags,
     },
