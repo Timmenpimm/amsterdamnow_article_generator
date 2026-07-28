@@ -381,3 +381,14 @@ export async function publishCarousel(articleId: number): Promise<void> {
       : new Error(body?.error || 'Publiceren op Instagram is mislukt — probeer het later opnieuw. Het concept is bewaard.');
   }
 }
+
+export async function deleteCarousel(articleId: number): Promise<void> {
+  const carouselId = requireCarouselId(articleId);
+  const res = await fetch(`/api/carousel/${articleId}`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ carouselId }),
+  });
+  if (!res.ok) throw toError(await readBody(res), res);
+  carouselIds.delete(articleId);
+}

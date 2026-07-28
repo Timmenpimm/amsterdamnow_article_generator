@@ -70,3 +70,22 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ ar
     return engineErrorJson(err);
   }
 }
+
+// DELETE /api/carousel/[articleId] — verwijdert de carousel bij de engine.
+// De engine weigert dit zelf als de carousel PUBLISHING/PUBLISHED is (409).
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ articleId: string }> }) {
+  await params; // articleId zit in het pad voor consistentie; engine werkt op carouselId
+  const body = await req.json().catch(() => null);
+  const carouselId = typeof body?.carouselId === 'string' ? body.carouselId : '';
+  if (!carouselId) {
+    return NextResponse.json({ error: 'carouselId ontbreekt in de aanvraag.' }, { status: 400 });
+  }
+  if (!(await engineConfigured())) return notConfiguredJson();
+
+  try {
+    await engineFetch(`/api/carousels/${encodeURIComponent(carouselId)}`, { method: 'DELETE' });
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    return engineErrorJson(err);
+  }
+}
