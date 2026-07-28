@@ -142,6 +142,38 @@ function parseInline(contentHtml: string): MediaRef | null {
   return { id: Number(idM[1]), url: srcM[1] };
 }
 
+// Álle beelden uit de content-HTML, in documentvolgorde. parseInline hierboven
+// kijkt bewust alleen naar de ene `figure.an-inline`; itemfoto's van
+// lijstartikelen staan in heel andere markup (`<p><img class="alignnone
+// wp-image-<id> size-full" …>`, zie lib/listHtml.ts) en werden daardoor nooit
+// opgepikt. De carousel-engine verdeelt de meegestuurde beeldlijst over de
+// itemslides, dus zonder deze functie kreeg hij één itembeeld en viel elke
+// volgende itemslide stil terug op de coverfoto.
+//
+// WordPress-eigenaardigheden waar dit rekening mee houdt: `src` kan enkele of
+// dubbele quotes (of geen) hebben, er staat vaak een `srcset` naast (die we
+// negeren — `\ssrc\s*=` matcht `srcset=` niet), en de URL kan HTML-entities
+// bevatten (`&amp;` in query-parameters). Het id komt uit de
+// `wp-image-<id>`-class als die er staat; bij een handmatig geplakt beeld
+// zonder die class blijft het 0 en telt alleen de URL.
+const IMG_TAG_RE = /<img\b[^>]*>/gi;
+const IMG_SRC_ATTR_RE = /\ssrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i;
+
+export function parseContentImages(contentHtml: string): MediaRef[] {
+  const out: MediaRef[] = [];
+  const seen = new Set<string>();
+  for (const tag of (contentHtml || '').match(IMG_TAG_RE) || []) {
+    const srcM = tag.match(IMG_SRC_ATTR_RE);
+    if (!srcM) continue;
+    const url = decodeHtmlEntities(srcM[1] ?? srcM[2] ?? srcM[3] ?? '').trim();
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    const idM = tag.match(/wp-image-(\d+)/);
+    out.push({ id: idM ? Number(idM[1]) : 0, url });
+  }
+  return out;
+}
+
 // ---------- taxonomy caches ----------
 
 let catCache: Record<number, string> | null = null;
@@ -316,6 +348,7 @@ async function mapPost(p: any, media: Record<number, MediaRef>): Promise<Article
     featured: p.featured_media ? media[p.featured_media] || null : null,
     slider: sliderIds.map(id => media[id]).filter(Boolean),
     inline: parseInline(p.content?.rendered || ''),
+    contentImages: parseContentImages(p.content?.rendered || ''),
     fotograaf: acf.fotograaf || '',
     naam_locatie: acf.naam_locatie || '',
     adres: acf.adres || '',

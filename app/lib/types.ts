@@ -209,6 +209,11 @@ export interface Article {
   featured: MediaRef | null;
   slider: MediaRef[];
   inline: MediaRef | null;
+  // Alle beelden die letterlijk in contentHtml staan, in documentvolgorde —
+  // inclusief de itemfoto's van lijstartikelen, die niet in slider of inline
+  // zitten. Gevuld door parseContentImages (lib/wp.ts); optioneel omdat
+  // artikelen uit andere bronnen (demo-seed, drafts) het veld niet zetten.
+  contentImages?: MediaRef[];
   fotograaf: string;
   naam_locatie: string;
   adres: string;
