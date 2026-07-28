@@ -4,7 +4,7 @@ import Link from 'next/link';
 import type { Article } from '@/lib/types';
 import { articlePhase } from '@/lib/types';
 import {
-  SATORI_TEMPLATES,
+  isNowTemplate,
   type CarouselStatus, type CarouselTemplate, type GenerateProgress, type NowFamilySpec,
 } from '@/lib/carousel';
 
@@ -86,16 +86,23 @@ export function TemplateStrip({
   generatedAt: string | null;
   onRegenerateAll: () => void;
 }) {
+  const archivedInUse = !isNowTemplate(template);
+
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 20px', borderBottom: '1px solid var(--border-light)', background: 'var(--sidebar)', flexWrap: 'wrap' }}>
       <span style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--gray)' }}>Template</span>
       {families.map(f => (
         <TemplatePill key={f.templateId} label={f.label} active={template === f.templateId} onClick={() => setTemplate(f.templateId)} />
       ))}
-      {families.length > 0 && <span style={{ width: 1, height: 20, background: 'var(--border-light)' }} />}
-      {SATORI_TEMPLATES.map(t => (
-        <TemplatePill key={t.key} label={t.label} active={template === t.key} onClick={() => setTemplate(t.key)} />
-      ))}
+      {/* De generieke templates zijn gearchiveerd: je kiest ze niet meer voor
+          nieuw werk. Een carousel die er al op staat toont hem nog wel, zodat
+          je ziet waarmee hij gemaakt is en hem opnieuw kunt genereren. */}
+      {archivedInUse && (
+        <>
+          <span style={{ width: 1, height: 20, background: 'var(--border-light)' }} />
+          <TemplatePill label={`${template} (gearchiveerd)`} active onClick={() => {}} />
+        </>
+      )}
       <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--gray)' }}>
         {slideCount} slides{generatedAt ? ` · gemaakt door Claude om ${fmtTime(generatedAt)}` : ''}
       </span>
@@ -137,7 +144,7 @@ export function BottomBar({
 // hoe lang hij mag worden (een gids 4-10, een hotspot vast 5). Zonder keuze —
 // of bij een satori-template — houden we de oude tekst aan.
 function slidesSentence(spec: NowFamilySpec | null): string {
-  if (!spec) return 'Claude schrijft 5 slides uit dit artikel';
+  if (!spec) return 'Claude schrijft de slides uit dit artikel';
   if (spec.minSlides === spec.maxSlides) return `Claude schrijft ${spec.minSlides} slides uit dit artikel`;
   return `Claude schrijft ${spec.minSlides} tot ${spec.maxSlides} slides uit dit artikel`;
 }
@@ -162,7 +169,6 @@ export function PreGeneratePanel({
       </span>
 
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
-        <GroupLabel>Amsterdam NOW</GroupLabel>
         {familiesLoading ? (
           <div style={{ display: 'flex', gap: 8 }}>
             <PillSkeleton width={96} />
@@ -181,19 +187,10 @@ export function PreGeneratePanel({
         ) : (
           <span style={{ fontSize: 12, color: 'var(--muted)', maxWidth: 380, lineHeight: 1.5 }}>
             {familiesError
-              ? 'De NOW-templates konden niet geladen worden — de generieke templates werken gewoon.'
-              : 'Geen NOW-templates beschikbaar in de socials-engine.'}
+              ? 'De templates konden niet worden opgehaald bij de socials-engine. Probeer het zo opnieuw, of controleer de koppeling via Instellingen → Instagram.'
+              : 'Geen templates beschikbaar in de socials-engine.'}
           </span>
         )}
-      </div>
-
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
-        <GroupLabel>Algemeen</GroupLabel>
-        <div style={{ display: 'flex', gap: 8 }}>
-          {SATORI_TEMPLATES.map(t => (
-            <TemplatePill key={t.key} label={t.label} active={template === t.key} onClick={() => setTemplate(t.key)} size="md" />
-          ))}
-        </div>
       </div>
 
       <button className="btn-primary" disabled={!template} onClick={onGenerate} style={{ marginTop: 6 }}>
