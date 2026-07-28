@@ -5,6 +5,7 @@ import {
   findNowStep, flushCarouselSave,
   type NowCarouselSlide, type NowFamilySpec,
 } from '@/lib/carousel';
+import { loadRenderCache, saveRender } from '@/lib/renderCache';
 
 // ---------------------------------------------------------------------------
 // Preview voor Amsterdam NOW-carousels.
@@ -22,6 +23,12 @@ import {
 // verandert wordt (gedebounced) opnieuw gerenderd. Vóór het renderen dwingen we
 // met flushCarouselSave() de openstaande autosave af, want de engine rendert
 // wat er op de server staat — niet wat er in de editor staat.
+//
+// Daarnaast is er een persistente cache in IndexedDB (lib/renderCache): bij het
+// mounten hydrateren we `renders` met eerder gerenderde beelden op basis van
+// template + vingerafdruk, zodat het heropenen van een carousel niet elke slide
+// opnieuw door de engine jaagt. Alleen slides zonder cache-hit (of met
+// gewijzigde inhoud) gaan alsnog naar de engine.
 // ---------------------------------------------------------------------------
 
 const DEBOUNCE_MS = 900;
@@ -135,6 +142,19 @@ export default function CarouselNowPreview({
   // Slides die op een (her)render wachten. Blijft staan als de debounce-timer
   // opnieuw start, zodat een snel bewerkte slide niet overgeslagen wordt.
   const pendingRef = useRef<Set<number>>(new Set());
+  // Pas als de IndexedDB-hydratie klaar is mag het diff-effect renderen —
+  // anders wint een volledige render de race van de cache.
+  const [hydrated, setHydrated] = useState(false);
+  const slidesRef = useRef(slides);
+  slidesRef.current = slides;
+
+  // Cache-sleutel per slide: template + inhouds-vingerafdruk, bewust zónder
+  // slide-index. Bij verwijderen of herordenen blijft een ongewijzigde slide
+  // zo gewoon een cache-hit.
+  const cacheKey = useCallback(
+    (slide: NowCarouselSlide) => `${spec.templateId}|${fingerprint(slide)}`,
+    [spec.templateId]
+  );
 
   const total = slides.length;
   const current = slides[currentIndex];
@@ -145,6 +165,40 @@ export default function CarouselNowPreview({
       (slide && findNowStep(spec, slide.slideType)?.dimensions) || { width: 1080, height: 1350 },
     [spec]
   );
+
+  // Hydratie uit de persistente cache: eerder gerenderde slides direct tonen
+  // en hun vingerafdruk voor-seeden in printsRef, zodat het diff-effect
+  // hieronder alleen slides zonder cache-hit laat renderen.
+  useEffect(() => {
+    if (!articleId) {
+      setHydrated(true);
+      return;
+    }
+    let cancelled = false;
+    void loadRenderCache(articleId).then(map => {
+      if (cancelled) return;
+      const seeded: string[] = [];
+      const fromCache: Record<number, RenderState> = {};
+      slidesRef.current.forEach((slide, i) => {
+        const dataUrl = map.get(cacheKey(slide));
+        if (dataUrl) {
+          fromCache[slide.index ?? i] = { dataUrl };
+          seeded[i] = fingerprint(slide);
+        }
+      });
+      if (Object.keys(fromCache).length > 0) {
+        printsRef.current = seeded;
+        setRenders(prev => ({ ...fromCache, ...prev }));
+      }
+      setHydrated(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // Alleen bij mount/artikel- of templatewissel; slides lopen via slidesRef
+    // mee zodat een tussentijdse edit de hydratie niet opnieuw aftrapt.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [articleId, spec.templateId]);
 
   // Eén render-call. `targets` = de slide-indexen waarvan we een beeld
   // verwachten; bij precies één index vragen we alleen die slide op.
@@ -171,6 +225,10 @@ export default function CarouselNowPreview({
       // verschijnt elke slide bovendien zodra hij klaar is in plaats van pas
       // aan het eind, en kost een mislukte slide niet de hele reeks.
       for (const index of targets) {
+        // Sleutel vastleggen vóór de call: de engine rendert de zojuist
+        // geflushte serverstaat, dus de huidige waarden van deze slide.
+        const slideAt = slidesRef.current.find((s, i) => (s.index ?? i) === index);
+        const key = slideAt ? cacheKey(slideAt) : null;
         try {
           const res = await fetch(`/api/carousel/${articleId}/render`, {
             method: 'POST',
@@ -196,6 +254,11 @@ export default function CarouselNowPreview({
                 ? { dataUrl: hit.dataUrl, loading: false }
                 : { ...prev[index], loading: false, error: 'Renderen leverde geen beeld op.' },
           }));
+          // Gelukte render ook in de persistente cache (fire-and-forget);
+          // overschrijft een eventuele oude entry voor dezelfde sleutel.
+          if (typeof hit?.dataUrl === 'string' && key) {
+            void saveRender(articleId, key, hit.dataUrl);
+          }
         } catch (e: any) {
           if (gen !== runRef.current) return;
           const error = e?.message || 'Renderen mislukt — probeer het opnieuw.';
@@ -203,7 +266,7 @@ export default function CarouselNowPreview({
         }
       }
     },
-    [articleId]
+    [articleId, cacheKey]
   );
 
   // Scheidingsteken \n is veilig: JSON.stringify escapet een echte newline, dus
@@ -215,6 +278,9 @@ export default function CarouselNowPreview({
   // `slides` (via onChangeSlide → PATCH-autosave), waardoor de vingerafdruk van
   // die slide verandert en hier precies die slide opnieuw gerenderd wordt.
   useEffect(() => {
+    // Eerst de cache-hydratie afwachten: die seedt printsRef met de
+    // vingerafdrukken van cache-hits, zodat die hier niet in de wachtrij komen.
+    if (!hydrated) return;
     const nextPrints = printsKey.length ? printsKey.split('\n') : [];
     const prev = printsRef.current;
     const first = prev.length === 0;
@@ -235,7 +301,7 @@ export default function CarouselNowPreview({
     // slides zit in printsKey verwerkt; bewust niet in de deps om dubbele runs
     // bij elke re-render van de parent te voorkomen.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [printsKey, runRender]);
+  }, [hydrated, printsKey, runRender]);
 
   const currentKey = current?.index ?? currentIndex;
   const currentState = renders[currentKey];
