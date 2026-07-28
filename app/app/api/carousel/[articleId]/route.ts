@@ -45,7 +45,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ ar
   if (!(await engineConfigured())) return notConfiguredJson();
 
   // Slides gaan als opaque JSON door — zowel satori-slides (layout/headline/
-  // body) als NOW-slides (slideType/values). Hier bewust gén vormcontrole:
+  // body) als NOW-slides (slideType/values). Hier bewust géén vormcontrole:
   // dat zou NOW-slides bij de eerste autosave wegvagen. Idem voor `template`:
   // 'modern-news' en 'now:<family>' zijn allebei geldig voor de engine.
   const patch: Record<string, unknown> = {};
