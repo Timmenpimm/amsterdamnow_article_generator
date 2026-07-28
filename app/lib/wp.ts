@@ -428,6 +428,127 @@ export async function listArticles(publishedPerPage = 15): Promise<Article[]> {
   return Promise.all(posts.map((p: any) => mapPost(p, media)));
 }
 
+// ---------- archief-zoeken (carousel-overzicht) ----------
+//
+// listArticles() hierboven is bewust een bord-spiegel: álle drafts plus een
+// handjevol recent gepubliceerde artikelen, met een media-fanout per post.
+// `per_page` is daar op 100 geclampt, dus langs die weg is een post uit 2017
+// onbereikbaar. Voor het carousel-overzicht moet Martijn juist wél in het hele
+// archief (~1100 posts) kunnen zoeken en zelf kiezen. Deze helper laat
+// WordPress het zware werk doen: `search`/`page`/`per_page` server-side,
+// `_fields` houdt de payload klein en `_embed=wp:featuredmedia` levert de
+// thumbnail mee zonder aparte /media-call. Geen `context=edit`, geen ACF, geen
+// mapPost — dit is een zoekresultaat, geen volledig artikel. De carousel-
+// generator haalt het artikel zelf compleet op via getArticle().
+//
+// Bewust ongeauthenticeerd (net als loadTaxonomies/tagNames hierboven):
+// gepubliceerde posts zijn publiek, en zo werkt zoeken ook in demo-modus,
+// waarin er geen WP-credentials zijn. De aanroeper krijgt `live` mee zodat de
+// UI kan uitleggen dat er zonder koppeling wel gezocht maar niets gemaakt kan
+// worden.
+
+export const PUBLISHED_SEARCH_MAX_PER_PAGE = 50;
+export const PUBLISHED_SEARCH_DEFAULT_PER_PAGE = 20;
+
+export interface PublishedPost {
+  id: number;
+  title: string;
+  link: string;
+  date: string;
+  slug: string;
+  category: string;
+  featured: MediaRef | null;
+}
+
+export interface PublishedSearchResult {
+  items: PublishedPost[];
+  total: number;
+  totalPages: number;
+  page: number;
+  perPage: number;
+  live: boolean;
+}
+
+// Publieke (niet-geauthenticeerde) WP-call die de Response teruggeeft, zodat de
+// aanroeper bij de X-WP-Total-headers kan. Timeout omdat dit aan een
+// gebruikersactie hangt: liever een nette foutmelding dan een hangend scherm.
+async function wpPublicFetchRaw(pathname: string, timeoutMs = 12_000): Promise<Response> {
+  const url = `${await getWpUrl()}/wp-json${pathname}`;
+  let res: Response;
+  try {
+    res = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(timeoutMs) });
+  } catch (e: any) {
+    if (e?.name === 'TimeoutError' || e?.name === 'AbortError') {
+      throw new Error(`WordPress reageerde niet binnen ${Math.round(timeoutMs / 1000)} seconden.`);
+    }
+    throw new Error('WordPress is niet bereikbaar.');
+  }
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`WordPress ${res.status} bij ${pathname}: ${body.slice(0, 200)}`);
+  }
+  return res;
+}
+
+function embeddedFeatured(post: any): MediaRef | null {
+  // Ontbrekende of afgeschermde media komt terug als foutobject ({code, message}).
+  const m = post?._embedded?.['wp:featuredmedia']?.[0];
+  const id = Number(m?.id);
+  if (!m || m.code || !Number.isFinite(id) || id <= 0) return null;
+  const sizes = m.media_details?.sizes || {};
+  const url = sizes.medium?.source_url || sizes.medium_large?.source_url || sizes.large?.source_url || m.source_url;
+  return url ? { id, url } : null;
+}
+
+export async function searchPublished(opts: { search?: string; page?: number; perPage?: number } = {}): Promise<PublishedSearchResult> {
+  const search = (opts.search || '').trim();
+  const perPage = Math.max(1, Math.min(PUBLISHED_SEARCH_MAX_PER_PAGE,
+    Math.trunc(Number(opts.perPage)) || PUBLISHED_SEARCH_DEFAULT_PER_PAGE));
+  const page = Math.max(1, Math.trunc(Number(opts.page)) || 1);
+
+  const params = new URLSearchParams({
+    status: 'publish',
+    per_page: String(perPage),
+    page: String(page),
+    // `orderby=relevance` eist een zoekterm (anders 400 rest_invalid_param),
+    // dus zonder term gewoon nieuwste eerst.
+    orderby: search ? 'relevance' : 'date',
+    order: 'desc',
+    // `_links` moet mee in `_fields`: WordPress bouwt `_embedded` uit de links
+    // van de response, dus zonder dat veld filtert `_fields` het embedden stil
+    // weg en komt elke rij zonder thumbnail terug (getest tegen de live site).
+    _fields: 'id,title,link,date,slug,categories,featured_media,_links',
+    _embed: 'wp:featuredmedia',
+  });
+  if (search) params.set('search', search);
+
+  // Categorienamen zijn nice-to-have: valt de taxonomie-call om, dan blijft de
+  // regel gewoon zonder categorie staan in plaats van dat het zoeken faalt.
+  const [res] = await Promise.all([
+    wpPublicFetchRaw(`/wp/v2/posts?${params.toString()}`),
+    loadTaxonomies().catch(() => {}),
+  ]);
+  const posts = await res.json();
+  const list: any[] = Array.isArray(posts) ? posts : [];
+
+  return {
+    items: list.map(p => ({
+      id: Number(p.id),
+      title: decodeHtmlEntities(String(p.title?.rendered || '')),
+      link: String(p.link || ''),
+      date: String(p.date || ''),
+      slug: String(p.slug || ''),
+      category: (p.categories || []).map((id: number) => catCache?.[id]).filter(Boolean).join(', '),
+      featured: embeddedFeatured(p),
+    })),
+    total: Number(res.headers.get('X-WP-Total')) || list.length,
+    totalPages: Number(res.headers.get('X-WP-TotalPages')) || (list.length ? page : 0),
+    page,
+    perPage,
+    live: await isLive(),
+  };
+}
+
 export async function getArticle(id: number): Promise<Article | null> {
   if (!(await isLive())) return (await demoArticles()).find(a => a.id === id) || null;
   await loadTaxonomies();

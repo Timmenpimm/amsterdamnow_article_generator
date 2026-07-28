@@ -19,6 +19,7 @@
     { "src": "^/api/prompts/([^/]+)/activate/?$", "dest": "/app/api/prompts/[id]/activate?id=$1" },
     { "src": "^/api/sources/scan/?$", "dest": "/app/api/sources/scan" },
     { "src": "^/api/wp-sync/?$", "dest": "/app/api/wp-sync" },
+    { "src": "^/api/wp/published/?$", "dest": "/app/api/wp/published" },
     { "src": "^/api/sources/([^/]+)/scan/?$", "dest": "/app/api/sources/[id]/scan?id=$1" },
     { "src": "^/api/sources/([^/]+)/?$", "dest": "/app/api/sources/[id]?id=$1" },
     { "src": "^/api/koppelingen/wordpress/test/?$", "dest": "/app/api/koppelingen/wordpress/test" },
