@@ -60,6 +60,12 @@ export interface NowPlaceholderSpec {
   enumValues: string[] | null;
   zeroPadTo: number | null;
   allowsLineBreak: boolean;
+  /**
+   * Token bevat het totále aantal slides van de herhaalde step (staat meestal
+   * op de cover: "De 10 beste …"). Oudere engine-antwoorden kennen dit veld
+   * nog niet — undefined telt als false.
+   */
+  autoCount?: boolean;
 }
 
 export interface NowStepSpec {
@@ -83,6 +89,10 @@ export interface NowFamilySpec {
 export function findNowStep(spec: NowFamilySpec, slideType: string): NowStepSpec | undefined {
   return spec.steps.find((step) => step.slideType === slideType);
 }
+
+// Instagram accepteert maximaal 10 slides per carousel; de editor blokkeert
+// klaarzetten/publiceren zolang er meer zijn (de engine weigert ze toch).
+export const MAX_IG_SLIDES = 10;
 
 export type SlideLayout = 'hero' | 'info' | 'image' | 'quote' | 'cta';
 

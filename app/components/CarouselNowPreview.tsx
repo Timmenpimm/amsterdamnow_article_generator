@@ -51,6 +51,33 @@ function typeLabel(slideType: string): string {
   return slideType.replace(/[-_]/g, ' ').toUpperCase();
 }
 
+// Verwijder-knop bij de actieve slide — gedeeld door het NOW- en het
+// satori-pad (CarouselSlidePreview importeert hem hiervandaan). De guard
+// (waaróm verwijderen niet mag) rekent CarouselGenerator uit; hier alleen
+// disabled + uitleg in de title.
+export function SlideDeleteButton({
+  currentIndex, blockedReason, onDelete,
+}: {
+  currentIndex: number;
+  blockedReason: string | null;
+  onDelete: () => void;
+}) {
+  const blocked = !!blockedReason;
+  return (
+    <button
+      className="btn-small"
+      disabled={blocked}
+      title={blockedReason || `Slide ${currentIndex + 1} uit de carousel verwijderen`}
+      onClick={onDelete}
+      style={blocked
+        ? { color: 'var(--muted)', opacity: 0.6, cursor: 'not-allowed' }
+        : { color: 'var(--red-dark)' }}
+    >
+      ✕ Verwijder slide {currentIndex + 1}
+    </button>
+  );
+}
+
 function Face({ state, label, big }: { state: RenderState | undefined; label: string; big: boolean }) {
   if (state?.dataUrl) {
     return (
@@ -91,13 +118,16 @@ function Face({ state, label, big }: { state: RenderState | undefined; label: st
 }
 
 export default function CarouselNowPreview({
-  slides, spec, currentIndex, onSelect, articleId,
+  slides, spec, currentIndex, onSelect, articleId, onDeleteSlide, deleteBlockedReason,
 }: {
   slides: NowCarouselSlide[];
   spec: NowFamilySpec;
   currentIndex: number;
   onSelect: (i: number) => void;
   articleId?: number;
+  // Verwijder-knop bij de actieve slide; zonder callback geen knop.
+  onDeleteSlide?: () => void;
+  deleteBlockedReason?: string | null;
 }) {
   const [renders, setRenders] = useState<Record<number, RenderState>>({});
   const printsRef = useRef<string[]>([]);
@@ -236,17 +266,25 @@ export default function CarouselNowPreview({
         </button>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-        {slides.map((s, i) => (
-          <span
-            key={s.index ?? i}
-            onClick={() => onSelect(i)}
-            style={{
-              width: i === currentIndex ? 20 : 7, height: 7, borderRadius: 999, cursor: 'pointer',
-              background: i === currentIndex ? 'var(--ink)' : 'var(--faint)',
-            }}
-          />
-        ))}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+          {slides.map((s, i) => (
+            <span
+              key={s.index ?? i}
+              onClick={() => onSelect(i)}
+              style={{
+                width: i === currentIndex ? 20 : 7, height: 7, borderRadius: 999, cursor: 'pointer',
+                background: i === currentIndex ? 'var(--ink)' : 'var(--faint)',
+              }}
+            />
+          ))}
+        </div>
+        {onDeleteSlide && (
+          <>
+            <span style={{ width: 1, height: 16, background: 'var(--border-light)' }} />
+            <SlideDeleteButton currentIndex={currentIndex} blockedReason={deleteBlockedReason ?? null} onDelete={onDeleteSlide} />
+          </>
+        )}
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#fff', border: '1px solid var(--border-light)', borderRadius: 12, padding: '10px 12px' }}>
