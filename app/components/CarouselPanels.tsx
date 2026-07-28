@@ -4,7 +4,7 @@ import Link from 'next/link';
 import type { Article } from '@/lib/types';
 import { articlePhase } from '@/lib/types';
 import {
-  isNowTemplate,
+  isNowTemplate, MAX_IG_SLIDES,
   type CarouselStatus, type CarouselTemplate, type GenerateProgress, type NowFamilySpec,
 } from '@/lib/carousel';
 
@@ -103,8 +103,10 @@ export function TemplateStrip({
           <TemplatePill label={`${template} (gearchiveerd)`} active onClick={() => {}} />
         </>
       )}
-      <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--gray)' }}>
-        {slideCount} slides{generatedAt ? ` · gemaakt door Claude om ${fmtTime(generatedAt)}` : ''}
+      {/* Teller tegen de Instagram-limiet; boven de 10 kleurt hij rood en
+          verschijnt eronder de amber-banner (in CarouselGenerator). */}
+      <span style={{ marginLeft: 'auto', fontSize: 12, color: slideCount > MAX_IG_SLIDES ? 'var(--red-dark)' : 'var(--gray)', fontWeight: slideCount > MAX_IG_SLIDES ? 700 : 400 }}>
+        {slideCount}/{MAX_IG_SLIDES} slides{generatedAt ? ` · gemaakt door Claude om ${fmtTime(generatedAt)}` : ''}
       </span>
       <button className="btn-small" onClick={onRegenerateAll}>↻ Genereer opnieuw</button>
     </div>
@@ -112,9 +114,11 @@ export function TemplateStrip({
 }
 
 export function BottomBar({
-  status, onReady, onPublish, onDelete,
+  status, tooManySlides, onReady, onPublish, onDelete,
 }: {
   status: CarouselStatus;
+  // Boven de Instagram-limiet (MAX_IG_SLIDES): klaarzetten/publiceren dicht.
+  tooManySlides: boolean;
   onReady: () => void;
   onPublish: () => void;
   onDelete: () => void;
@@ -127,6 +131,9 @@ export function BottomBar({
       </div>
     );
   }
+  const limitTitle = tooManySlides
+    ? `Instagram accepteert maximaal ${MAX_IG_SLIDES} slides — verwijder eerst slides.`
+    : undefined;
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 20px', borderTop: '1px solid var(--border-light)', background: '#fff' }}>
       <span className="dot" style={{ background: status === 'ready' ? 'var(--amber)' : 'var(--amber)' }} />
@@ -135,8 +142,12 @@ export function BottomBar({
       </span>
       <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
         <button className="btn-small" style={{ color: 'var(--red-dark)' }} onClick={onDelete}>Verwijderen</button>
-        {status !== 'ready' && <button className="btn" onClick={onReady}>Klaarzetten</button>}
-        <button className="btn-primary" onClick={onPublish}>Publiceren op Instagram →</button>
+        {status !== 'ready' && (
+          <button className="btn" disabled={tooManySlides} title={limitTitle} style={tooManySlides ? { opacity: 0.5, cursor: 'not-allowed' } : undefined} onClick={onReady}>
+            Klaarzetten
+          </button>
+        )}
+        <button className="btn-primary" disabled={tooManySlides} title={limitTitle} onClick={onPublish}>Publiceren op Instagram →</button>
       </div>
     </div>
   );
@@ -277,6 +288,9 @@ export function PublishModal({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  // Vangnet — normaal opent de modal niet eens boven de limiet (BottomBar
+  // blokkeert), maar mocht het toch gebeuren dan kan er niet gepubliceerd worden.
+  const tooMany = slideCount > MAX_IG_SLIDES;
   return (
     <div className="modal-backdrop" onClick={onCancel}>
       <div
@@ -288,13 +302,25 @@ export function PublishModal({
           <span style={{ fontSize: 13.5, lineHeight: 1.55, color: 'var(--text-soft)' }}>
             De carousel van <strong>{slideCount} slides</strong> en het onderschrift worden nu geplaatst op <strong>@amsterdamnow</strong>. Plaatsen kan niet ongedaan gemaakt worden.
           </span>
-          <div style={{ background: 'var(--amber-bg)', border: '1px solid var(--amber-border)', borderRadius: 8, padding: '10px 12px', fontSize: 12.5, lineHeight: 1.5, color: 'var(--amber-dark)' }}>
-            <span style={{ fontWeight: 800 }}>Controleer eerst:</span> na plaatsing zijn onderschrift en hashtags alleen nog in de Instagram-app te wijzigen.
-          </div>
+          {tooMany ? (
+            <div style={{ background: 'var(--red-bg)', border: '1px solid var(--red-border)', borderRadius: 8, padding: '10px 12px', fontSize: 12.5, lineHeight: 1.5, color: 'var(--red-dark)' }}>
+              <span style={{ fontWeight: 800 }}>Te veel slides:</span> Instagram accepteert maximaal {MAX_IG_SLIDES} slides — verwijder er nog {slideCount - MAX_IG_SLIDES} voordat je publiceert.
+            </div>
+          ) : (
+            <div style={{ background: 'var(--amber-bg)', border: '1px solid var(--amber-border)', borderRadius: 8, padding: '10px 12px', fontSize: 12.5, lineHeight: 1.5, color: 'var(--amber-dark)' }}>
+              <span style={{ fontWeight: 800 }}>Controleer eerst:</span> na plaatsing zijn onderschrift en hashtags alleen nog in de Instagram-app te wijzigen.
+            </div>
+          )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 24px', borderTop: '1px solid var(--border-light)', background: 'var(--panel)' }}>
           <button className="btn" style={{ marginLeft: 'auto' }} disabled={publishing} onClick={onCancel}>Annuleren</button>
-          <button className="btn-green" style={{ width: 'auto', padding: '9px 18px' }} disabled={publishing} onClick={onConfirm}>
+          <button
+            className="btn-green"
+            style={{ width: 'auto', padding: '9px 18px', ...(tooMany ? { opacity: 0.5, cursor: 'not-allowed' } : null) }}
+            disabled={publishing || tooMany}
+            title={tooMany ? `Instagram accepteert maximaal ${MAX_IG_SLIDES} slides.` : undefined}
+            onClick={onConfirm}
+          >
             {publishing ? 'Bezig…' : 'Ja, publiceren'}
           </button>
         </div>

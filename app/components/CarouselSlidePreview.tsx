@@ -4,7 +4,7 @@ import {
   isNowSlide,
   type AnyCarouselSlide, type CarouselSlide, type NowCarouselSlide, type NowFamilySpec,
 } from '@/lib/carousel';
-import CarouselNowPreview from './CarouselNowPreview';
+import CarouselNowPreview, { SlideDeleteButton } from './CarouselNowPreview';
 
 const LAYOUT_LABEL: Record<CarouselSlide['layout'], string> = {
   hero: 'HERO', info: 'INFO', image: 'BEELD', quote: 'QUOTE', cta: 'CTA',
@@ -63,7 +63,7 @@ function SlideFace({ slide, kicker, big }: { slide: CarouselSlide; kicker: strin
 }
 
 export default function CarouselSlidePreview({
-  slides, currentIndex, onSelect, kicker, nowSpec, articleId,
+  slides, currentIndex, onSelect, kicker, nowSpec, articleId, onDeleteSlide, deleteBlockedReason,
 }: {
   slides: AnyCarouselSlide[];
   currentIndex: number;
@@ -74,6 +74,10 @@ export default function CarouselSlidePreview({
   nowSpec?: NowFamilySpec | null;
   // Nodig om de render-proxy aan te roepen (alleen voor het NOW-pad).
   articleId?: number;
+  // Verwijder-knop bij de actieve slide; zonder callback geen knop. De reden
+  // (string) maakt de knop disabled met uitleg in de title.
+  onDeleteSlide?: () => void;
+  deleteBlockedReason?: string | null;
 }) {
   const allNow = slides.length > 0 && slides.every(isNowSlide);
 
@@ -95,6 +99,8 @@ export default function CarouselSlidePreview({
         currentIndex={currentIndex}
         onSelect={onSelect}
         articleId={articleId}
+        onDeleteSlide={onDeleteSlide}
+        deleteBlockedReason={deleteBlockedReason}
       />
     );
   }
@@ -130,17 +136,25 @@ export default function CarouselSlidePreview({
         </button>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-        {satoriSlides.map((s, i) => (
-          <span
-            key={s.index}
-            onClick={() => onSelect(i)}
-            style={{
-              width: i === currentIndex ? 20 : 7, height: 7, borderRadius: 999, cursor: 'pointer',
-              background: i === currentIndex ? 'var(--ink)' : 'var(--faint)',
-            }}
-          />
-        ))}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+          {satoriSlides.map((s, i) => (
+            <span
+              key={s.index}
+              onClick={() => onSelect(i)}
+              style={{
+                width: i === currentIndex ? 20 : 7, height: 7, borderRadius: 999, cursor: 'pointer',
+                background: i === currentIndex ? 'var(--ink)' : 'var(--faint)',
+              }}
+            />
+          ))}
+        </div>
+        {onDeleteSlide && (
+          <>
+            <span style={{ width: 1, height: 16, background: 'var(--border-light)' }} />
+            <SlideDeleteButton currentIndex={currentIndex} blockedReason={deleteBlockedReason ?? null} onDelete={onDeleteSlide} />
+          </>
+        )}
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#fff', border: '1px solid var(--border-light)', borderRadius: 12, padding: '10px 12px' }}>

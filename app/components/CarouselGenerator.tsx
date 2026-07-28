@@ -6,9 +6,9 @@ import type { Article } from '@/lib/types';
 import {
   getCarouselContent, getNowFamilies, generateCarousel, regenerateSlide,
   saveCarouselContent, flushCarouselSave, markReady, publishCarousel, deleteCarousel,
-  EngineNotConfiguredError,
-  type CarouselContent, type CarouselSlide, type CarouselStatus, type CarouselTemplate,
-  type GenerateProgress, type NowFamilySpec,
+  EngineNotConfiguredError, findNowStep, isNowSlide, MAX_IG_SLIDES,
+  type AnyCarouselSlide, type CarouselContent, type CarouselSlide, type CarouselStatus,
+  type CarouselTemplate, type GenerateProgress, type NowCarouselSlide, type NowFamilySpec,
 } from '@/lib/carousel';
 import { toast } from './toast';
 import CarouselSlidePreview from './CarouselSlidePreview';
@@ -17,6 +17,83 @@ import {
   SubContext, TemplateStrip, BottomBar, PreGeneratePanel, LoadingPanel,
   GenerateErrorPanel, LoadErrorPanel, PublishModal,
 } from './CarouselPanels';
+
+// ---------------------------------------------------------------------------
+// Slide verwijderen — helpers
+// ---------------------------------------------------------------------------
+
+// Reden waarom de actieve slide níet verwijderd mag worden; null = mag wel.
+// Dezelfde functie stuurt de disabled-state + title van de verwijder-knop aan
+// én is het vangnet in doDeleteSlide zelf.
+function slideDeleteBlockReason(
+  slides: AnyCarouselSlide[],
+  slideIndex: number,
+  nowSpec: NowFamilySpec | null
+): string | null {
+  const slide = slides[slideIndex];
+  if (!slide) return 'Geen slide geselecteerd.';
+
+  if (nowSpec && isNowSlide(slide)) {
+    // NOW: de step-minima uit het engine-manifest zijn leidend. Een step met
+    // min === max (cover, cta) is een vast onderdeel en nooit verwijderbaar.
+    const step = findNowStep(nowSpec, slide.slideType);
+    if (step) {
+      const ofType = slides.filter(s => isNowSlide(s) && s.slideType === slide.slideType).length;
+      if (ofType - 1 < step.min) {
+        return step.min === step.max
+          ? 'Deze slide is een vast onderdeel van dit template en kan niet verwijderd worden.'
+          : `Dit template heeft minimaal ${step.min} slides van dit type — verwijderen kan niet meer.`;
+      }
+    }
+    const floor = Math.max(3, nowSpec.minSlides);
+    if (slides.length - 1 < floor) {
+      return `Dit template heeft minimaal ${floor} slides — verwijderen kan niet meer.`;
+    }
+    return null;
+  }
+
+  // Satori: alleen het Instagram-minimum van 2 slides bewaken.
+  if (slides.length - 1 < 2) return 'Een carousel heeft minimaal 2 slides — verwijderen kan niet meer.';
+  return null;
+}
+
+// Hernummert NOW-slides na een verwijdering. Binnen elke hérhaalde step
+// (max > min in het manifest) krijgen tokens met `zeroPadTo` het nieuwe
+// 1-based volgnummer binnen die step (de engine vult ze óók zonder padding:
+// String(positie + 1)) en tokens met `enumValues` de waarde per positie
+// (enumValues[positie % lengte]). Tokens met `autoCount` — op wélke slide dan
+// ook — krijgen het nieuwe totale aantal slides van de herhaalde step.
+function renumberNowSlides(slides: NowCarouselSlide[], spec: NowFamilySpec): NowCarouselSlide[] {
+  const counts = new Map<string, number>();
+  for (const s of slides) counts.set(s.slideType, (counts.get(s.slideType) || 0) + 1);
+  const repeatedStep = spec.steps.find(st => st.max > st.min);
+  const repeatedCount = repeatedStep ? counts.get(repeatedStep.slideType) || 0 : 0;
+
+  const seen = new Map<string, number>();
+  return slides.map((slide, i) => {
+    const pos = seen.get(slide.slideType) || 0; // 0-based positie binnen de step
+    seen.set(slide.slideType, pos + 1);
+
+    let values = slide.values || {};
+    const step = findNowStep(spec, slide.slideType);
+    if (step) {
+      const inRepeatedStep = step.max > step.min;
+      let next: Record<string, string> | null = null;
+      for (const p of step.placeholders) {
+        let v: string | undefined;
+        if (inRepeatedStep && p.zeroPadTo != null) v = String(pos + 1);
+        else if (inRepeatedStep && p.enumValues && p.enumValues.length > 0) v = p.enumValues[pos % p.enumValues.length];
+        else if (p.autoCount && repeatedStep) v = String(repeatedCount);
+        if (v !== undefined && values[p.name] !== v) {
+          if (!next) next = { ...values };
+          next[p.name] = v;
+        }
+      }
+      if (next) values = next;
+    }
+    return { ...slide, index: i, values };
+  });
+}
 
 export default function CarouselGenerator({ articleId }: { articleId: number }) {
   const [article, setArticle] = useState<Article | null>(null);
@@ -39,6 +116,13 @@ export default function CarouselGenerator({ articleId }: { articleId: number }) 
   const [familiesLoading, setFamiliesLoading] = useState(true);
   const [familiesError, setFamiliesError] = useState(false);
   const cancelled = useRef(false);
+
+  // Manifest-spec van het gekozen template — null bij een satori-carousel.
+  // Preview, editor en de verwijder-guard lezen hieruit welke slidetypes/tokens
+  // er bestaan.
+  const nowSpec = families.find(f => f.templateId === template) || null;
+  // Instagram-limiet: bij meer slides zijn klaarzetten/publiceren geblokkeerd.
+  const tooManySlides = (content?.slides.length ?? 0) > MAX_IG_SLIDES;
 
   const load = useCallback(async () => {
     try {
@@ -134,6 +218,27 @@ export default function CarouselGenerator({ articleId }: { articleId: number }) 
     setSavedAt(new Date().toISOString());
   }
 
+  function doDeleteSlide() {
+    if (!content) return;
+    const reason = slideDeleteBlockReason(content.slides, slideIndex, nowSpec);
+    if (reason) { toast(reason, { kind: 'error' }); return; }
+    if (!confirm(`Slide ${slideIndex + 1} verwijderen? Dit kan niet ongedaan gemaakt worden.`)) return;
+
+    const remaining = content.slides.filter((_, i) => i !== slideIndex);
+    // NOW-carousel: hernummeren + tellers bijwerken; satori: alleen herindexeren.
+    const slides: AnyCarouselSlide[] =
+      nowSpec && remaining.every(isNowSlide)
+        ? renumberNowSlides(remaining as NowCarouselSlide[], nowSpec)
+        : remaining.map((s, i) => ({ ...s, index: i }));
+
+    const next = { ...content, slides };
+    setContent(next);
+    setSlideIndex(i => Math.min(i, slides.length - 1));
+    saveCarouselContent(articleId, next);
+    setSavedAt(new Date().toISOString());
+    toast('Slide verwijderd');
+  }
+
   async function doRegenerateSlide() {
     if (!article || !template || regenBusy) return;
     setRegenBusy(true);
@@ -150,6 +255,10 @@ export default function CarouselGenerator({ articleId }: { articleId: number }) 
   }
 
   async function doMarkReady() {
+    if (tooManySlides) {
+      toast(`Instagram accepteert maximaal ${MAX_IG_SLIDES} slides — verwijder eerst slides.`, { kind: 'error' });
+      return;
+    }
     try {
       await markReady(articleId);
       setStatus('ready');
@@ -160,6 +269,10 @@ export default function CarouselGenerator({ articleId }: { articleId: number }) 
   }
 
   async function doPublish() {
+    if (tooManySlides) {
+      toast(`Instagram accepteert maximaal ${MAX_IG_SLIDES} slides — verwijder eerst slides.`, { kind: 'error' });
+      return;
+    }
     setPublishing(true);
     try {
       await publishCarousel(articleId);
@@ -189,9 +302,8 @@ export default function CarouselGenerator({ articleId }: { articleId: number }) 
   if (loadError) return <LoadErrorPanel message={loadError} />;
   if (!article) return <div style={{ padding: 40, fontSize: 13, color: 'var(--gray)' }}>Laden…</div>;
 
-  // Manifest-spec van het gekozen template — null bij een satori-carousel.
-  // Preview en editor lezen hieruit welke slidetypes/tokens er bestaan.
-  const nowSpec = families.find(f => f.templateId === template) || null;
+  // Waarom de actieve slide (niet) verwijderd mag worden — voor de knop-state.
+  const deleteSlideBlocked = content ? slideDeleteBlockReason(content.slides, slideIndex, nowSpec) : null;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: 'calc(100vh - 53px)' }}>
@@ -234,6 +346,14 @@ export default function CarouselGenerator({ articleId }: { articleId: number }) 
             generatedAt={savedAt}
             onRegenerateAll={runGenerate}
           />
+          {tooManySlides && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px', background: 'var(--amber-bg)', borderBottom: '1px solid var(--amber-border)' }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--amber-dark)' }}>Te veel slides voor Instagram</span>
+              <span style={{ fontSize: 12.5, color: 'var(--amber-dark)' }}>
+                Instagram accepteert maximaal {MAX_IG_SLIDES} slides — verwijder er nog {content.slides.length - MAX_IG_SLIDES}.
+              </span>
+            </div>
+          )}
           <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
             <CarouselSlidePreview
               slides={content.slides}
@@ -242,6 +362,8 @@ export default function CarouselGenerator({ articleId }: { articleId: number }) 
               kicker={[article.category, article.district].filter(Boolean).join(' · ').toUpperCase() || 'AMSTERDAM'}
               nowSpec={nowSpec}
               articleId={article.id}
+              onDeleteSlide={doDeleteSlide}
+              deleteBlockedReason={deleteSlideBlocked}
             />
             <CarouselSlideEditor
               content={content}
@@ -254,7 +376,7 @@ export default function CarouselGenerator({ articleId }: { articleId: number }) 
               onChangeHashtags={patchHashtags}
             />
           </div>
-          <BottomBar status={status} onReady={doMarkReady} onPublish={() => setPublishOpen(true)} onDelete={doDeleteCarousel} />
+          <BottomBar status={status} tooManySlides={tooManySlides} onReady={doMarkReady} onPublish={() => setPublishOpen(true)} onDelete={doDeleteCarousel} />
         </>
       )}
 
