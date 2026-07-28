@@ -403,6 +403,22 @@ export default function ArticleDetail({ id }: { id: number }) {
     }
   }
 
+  async function deleteArticleNow() {
+    if (!article) return;
+    if (!confirm(`"${article.title}" definitief verwijderen? Dit kan niet ongedaan gemaakt worden.`)) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/articles/${article.id}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      toast('Artikel verwijderd');
+      router.push('/');
+    } catch (e: any) {
+      toast(e.message, { kind: 'error' });
+      setBusy(false);
+    }
+  }
+
   if (error) {
     return (
       <div style={{ padding: 40 }}>
@@ -485,6 +501,9 @@ export default function ArticleDetail({ id }: { id: number }) {
           </button>
           <button className="btn-small" disabled={!next} style={{ opacity: next ? 1 : 0.45 }} onClick={() => next && router.push(`/artikel/${next.id}`)}>
             volgende ↓
+          </button>
+          <button className="btn-small" style={{ color: 'var(--red-dark)' }} onClick={deleteArticleNow}>
+            Verwijderen
           </button>
         </div>
       </div>

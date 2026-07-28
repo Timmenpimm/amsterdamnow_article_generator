@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Article } from '@/lib/types';
 import {
   getCarouselContent, getNowFamilies, generateCarousel, regenerateSlide,
-  saveCarouselContent, flushCarouselSave, markReady, publishCarousel,
+  saveCarouselContent, flushCarouselSave, markReady, publishCarousel, deleteCarousel,
   EngineNotConfiguredError,
   type CarouselContent, type CarouselSlide, type CarouselStatus, type CarouselTemplate,
   type GenerateProgress, type NowFamilySpec,
@@ -173,6 +173,19 @@ export default function CarouselGenerator({ articleId }: { articleId: number }) 
     }
   }
 
+  async function doDeleteCarousel() {
+    if (!confirm('Deze carousel definitief verwijderen? Dit kan niet ongedaan gemaakt worden.')) return;
+    try {
+      await deleteCarousel(articleId);
+      setContent(null);
+      setStatus('none');
+      setSavedAt(null);
+      toast('Carousel verwijderd');
+    } catch (e: any) {
+      toast(e.message, { kind: 'error' });
+    }
+  }
+
   if (loadError) return <LoadErrorPanel message={loadError} />;
   if (!article) return <div style={{ padding: 40, fontSize: 13, color: 'var(--gray)' }}>Laden…</div>;
 
@@ -241,7 +254,7 @@ export default function CarouselGenerator({ articleId }: { articleId: number }) 
               onChangeHashtags={patchHashtags}
             />
           </div>
-          <BottomBar status={status} onReady={doMarkReady} onPublish={() => setPublishOpen(true)} />
+          <BottomBar status={status} onReady={doMarkReady} onPublish={() => setPublishOpen(true)} onDelete={doDeleteCarousel} />
         </>
       )}
 

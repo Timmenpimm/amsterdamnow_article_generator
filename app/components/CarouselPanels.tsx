@@ -112,11 +112,12 @@ export function TemplateStrip({
 }
 
 export function BottomBar({
-  status, onReady, onPublish,
+  status, onReady, onPublish, onDelete,
 }: {
   status: CarouselStatus;
   onReady: () => void;
   onPublish: () => void;
+  onDelete: () => void;
 }) {
   if (status === 'published') {
     return (
@@ -133,6 +134,7 @@ export function BottomBar({
         {status === 'ready' ? 'Klaargezet — wacht op handmatige plaatsing' : 'Concept — nog niet klaargezet'}
       </span>
       <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
+        <button className="btn-small" style={{ color: 'var(--red-dark)' }} onClick={onDelete}>Verwijderen</button>
         {status !== 'ready' && <button className="btn" onClick={onReady}>Klaarzetten</button>}
         <button className="btn-primary" onClick={onPublish}>Publiceren op Instagram →</button>
       </div>
