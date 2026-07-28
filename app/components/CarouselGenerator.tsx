@@ -10,6 +10,7 @@ import {
   type AnyCarouselSlide, type CarouselContent, type CarouselSlide, type CarouselStatus,
   type CarouselTemplate, type GenerateProgress, type NowCarouselSlide, type NowFamilySpec,
 } from '@/lib/carousel';
+import { clearArticleRenders } from '@/lib/renderCache';
 import { toast } from './toast';
 import CarouselSlidePreview from './CarouselSlidePreview';
 import CarouselSlideEditor from './CarouselSlideEditor';
@@ -290,6 +291,9 @@ export default function CarouselGenerator({ articleId }: { articleId: number }) 
     if (!confirm('Deze carousel definitief verwijderen? Dit kan niet ongedaan gemaakt worden.')) return;
     try {
       await deleteCarousel(articleId);
+      // Cache-entries van dit artikel opruimen (fire-and-forget), anders erft
+      // een later nieuw gegenereerde carousel verouderde renders.
+      void clearArticleRenders(articleId);
       setContent(null);
       setStatus('none');
       setSavedAt(null);
