@@ -3,11 +3,16 @@ import { engineFetch } from '@/lib/socialsEngine';
 import { engineConfigured, engineErrorJson, notConfiguredJson, type EngineCarousel } from '@/lib/carouselEngine';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
+// De engine-publish mag tot 300s duren (slides voorrenderen + Meta's
+// container-polling); dit budget en de fetch-timeout hieronder moeten daar
+// ruim boven de engine z'n eigen faalpad blijven, anders breekt deze proxy
+// de verbinding af terwijl de engine nog netjes bezig is.
+export const maxDuration = 300;
 
 // POST /api/carousel/[articleId]/publish — zet de carousel zo nodig eerst op
 // APPROVED (de engine publiceert alleen goedgekeurde carousels) en roept dan
-// de engine-publish aan. Kan tot ~60s duren (Instagram Graph API).
+// de engine-publish aan. Kan enkele minuten duren (renderen + Instagram
+// Graph API).
 export async function POST(req: NextRequest, { params }: { params: Promise<{ articleId: string }> }) {
   await params; // articleId zit in het pad voor consistentie; engine werkt op carouselId
   const body = await req.json().catch(() => null);
@@ -33,7 +38,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ art
     const res = await engineFetch('/api/instagram/publish', {
       method: 'POST',
       body: JSON.stringify({ carouselId }),
-      signal: AbortSignal.timeout(55000),
+      signal: AbortSignal.timeout(290000),
     });
     const out = await res.json().catch(() => null);
     const instagramId = out?.mediaId || out?.carousel?.instagramId || null;
