@@ -42,15 +42,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ art
       // NOW-templates gebruiken het eerste beeld als cover en verdelen de
       // rest over detail-/itemslides. Zonder deze lijst kreeg de engine alleen
       // de featured-foto en viel iedere fotoslide daarop terug.
-      // De engine accepteert maximaal 20 absolute URL's en wijst het hele
-      // verzoek af zodra er één niet aan voldoet. Een fotoreportage met een
-      // lange slider zou de generatie dus laten mislukken; vandaar de filter
-      // op http(s) en de harde cap hier, aan de kant die de lijst opbouwt.
       imageUrls: [article.featured, ...(article.slider || []), article.inline]
         .map(m => m?.url)
-        .filter((url, i, urls): url is string =>
-          Boolean(url) && /^https?:\/\//i.test(url!) && urls.indexOf(url) === i)
-        .slice(0, 20),
+        .filter((url, i, urls): url is string => Boolean(url) && urls.indexOf(url) === i),
       categories: [article.category].filter(Boolean),
       tags: article.tags,
     },
