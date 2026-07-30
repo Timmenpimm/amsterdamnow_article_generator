@@ -6,6 +6,7 @@ import type { Article, BoardData, Topic } from '@/lib/types';
 import { articlePhase, imageCount, listImagesReady, parseListState, REQUIRED_IMAGES } from '@/lib/types';
 import { classifyError, uitlegVoorKind, type ErrorKind } from '@/lib/errorKind';
 import TopBar from './TopBar';
+import TopicForm from './TopicForm';
 import AuditPanel, { runTime, verdictStyle } from './AuditPanel';
 import BulkModal from './BulkModal';
 import ListArticleModal from './ListArticleModal';
@@ -1232,59 +1233,9 @@ function MobileHome({
   onToggleAuto: () => void; autoOn: boolean; writingNow: boolean;
   verdicts: Record<string, PostVerdict>; onOpenAudit: (postId: number, v: PostVerdict) => void;
 }) {
-  const [value, setValue] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  async function submit() {
-    const title = value.trim();
-    if (!title || busy) return;
-    setBusy(true);
-    try {
-      await fetch('/api/topics', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ titles: [title] }),
-      });
-      toast('Toegevoegd aan wachtrij');
-      setValue('');
-      onChanged();
-    } finally {
-      setBusy(false);
-    }
-  }
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: 'calc(100vh - 55px)' }}>
-      <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border-light)', background: 'var(--panel)' }}>
-        <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.01em' }}>Nieuw onderwerp</div>
-        <textarea
-          value={value}
-          onChange={e => setValue(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); submit(); } }}
-          placeholder="Kikiboba in De Pijp: Taiwanese wheel cakes…"
-          rows={2}
-          style={{
-            marginTop: 12, width: '100%', border: '1.5px solid var(--ink)', borderRadius: 12,
-            background: 'var(--card)', padding: '14px 16px', fontSize: 15, fontWeight: 600,
-            outline: 'none', resize: 'none',
-          }}
-        />
-        <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-          <button
-            className="btn-primary"
-            style={{ flex: 1, fontSize: 14, padding: 13, borderRadius: 10 }}
-            disabled={!value.trim() || busy}
-            onClick={submit}
-          >
-            Toevoegen aan wachtrij
-          </button>
-          <button className="btn" style={{ padding: '13px 14px', borderRadius: 10 }} onClick={onBulk}>
-            Plak lijst
-          </button>
-        </div>
-        <div style={{ marginTop: 10, fontSize: 12, color: 'var(--muted)' }}>
-          Claude onderzoekt het onderwerp, schrijft de draft en vult SEO in.
-        </div>
-      </div>
+      <TopicForm onSubmitted={onChanged} onBulk={onBulk} />
       <div style={{ flex: 1, padding: '14px 20px', display: 'flex', flexDirection: 'column', gap: 10, background: 'var(--sidebar)' }}>
         <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--gray)' }}>
           Wachtrij · {queued.length + writing.length + failed.length}
