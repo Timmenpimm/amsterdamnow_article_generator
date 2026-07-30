@@ -2,6 +2,8 @@
 // het onderwerp in de wachtrij komt. Bespaart API-kosten en wachttijd door
 // probleemtopics direct af te keuren met concrete feedback voor de redactie.
 
+'use client';
+
 export type ValidationResult = 
   | { valid: true }
   | { valid: false; reason: string; suggestion?: string; severity: 'error' | 'warning' };
@@ -75,92 +77,87 @@ export function validateTopicBasic(title: string, website: string): ValidationRe
     };
   }
 
-  // 3. Website mag niet leeg zijn
+  // 3. Website mag leeg zijn (optioneel gemaakt)
   const cleanWebsite = website.trim();
-  if (!cleanWebsite) {
-    return {
-      valid: false,
-      reason: 'De website mag niet leeg zijn. Vul de officiële homepage in.',
-      suggestion: 'Zoek op Google naar "[naam zaak] officiële website"',
-      severity: 'error'
-    };
-  }
-
-  // 4. Website moet een geldige URL zijn
-  let url: URL;
-  try {
-    url = new URL(cleanWebsite);
-  } catch {
-    return {
-      valid: false,
-      reason: 'De website is geen geldige URL.',
-      suggestion: 'Gebruik het volledige formaat: https://voorbeeld.nl',
-      severity: 'error'
-    };
-  }
-
-  // 5. Website moet http of https zijn
-  if (!['http:', 'https:'].includes(url.protocol)) {
-    return {
-      valid: false,
-      reason: 'De website moet beginnen met http:// of https://',
-      severity: 'error'
-    };
-  }
-
-  // 6. Concurrent-domein blokkeren
-  if (competitorInHost(cleanWebsite)) {
-    return {
-      valid: false,
-      reason: 'Dit is een concurrent. We schrijven niet over onze eigen artikelen.',
-      suggestion: 'Gebruik de officiële website van de onderliggende zaak of het evenement.',
-      severity: 'error'
-    };
-  }
-
-  // 7. Veelvoorkomende aggregators blokkeren
-  if (looksLikeAggregator(cleanWebsite)) {
-    const host = url.hostname.toLowerCase();
-    let specificSuggestion = 'Zoek naar de officiële website van de zaak of het evenement.';
-    
-    if (host.includes('facebook') || host.includes('instagram')) {
-      specificSuggestion = 'Gebruik de officiële website, niet de social media pagina.';
-    } else if (host.includes('ticketmaster') || host.includes('eventbrite') || host.includes('paylogic')) {
-      specificSuggestion = 'Dit is een ticketverkoper. Zoek de website van de organisatie of venue zelf.';
-    } else if (host.includes('tripadvisor') || host.includes('yelp')) {
-      specificSuggestion = 'Dit is een review-site. Gebruik de officiële website van de zaak.';
-    } else if (host.includes('timeout') || host.includes('iamsterdam')) {
-      specificSuggestion = 'Dit is een stadsgids of agenda. Zoek de eigen website van de zaak.';
-    }
-
-    return {
-      valid: false,
-      reason: `Deze website is een ${getAggregatorType(host)}, geen officiële site.`,
-      suggestion: specificSuggestion,
-      severity: 'error'
-    };
-  }
-
-  // 8. Aggregator-check via de bestaande helper
-  if (isAggregatorHost(cleanWebsite)) {
-    return {
-      valid: false,
-      reason: 'Deze website is een agenda, ticketsite of social media platform.',
-      suggestion: 'Gebruik de officiële homepage van de zaak of het evenement.',
-      severity: 'error'
-    };
-  }
-
-  // 9. Waarschuw bij diepe URLs (vaak niet de homepage)
-  if (url.pathname.length > 1 && url.pathname !== '/') {
-    const pathDepth = url.pathname.split('/').filter(p => p).length;
-    if (pathDepth > 2) {
+  if (cleanWebsite) {
+    // Alleen valideren als website is ingevuld
+    let url: URL;
+    try {
+      url = new URL(cleanWebsite);
+    } catch {
       return {
         valid: false,
-        reason: 'Deze URL wijst naar een specifieke pagina, niet de homepage.',
-        suggestion: `Gebruik alleen het domein: ${url.origin}`,
-        severity: 'warning'
+        reason: 'De website is geen geldige URL.',
+        suggestion: 'Gebruik het volledige formaat: https://voorbeeld.nl',
+        severity: 'error'
       };
+    }
+
+    // 4. Als website is ingevuld, valideer deze
+  if (cleanWebsite) {
+    // 4a. Website moet http of https zijn
+    if (!['http:', 'https:'].includes(url.protocol)) {
+      return {
+        valid: false,
+        reason: 'De website moet beginnen met http:// of https://',
+        severity: 'error'
+      };
+    }
+
+    // 4b. Concurrent-domein blokkeren
+    if (competitorInHost(cleanWebsite)) {
+      return {
+        valid: false,
+        reason: 'Dit is een concurrent. We schrijven niet over onze eigen artikelen.',
+        suggestion: 'Gebruik de officiële website van de onderliggende zaak of het evenement.',
+        severity: 'error'
+      };
+    }
+
+    // 4c. Veelvoorkomende aggregators blokkeren
+    if (looksLikeAggregator(cleanWebsite)) {
+      const host = url.hostname.toLowerCase();
+      let specificSuggestion = 'Zoek naar de officiële website van de zaak of het evenement.';
+
+      if (host.includes('facebook') || host.includes('instagram')) {
+        specificSuggestion = 'Gebruik de officiële website, niet de social media pagina.';
+      } else if (host.includes('ticketmaster') || host.includes('eventbrite') || host.includes('paylogic')) {
+        specificSuggestion = 'Dit is een ticketverkoper. Zoek de website van de organisatie of venue zelf.';
+      } else if (host.includes('tripadvisor') || host.includes('yelp')) {
+        specificSuggestion = 'Dit is een review-site. Gebruik de officiële website van de zaak.';
+      } else if (host.includes('timeout') || host.includes('iamsterdam')) {
+        specificSuggestion = 'Dit is een stadsgids of agenda. Zoek de eigen website van de zaak.';
+      }
+
+      return {
+        valid: false,
+        reason: `Deze website is een ${getAggregatorType(host)}, geen officiële site.`,
+        suggestion: specificSuggestion,
+        severity: 'error'
+      };
+    }
+
+    // 4d. Aggregator-check
+    if (isAggregatorHost(cleanWebsite)) {
+      return {
+        valid: false,
+        reason: 'Deze website is een agenda, ticketsite of social media platform.',
+        suggestion: 'Gebruik de officiële homepage van de zaak of het evenement.',
+        severity: 'error'
+      };
+    }
+
+    // 4e. Waarschuw bij diepe URLs
+    if (url.pathname.length > 1 && url.pathname !== '/') {
+      const pathDepth = url.pathname.split('/').filter(p => p).length;
+      if (pathDepth > 2) {
+        return {
+          valid: false,
+          reason: 'Deze URL wijst naar een specifieke pagina, niet de homepage.',
+          suggestion: `Gebruik alleen het domein: ${url.origin}`,
+          severity: 'warning'
+        };
+      }
     }
   }
 
