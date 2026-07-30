@@ -55,6 +55,9 @@ export default function WordPressPanel({
   const [user, setUser] = useState('');
   const [password, setPassword] = useState('');
 
+  // Track of er wijzigingen zijn
+  const [hasChanges, setHasChanges] = useState(false);
+
   // Testresultaat van "Test verbinding".
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; text: string } | null>(null);
@@ -66,25 +69,45 @@ export default function WordPressPanel({
       setStatus(s);
       setUrl(s.url);
       setUser(s.user);
+      setHasChanges(false);
     }
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
-  async function save(partial: Partial<{ url: string; user: string; appPassword: string }>) {
+  // Check voor wijzigingen
+  useEffect(() => {
+    if (!status) return;
+    const changed = url.trim() !== status.url || user.trim() !== status.user || password.trim() !== '';
+    setHasChanges(changed);
+  }, [url, user, password, status]);
+
+  async function saveAll() {
+    if (!hasChanges) return;
     setBusy(true);
     try {
+      const updates: Partial<{ url: string; user: string; appPassword: string }> = {};
+      if (url.trim() !== status?.url) updates.url = url.trim();
+      if (user.trim() !== status?.user) updates.user = user.trim();
+      if (password.trim()) updates.appPassword = password.trim();
+
       const res = await fetch('/api/koppelingen/wordpress', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(partial),
+        body: JSON.stringify(updates),
       });
       const body = await res.json();
-      if (!res.ok) { toast(body.error || 'Opslaan mislukt', { kind: 'error' }); return; }
+      if (!res.ok) { 
+        toast(body.error || 'Opslaan mislukt', { kind: 'error' }); 
+        return; 
+      }
       setStatus(body);
       setUrl(body.url);
       setUser(body.user);
+      setPassword('');
       setTestResult(null);
+      setHasChanges(false);
+      toast('Instellingen opgeslagen', { kind: 'success' });
       onChanged();
     } finally {
       setBusy(false);
@@ -148,7 +171,6 @@ export default function WordPressPanel({
               value={url}
               disabled={busy}
               onChange={e => setUrl(e.target.value)}
-              onBlur={() => url.trim() !== status.url && save({ url: url.trim() })}
               placeholder="https://www.amsterdamnow.com"
               style={inputStyle}
             />
@@ -161,7 +183,6 @@ export default function WordPressPanel({
               value={user}
               disabled={busy}
               onChange={e => setUser(e.target.value)}
-              onBlur={() => user.trim() !== status.user && save({ user: user.trim() })}
               placeholder="WordPress-gebruikersnaam"
               style={inputStyle}
             />
@@ -170,30 +191,42 @@ export default function WordPressPanel({
           {/* APPLICATION PASSWORD */}
           <div>
             <div style={labelStyle}>Application password</div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <input
-                type="password"
-                value={password}
-                disabled={busy}
-                onChange={e => setPassword(e.target.value)}
-                onBlur={() => password.trim() && save({ appPassword: password.trim() }).then(() => setPassword(''))}
-                placeholder={status.hasPassword ? '•••••••• (ingesteld — leeg laten = behouden)' : 'Nog niet ingesteld'}
-                style={inputStyle}
-              />
-              <button
-                className="btn btn-small"
-                disabled={testing}
-                onClick={testConnection}
-                style={{ whiteSpace: 'nowrap' }}
-              >
-                {testing ? 'Testen…' : 'Test verbinding'}
-              </button>
-            </div>
+            <input
+              type="password"
+              value={password}
+              disabled={busy}
+              onChange={e => setPassword(e.target.value)}
+              placeholder={status.hasPassword ? '•••••••• (ingesteld — leeg laten = behouden)' : 'Nog niet ingesteld'}
+              style={inputStyle}
+            />
             <div style={{ fontSize: 11.5, marginTop: 6, lineHeight: 1.5, color: testResult ? (testResult.ok ? 'var(--green-dark)' : 'var(--red, #c0392b)') : 'var(--muted)' }}>
               {testResult
                 ? testResult.text
                 : 'WordPress-admin → Gebruikers → Profiel → Application Passwords.'}
             </div>
+          </div>
+
+          {/* ACTIE KNOPPEN */}
+          <div style={{ display: 'flex', gap: 8, paddingTop: 8 }}>
+            <button
+              className="btn"
+              disabled={!hasChanges || busy}
+              onClick={saveAll}
+              style={{ 
+                opacity: hasChanges ? 1 : 0.5,
+                cursor: hasChanges ? 'pointer' : 'not-allowed'
+              }}
+            >
+              {busy ? 'Opslaan…' : hasChanges ? 'Wijzigingen opslaan' : 'Opgeslagen'}
+            </button>
+            <button
+              className="btn btn-small"
+              disabled={testing}
+              onClick={testConnection}
+              style={{ whiteSpace: 'nowrap' }}
+            >
+              {testing ? 'Testen…' : 'Test verbinding'}
+            </button>
           </div>
 
           {/* CAVEATS */}
