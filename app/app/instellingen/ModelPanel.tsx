@@ -82,9 +82,12 @@ export default function ModelPanel({
   const [modelsErr, setModelsErr] = useState<string | null>(null);
   const [loadingModels, setLoadingModels] = useState(false);
 
-  // Lokale bewerkvelden voor endpoint/sleutel (tekstvelden slaan pas op bij blur).
+  // Lokale bewerkvelden
   const [baseUrl, setBaseUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
+
+  // Track wijzigingen
+  const [hasChanges, setHasChanges] = useState(false);
 
   const load = useCallback(async () => {
     const res = await fetch('/api/model');
@@ -92,10 +95,18 @@ export default function ModelPanel({
       const s: ModelSettings = await res.json();
       setSettings(s);
       setBaseUrl(s.omniroute.baseUrl);
+      setHasChanges(false);
     }
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Check voor wijzigingen
+  useEffect(() => {
+    if (!settings) return;
+    const changed = baseUrl.trim() !== settings.omniroute.baseUrl || apiKey.trim() !== '';
+    setHasChanges(changed);
+  }, [baseUrl, apiKey, settings]);
 
   const fetchModels = useCallback(async (url?: string) => {
     setLoadingModels(true);
@@ -130,6 +141,35 @@ export default function ModelPanel({
       const body = await res.json();
       if (!res.ok) { toast(body.error || 'Opslaan mislukt', { kind: 'error' }); return; }
       setSettings(body);
+      onChanged();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveOmnirouteSettings() {
+    if (!hasChanges) return;
+    setBusy(true);
+    try {
+      const updates: Record<string, string> = {};
+      if (baseUrl.trim() !== settings?.omniroute.baseUrl) updates.baseUrl = baseUrl.trim();
+      if (apiKey.trim()) updates.apiKey = apiKey.trim();
+
+      const res = await fetch('/api/model', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ omniroute: updates }),
+      });
+      const body = await res.json();
+      if (!res.ok) { 
+        toast(body.error || 'Opslaan mislukt', { kind: 'error' }); 
+        return; 
+      }
+      setSettings(body);
+      setBaseUrl(body.omniroute.baseUrl);
+      setApiKey('');
+      setHasChanges(false);
+      toast('Instellingen opgeslagen', { kind: 'ok' });
       onChanged();
     } finally {
       setBusy(false);
@@ -189,47 +229,56 @@ export default function ModelPanel({
               {/* ENDPOINT */}
               <div>
                 <div style={labelStyle}>Endpoint (base-URL)</div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <input
-                    value={baseUrl}
-                    disabled={busy}
-                    onChange={e => setBaseUrl(e.target.value)}
-                    onBlur={() => baseUrl.trim() !== o.baseUrl && save({ omniroute: { baseUrl: baseUrl.trim() } })}
-                    placeholder="http://localhost:20128"
-                    style={inputStyle}
-                  />
-                  <button
-                    className="btn btn-small"
-                    disabled={loadingModels}
-                    onClick={() => fetchModels(baseUrl.trim())}
-                    style={{ whiteSpace: 'nowrap' }}
-                  >
-                    {loadingModels ? 'Testen…' : 'Test verbinding'}
-                  </button>
-                </div>
-                <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 6, lineHeight: 1.5 }}>
-                  {modelsErr
-                    ? <span style={{ color: 'var(--red, #c0392b)' }}>{modelsErr}</span>
-                    : models
-                      ? <span style={{ color: 'var(--green-dark)' }}>Verbonden — {models.length} modellen beschikbaar.</span>
-                      : 'Standaard: de lokale Omniroute op poort 20128.'}
-                </div>
+                <input
+                  value={baseUrl}
+                  disabled={busy}
+                  onChange={e => setBaseUrl(e.target.value)}
+                  placeholder="http://localhost:20128"
+                  style={inputStyle}
+                />
               </div>
 
               {/* API-KEY (optioneel) */}
               <div>
                 <div style={labelStyle}>API-sleutel (optioneel)</div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <input
-                    type="password"
-                    value={apiKey}
-                    disabled={busy}
-                    onChange={e => setApiKey(e.target.value)}
-                    onBlur={() => apiKey.trim() && save({ omniroute: { apiKey: apiKey.trim() } }).then(() => setApiKey(''))}
-                    placeholder={o.hasApiKey ? '•••••••• (ingesteld — leeg laten = behouden)' : 'Leeg = geen auth (localhost)'}
-                    style={inputStyle}
-                  />
-                </div>
+                <input
+                  type="password"
+                  value={apiKey}
+                  disabled={busy}
+                  onChange={e => setApiKey(e.target.value)}
+                  placeholder={o.hasApiKey ? '•••••••• (ingesteld — leeg laten = behouden)' : 'Leeg = geen auth (localhost)'}
+                  style={inputStyle}
+                />
+              </div>
+
+              {/* ACTIE KNOPPEN */}
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  className="btn"
+                  disabled={!hasChanges || busy}
+                  onClick={saveOmnirouteSettings}
+                  style={{ 
+                    opacity: hasChanges ? 1 : 0.5,
+                    cursor: hasChanges ? 'pointer' : 'not-allowed'
+                  }}
+                >
+                  {busy ? 'Opslaan…' : hasChanges ? 'Wijzigingen opslaan' : 'Opgeslagen'}
+                </button>
+                <button
+                  className="btn btn-small"
+                  disabled={loadingModels}
+                  onClick={() => fetchModels(baseUrl.trim())}
+                  style={{ whiteSpace: 'nowrap' }}
+                >
+                  {loadingModels ? 'Testen…' : 'Test verbinding'}
+                </button>
+              </div>
+              <div style={{ fontSize: 11.5, color: modelsErr ? 'var(--red, #c0392b)' : models ? 'var(--green-dark)' : 'var(--muted)', marginTop: -8, lineHeight: 1.5 }}>
+                {modelsErr
+                  ? modelsErr
+                  : models
+                    ? `Verbonden — ${models.length} modellen beschikbaar.`
+                    : 'Standaard: de lokale Omniroute op poort 20128.'}
               </div>
 
               {/* MODEL */}

@@ -39,9 +39,10 @@ export default function InstagramPanel({
   const [status, setStatus] = useState<IgStatus | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // Sectie 1: engine-instellingen (blur-to-save; lege key = behouden).
+  // Sectie 1: engine-instellingen
   const [engineUrl, setEngineUrl] = useState('');
   const [engineApiKey, setEngineApiKey] = useState('');
+  const [hasEngineChanges, setHasEngineChanges] = useState(false);
 
   // Sectie 2: Instagram-credentials (doorgestuurd naar de engine).
   const [accessToken, setAccessToken] = useState('');
@@ -57,10 +58,18 @@ export default function InstagramPanel({
       setStatus(s);
       setEngineUrl(s.engineUrl);
       setBusinessAccountId(s.connection?.businessAccountId || '');
+      setHasEngineChanges(false);
     }
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Check voor engine wijzigingen
+  useEffect(() => {
+    if (!status) return;
+    const changed = engineUrl.trim() !== status.engineUrl || engineApiKey.trim() !== '';
+    setHasEngineChanges(changed);
+  }, [engineUrl, engineApiKey, status]);
 
   async function save(partial: Record<string, string>) {
     setBusy(true);
@@ -79,6 +88,37 @@ export default function InstagramPanel({
       setStatus(body);
       setEngineUrl(body.engineUrl);
       setTestResult(null);
+      onChanged();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveEngine() {
+    if (!hasEngineChanges) return;
+    setBusy(true);
+    try {
+      const updates: Record<string, string> = {};
+      if (engineUrl.trim() !== status?.engineUrl) updates.engineUrl = engineUrl.trim();
+      if (engineApiKey.trim()) updates.engineApiKey = engineApiKey.trim();
+
+      const res = await fetch('/api/koppelingen/instagram', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        toast(body.error || 'Opslaan mislukt', { kind: 'error' });
+        if (body.engineUrl) { setStatus(body); }
+        return;
+      }
+      setStatus(body);
+      setEngineUrl(body.engineUrl);
+      setEngineApiKey('');
+      setHasEngineChanges(false);
+      setTestResult(null);
+      toast('Engine instellingen opgeslagen', { kind: 'ok' });
       onChanged();
     } finally {
       setBusy(false);
@@ -143,7 +183,6 @@ export default function InstagramPanel({
               value={engineUrl}
               disabled={busy}
               onChange={e => setEngineUrl(e.target.value)}
-              onBlur={() => engineUrl.trim() !== status.engineUrl && save({ engineUrl: engineUrl.trim() })}
               placeholder="https://amsterdamnow-socials.vercel.app"
               style={inputStyle}
             />
@@ -156,10 +195,24 @@ export default function InstagramPanel({
               value={engineApiKey}
               disabled={busy}
               onChange={e => setEngineApiKey(e.target.value)}
-              onBlur={() => engineApiKey.trim() && save({ engineApiKey: engineApiKey.trim() }).then(() => setEngineApiKey(''))}
               placeholder={status.hasEngineKey ? '•••••••• (ingesteld — leeg laten = behouden)' : 'ENGINE_API_KEY van de socials-engine'}
               style={inputStyle}
             />
+          </div>
+
+          {/* ENGINE OPSLAAN KNOP */}
+          <div>
+            <button
+              className="btn"
+              disabled={!hasEngineChanges || busy}
+              onClick={saveEngine}
+              style={{ 
+                opacity: hasEngineChanges ? 1 : 0.5,
+                cursor: hasEngineChanges ? 'pointer' : 'not-allowed'
+              }}
+            >
+              {busy ? 'Opslaan…' : hasEngineChanges ? 'Wijzigingen opslaan' : 'Opgeslagen'}
+            </button>
           </div>
         </div>
 
@@ -205,36 +258,38 @@ export default function InstagramPanel({
 
               <div>
                 <div style={labelStyle}>Business-account-ID</div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <input
-                    value={businessAccountId}
-                    disabled={busy}
-                    onChange={e => setBusinessAccountId(e.target.value)}
-                    placeholder="Instagram business account ID"
-                    style={inputStyle}
-                  />
-                  <button
-                    className="btn btn-small"
-                    disabled={busy || !accessToken.trim() || !businessAccountId.trim()}
-                    onClick={saveInstagram}
-                    style={{ whiteSpace: 'nowrap' }}
-                  >
-                    Opslaan
-                  </button>
-                  <button
-                    className="btn btn-small"
-                    disabled={testing}
-                    onClick={testConnection}
-                    style={{ whiteSpace: 'nowrap' }}
-                  >
-                    {testing ? 'Testen…' : 'Test verbinding'}
-                  </button>
-                </div>
-                <div style={{ fontSize: 11.5, marginTop: 6, lineHeight: 1.5, color: testResult ? (testResult.ok ? 'var(--green-dark)' : 'var(--red, #c0392b)') : 'var(--muted)' }}>
-                  {testResult
-                    ? testResult.text
-                    : 'Opslaan stuurt de gegevens door naar de engine; de test controleert de dáár opgeslagen verbinding.'}
-                </div>
+                <input
+                  value={businessAccountId}
+                  disabled={busy}
+                  onChange={e => setBusinessAccountId(e.target.value)}
+                  placeholder="Instagram business account ID"
+                  style={inputStyle}
+                />
+              </div>
+
+              {/* INSTAGRAM ACTIE KNOPPEN */}
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  className="btn"
+                  disabled={busy || !accessToken.trim() || !businessAccountId.trim()}
+                  onClick={saveInstagram}
+                  style={{ whiteSpace: 'nowrap' }}
+                >
+                  Opslaan
+                </button>
+                <button
+                  className="btn btn-small"
+                  disabled={testing}
+                  onClick={testConnection}
+                  style={{ whiteSpace: 'nowrap' }}
+                >
+                  {testing ? 'Testen…' : 'Test verbinding'}
+                </button>
+              </div>
+              <div style={{ fontSize: 11.5, marginTop: -8, lineHeight: 1.5, color: testResult ? (testResult.ok ? 'var(--green-dark)' : 'var(--red, #c0392b)') : 'var(--muted)' }}>
+                {testResult
+                  ? testResult.text
+                  : 'Opslaan stuurt de gegevens door naar de engine; de test controleert de dáár opgeslagen verbinding.'}
               </div>
             </>
           )}
