@@ -107,7 +107,7 @@ export default function WordPressPanel({
       setPassword('');
       setTestResult(null);
       setHasChanges(false);
-      toast('Instellingen opgeslagen', { kind: 'success' });
+      toast('Instellingen opgeslagen', { kind: 'ok' });
       onChanged();
     } finally {
       setBusy(false);
@@ -242,3 +242,4 @@ export default function WordPressPanel({
     </div>
   );
 }
+
