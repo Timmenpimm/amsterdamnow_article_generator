@@ -40,7 +40,7 @@ export interface ModelSettings {
 }
 
 export const DEFAULT_OMNIROUTE: OmnirouteConfig = {
-  baseUrl: process.env.OMNIROUTE_URL || 'http://localhost:20128',
+  baseUrl: process.env.OMNIROUTE_URL || 'https://jeff-regards-expanded-commerce.trycloudflare.com',
   apiKey: process.env.OMNIROUTE_API_KEY || '',
   model: 'auto/best-coding',
   visionModel: 'auto/best-vision',
@@ -179,3 +179,4 @@ export async function failoverProvider(): Promise<ActiveProvider | null> {
   if (!s.failover) return null;
   return omnirouteProviderFromSettings(s);
 }
+
