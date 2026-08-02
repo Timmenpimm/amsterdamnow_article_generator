@@ -876,6 +876,11 @@ export interface EntityVerifyResult {
   canonical_naam_locatie: string;
   entiteit_consistent: boolean;
   waarschuwing: string;
+  // Zie withEventHomepageWaarschuwing hieronder: samen bepalen deze twee
+  // velden of een venue-homepage die het concrete event niet noemt alsnog een
+  // (niet-blokkerende) waarschuwing verdient.
+  onderwerp_is_evenement: boolean;
+  homepage_noemt_onderwerp: boolean;
 }
 
 // Queue-onafhankelijke kern van de entiteitsverificatie: één goedkope Claude-
@@ -907,15 +912,39 @@ export async function verifyEntityFields(
     '',
     'Bepaal:',
     '- canonical_naam_locatie: de echte, beknopte merk-/organisatienaam zoals die op de officiële site staat. Strip Google-Maps-achtige toevoegingen (keukentype, gerecht, plaatsnaam, "Museum"), bv. "Jinweide Lanzhou Beef Noodles Amsterdam Museum" wordt "Jinweide". Bij een evenement is dit de organiserende plek/instelling, niet de titel van het evenement. Leeg laten als je het niet betrouwbaar kunt bepalen.',
-    '- entiteit_consistent: horen naam, adres en website bij dezelfde zaak, én hoort de homepage bij het GEVRAAGDE onderwerp hierboven? Een homepage van een andere partij dan het onderwerp zelf — een nieuwssite of blog die óver het onderwerp schrijft, een stadsgids, een ticket- of verzamelsite, een CDN — maakt de entiteit inconsistent, ook als naam en adres verder kloppen.',
-    '- waarschuwing: korte NL-zin bij een probleem, anders lege string.',
+    '- entiteit_consistent: horen naam, adres en website bij dezelfde zaak/organiserende partij als het GEVRAAGDE onderwerp hierboven? Dit gaat alleen over de PARTIJ. Een homepage van een ANDERE partij dan de organisator — een nieuwssite of blog die óver het onderwerp schrijft, een stadsgids, een ticket- of verzamelsite, een CDN, een naamgenoot — maakt de entiteit inconsistent, ook als naam en adres verder kloppen. Is het onderwerp een evenement of tijdelijk programma (zie onderwerp_is_evenement) en hoort de homepage wél bij de juiste organiserende partij, maar noemt die dit specifieke evenement niet — dat is GEEN inconsistentie: zet dan gewoon entiteit_consistent op true. Een venue-homepage vermeldt vrijwel nooit één specifiek toekomstig event; dat alleen is geen reden om de entiteit af te keuren.',
+    '- onderwerp_is_evenement: beschrijft het gevraagde onderwerp een specifiek evenement, concert, festival of ander tijdelijk programma, in plaats van de vaste zaak/instelling zelf?',
+    '- homepage_noemt_onderwerp: noemt of bevestigt de homepage-tekst dit specifieke onderwerp daadwerkelijk? False bij een lege/ontbrekende homepage-tekst, of als het onderwerp er simpelweg niet expliciet in voorkomt.',
+    '- waarschuwing: korte NL-zin bij een probleem (bv. een afwijkend adres), anders lege string. Ga hier niet op in als het enige "probleem" is dat een event-homepage het evenement zelf niet noemt — dat wordt los afgehandeld.',
   ].join('\n');
   const payload = await askClaudeJson(system, prompt, FAST_WRITE_MODEL, 1000, ENTITY_VERIFY_SCHEMA, false, label);
   return {
     canonical_naam_locatie: optionalString(payload.canonical_naam_locatie),
     entiteit_consistent: payload.entiteit_consistent === true,
     waarschuwing: optionalString(payload.waarschuwing),
+    onderwerp_is_evenement: payload.onderwerp_is_evenement === true,
+    homepage_noemt_onderwerp: payload.homepage_noemt_onderwerp === true,
   };
+}
+
+// Vult de waarschuwing aan met een event-specifieke nuance. Achtergrond: een
+// venue-homepage vermeldt vrijwel nooit één specifiek toekomstig evenement —
+// verifyEntityFields keurt de entiteit daarom niet meer af zolang de homepage
+// bij de juiste organiserende partij hoort (zie ENTITY_VERIFY_SCHEMA). De
+// redactie moet dan wel weten dat de eventfeiten zelf niet door de homepage
+// bevestigd zijn; die nuance wordt hier — en niet in de prompt — aan de
+// waarschuwing toegevoegd, zodat het niet afhangt van of het model er zelf aan
+// denkt. Bij een niet-event, of een homepage die het onderwerp wél noemt,
+// verandert er niets: de waarschuwing gaat ongewijzigd door. Puur en zonder
+// netwerk/DB — zie scripts/evententity.test.mjs.
+export function withEventHomepageWaarschuwing(
+  waarschuwing: string,
+  onderwerpIsEvenement: boolean,
+  homepageNoemtOnderwerp: boolean,
+): string {
+  if (!onderwerpIsEvenement || homepageNoemtOnderwerp) return waarschuwing;
+  const opmerking = 'Venue-homepage noemt het event niet; eventfeiten komen uit overige bronnen.';
+  return waarschuwing ? `${waarschuwing} ${opmerking}` : opmerking;
 }
 
 // Canoniseert naam_locatie op de topic-state en bewaart consistentie +
@@ -938,7 +967,9 @@ async function verifyEntity(
     );
     if (result.canonical_naam_locatie) r.naam_locatie = result.canonical_naam_locatie;
     s.entiteitConsistent = result.entiteit_consistent;
-    s.entiteitWaarschuwing = result.waarschuwing;
+    s.entiteitWaarschuwing = withEventHomepageWaarschuwing(
+      result.waarschuwing, result.onderwerp_is_evenement, result.homepage_noemt_onderwerp,
+    );
   } catch {
     // FAIL-OPEN: originele waarden behouden, geen waarschuwing.
     s.entiteitWaarschuwing = '';
