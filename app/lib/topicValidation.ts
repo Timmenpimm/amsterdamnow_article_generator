@@ -1,10 +1,14 @@
 // Pre-submission validatie om veelvoorkomende invoerfouten te vangen vóórdat
 // het onderwerp in de wachtrij komt. Bespaart API-kosten en wachttijd door
 // probleemtopics direct af te keuren met concrete feedback voor de redactie.
+//
+// GEEN 'use client' hier: dit is een puur hulpbestand zonder React/DOM, dat
+// zowel door client-componenten (Pipeline, TopicForm) als door server-routes
+// (topics POST/PATCH) wordt geïmporteerd. Met de directive maakt Next er in
+// server-context een client-reference van en faalt elke aanroep met een 500 —
+// precies wat de bord-herstelactie "Instellen + retry" brak.
 
-'use client';
-
-export type ValidationResult = 
+export type ValidationResult =
   | { valid: true }
   | { valid: false; reason: string; suggestion?: string; severity: 'error' | 'warning' };
 
