@@ -163,6 +163,15 @@ export async function activeProvider(): Promise<ActiveProvider> {
   return s.provider === 'omniroute' ? omnirouteProvider(s.omniroute) : anthropicProvider();
 }
 
+// Directe Anthropic-provider, ongeacht de actieve instelling. Gebruikt door
+// claude.ts als failover-doel wanneer Omniroute de actieve provider is maar
+// een infra-fout geeft (onbereikbaar/timeout/5xx van de gateway zelf) — zie
+// isOmnirouteInfraError in claude.ts. Bouwt geen nieuwe client, hergebruikt
+// dezelfde anthropicProvider() als het normale directe pad.
+export function directAnthropicProvider(): ActiveProvider {
+  return anthropicProvider();
+}
+
 // Bouwt een Omniroute-ActiveProvider uit de gegeven instellingen, óók als de
 // actieve provider 'anthropic' is. Nodig voor de automatische failover in
 // claude.ts: die moet een Omniroute-route kunnen samenstellen terwijl Anthropic
