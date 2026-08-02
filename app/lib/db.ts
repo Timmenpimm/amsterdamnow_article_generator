@@ -248,6 +248,13 @@ async function initSqlite(): Promise<DB> {
   for (const col of ['error_kind TEXT', 'infra_retries INTEGER NOT NULL DEFAULT 0']) {
     try { db.exec(`ALTER TABLE topics ADD COLUMN ${col}`); } catch { /* kolom bestaat al */ }
   }
+  // Migratie voor databases van vóór het website-veld: de redactie kan bij
+  // intake een officiële website meegeven (zie topicValidation.ts en de
+  // handmatige-invoer-UI). Die URL is dan autoritatief voor stepResearch/
+  // verifyEntity in writer.ts, in plaats van Tavily's eigen detectie.
+  for (const col of [`website TEXT NOT NULL DEFAULT ''`]) {
+    try { db.exec(`ALTER TABLE topics ADD COLUMN ${col}`); } catch { /* kolom bestaat al */ }
+  }
   return {
     async all(q, p = []) { const [s, sp] = toSqlite(q, p); return db.prepare(s).all(...sp); },
     async get(q, p = []) { const [s, sp] = toSqlite(q, p); return db.prepare(s).get(...sp); },
@@ -450,6 +457,9 @@ async function initPostgres(): Promise<DB> {
   // MAX_INFRA_RETRIES).
   await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS error_kind TEXT`);
   await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS infra_retries INTEGER NOT NULL DEFAULT 0`);
+  // Migratie voor databases van vóór het website-veld: zie toelichting bij de
+  // SQLite-migratie hierboven.
+  await pool.query(`ALTER TABLE topics ADD COLUMN IF NOT EXISTS website TEXT NOT NULL DEFAULT ''`);
   return {
     async all(q, p = []) { return (await pool.query(q, p)).rows; },
     async get(q, p = []) { return (await pool.query(q, p)).rows[0]; },
@@ -523,10 +533,16 @@ export async function listTopics(): Promise<Topic[]> {
 // titels in deze set worden ingevoegd met dedup_override=1, zodat de
 // herkans-check vlak vóór createDraft() ze niet nog een keer blokkeert. Zie
 // docs/superpowers/specs/2026-07-21-wp-dedup-index-design.md §4.
+//
+// `websites` (lowercase+trim titel → officiële website): door de redactie bij
+// handmatige invoer meegegeven URL, zie app/api/topics/route.ts en
+// TopicForm.tsx. Bulk-import en de bronscanner geven hier nooit iets voor mee
+// — die laten het veld leeg, exact het gedrag van vóór dit veld bestond.
 export async function addTopics(
   titles: string[],
   forceTitles: Set<string> = new Set(),
   seeds: Map<string, { start: string; eind: string }> = new Map(),
+  websites: Map<string, string> = new Map(),
 ): Promise<{ added: Topic[]; skipped: string[] }> {
   const db = await getDb();
   const rows = await db.all(`SELECT lower(trim(title)) AS t FROM topics WHERE status IN ('queued','writing','failed')`);
@@ -548,9 +564,10 @@ export async function addTopics(
     // zodat writer.ts stepResearch 'm als gezaghebbende event-datum oppikt.
     const seed = seeds.get(key);
     const listState = seed ? JSON.stringify({ seedStartDatum: seed.start, seedEindDatum: seed.eind }) : null;
+    const website = (websites.get(key) || '').trim();
     const rec = await db.get(
-      `INSERT INTO topics (title, status, phase, list_state, sort, created_at, dedup_override) VALUES ($1, 'queued', 'research', $2, $3, $4, $5) RETURNING *`,
-      [title, listState, sort, now(), override]
+      `INSERT INTO topics (title, status, phase, list_state, sort, created_at, dedup_override, website) VALUES ($1, 'queued', 'research', $2, $3, $4, $5, $6) RETURNING *`,
+      [title, listState, sort, now(), override, website]
     );
     added.push(rec as Topic);
   }
@@ -560,6 +577,14 @@ export async function addTopics(
 export async function updateTopicTitle(id: number, title: string) {
   const db = await getDb();
   await db.run('UPDATE topics SET title = $1 WHERE id = $2', [title.trim(), id]);
+}
+
+// Bord-herstelactie na een mislukte entiteitscontrole (zie writer.ts
+// stepResearch / resolveEntityGate): de redactie geeft alsnog de juiste
+// officiële website op. Lege string is toegestaan (veld weer wissen).
+export async function setTopicWebsite(id: number, website: string) {
+  const db = await getDb();
+  await db.run('UPDATE topics SET website = $1 WHERE id = $2', [website.trim(), id]);
 }
 
 export async function deleteTopic(id: number) {

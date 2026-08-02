@@ -450,7 +450,13 @@ async function stepResearch(topic: Topic, s: StandaardState): Promise<StandaardS
       `Onderwerp draagt de naam van concurrent ${concurrentInTopic}. Dit is een overgenomen bronkop, geen eigen onderwerp — herformuleer het naar de zaak of het event zelf, of verwijder het uit de wachtrij.`
     );
   }
-  let { sources, officialUrl } = await researchWithTavily(topic.title);
+  // Door de redactie opgegeven officiële website (topic.website): autoritatief
+  // voor deze research, zie researchWithTavily (forcedOfficialUrl) en de
+  // entiteitspoort verderop in deze functie (resolveEntityGate).
+  const forcedWebsite = optionalString(topic.website) || null;
+  let { sources, officialUrl } = await researchWithTavily(
+    topic.title, forcedWebsite ? { forcedOfficialUrl: forcedWebsite } : undefined,
+  );
   // Research = feiten extraheren uit aangeleverde bronnen, geen creatief werk:
   // Sonnet 5 volstaat en kost een fractie van Opus (zie FAST_WRITE_MODEL in
   // lib/claude.ts). Bronnen worden hier ook getrimd op 8000 tekens — relevante
@@ -487,7 +493,12 @@ async function stepResearch(topic: Topic, s: StandaardState): Promise<StandaardS
   // ongerelateerde origin onvoorwaardelijk overschrijven was precies hoe blogs
   // en gidsen van derden als "officiële site" in drafts belandden.
   const naamLocatie = optionalString((research as Record<string, unknown>).naam_locatie);
-  if (officialUrl && originHoortBijOnderwerp(officialUrl, topic.title, naamLocatie)) {
+  if (forcedWebsite && officialUrl) {
+    // Redactie-aangeleverde site is de autoriteit: altijd overnemen, geen
+    // domeinlabel-matchcheck (originHoortBijOnderwerp) nodig — dat is precies
+    // de check die de redactie hier bewust omzeilt.
+    (research as Record<string, unknown>).website = officialUrl;
+  } else if (officialUrl && originHoortBijOnderwerp(officialUrl, topic.title, naamLocatie)) {
     (research as Record<string, unknown>).website = officialUrl;
   }
   s.research = research;
@@ -513,7 +524,10 @@ async function stepResearch(topic: Topic, s: StandaardState): Promise<StandaardS
   // opnieuw (met dezelfde verwantschapspoort) en beoordeel de entiteit
   // nogmaals. entiteitZoekAttempts bewaakt dat dit max één keer gebeurt;
   // best-effort: faalt de herkansing zelf, dan beslist de poort hieronder.
-  if (s.entiteitConsistent === false && !(s.entiteitZoekAttempts ?? 0)) {
+  // Geen herkansing als de redactie al een website opgaf: een nieuwe
+  // Tavily-zoekronde zou die opgave juist weer kunnen overschrijven, en de
+  // redactie is hier al de bron van waarheid (zie de poort hieronder).
+  if (s.entiteitConsistent === false && !(s.entiteitZoekAttempts ?? 0) && !forcedWebsite) {
     s.entiteitZoekAttempts = 1;
     try {
       const rr = research as Record<string, unknown>;
@@ -534,11 +548,11 @@ async function stepResearch(topic: Topic, s: StandaardState): Promise<StandaardS
       }
     } catch { /* herkansing is best-effort; de poort hieronder beslist */ }
   }
-  if (s.entiteitConsistent === false) {
-    throw new Error(
-      `Entiteitscontrole faalt: ${s.entiteitWaarschuwing || 'naam, adres en website lijken niet bij dezelfde zaak te horen'}. Controleer het onderwerp handmatig.`
-    );
-  }
+  // Bij een door de redactie opgegeven website is de redactie de autoriteit:
+  // resolveEntityGate degradeert een mismatch dan tot een gelogde waarschuwing
+  // in plaats van deze harde fail (zie de functie hieronder voor de precieze
+  // regel en scripts/topicwebsite.test.mjs voor de dekking).
+  s.entiteitWaarschuwing = resolveEntityGate(s.entiteitConsistent, s.entiteitWaarschuwing || '', forcedWebsite);
   // Poort 2 — de entiteit. tavily.ts weert concurrent-bronnen al, maar de
   // research kan een concurrent nog steeds als onderwerp aanwijzen (hun naam
   // staat in een citaat, een tip-vermelding of een tweedehands bron). Dan is
@@ -929,6 +943,28 @@ async function verifyEntity(
     // FAIL-OPEN: originele waarden behouden, geen waarschuwing.
     s.entiteitWaarschuwing = '';
   }
+}
+
+// Beslist wat een mislukte entiteitscontrole betekent voor de pipeline: zonder
+// een door de redactie opgegeven website (forcedWebsite) is een expliciete
+// "false" nog altijd de harde fail van vóór dit veld bestond — Tavily's eigen
+// detectie kan de verkeerde site hebben gekozen, dus het onderwerp moet
+// handmatig gecontroleerd worden. Gaf de redactie zelf een website op, dan is
+// zíj de autoriteit: dezelfde mismatch wordt dan een gelogde waarschuwing en
+// de pipeline gaat door. Puur en los van StandaardState/Topic zodat dit zonder
+// DB of netwerk te testen is (zie scripts/topicwebsite.test.mjs).
+export function resolveEntityGate(
+  consistent: boolean | undefined,
+  waarschuwing: string,
+  forcedWebsite: string | null,
+): string {
+  if (consistent !== false) return waarschuwing;
+  if (forcedWebsite) {
+    return `Redactie gaf ${forcedWebsite} op als officiële website; de entiteitscontrole vond een afwijking (${waarschuwing || 'naam, adres en website lijken niet bij dezelfde zaak te horen'}), maar de pipeline gaat door omdat de redactie de bron heeft bevestigd.`;
+  }
+  throw new Error(
+    `Entiteitscontrole faalt: ${waarschuwing || 'naam, adres en website lijken niet bij dezelfde zaak te horen'}. Controleer het onderwerp handmatig.`
+  );
 }
 
 // Blijft de research ook ná de aanvullende ronde onder de drempel, dan mag het

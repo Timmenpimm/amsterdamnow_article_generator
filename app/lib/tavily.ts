@@ -151,9 +151,14 @@ function titleMatchesTopic(result: TavilyResult, tokens: string[]): boolean {
 // openingstijden") in plaats van breed op het onderwerp, met een kleinere
 // resultatenset omdat er dan al bronnen liggen. Zonder opts is het gedrag
 // exact als voorheen — de eerste ronde mag hier niets van merken.
+// `forcedOfficialUrl`: door de redactie opgegeven officiële website
+// (topic.website, zie writer.ts stepResearch). Anders dan de detectie-ladder
+// hieronder is dit géén gok — de URL wordt zonder matchcheck als kandidaat
+// gebruikt, en een mislukte extractie is dan geen stille terugval maar een
+// fout die de aanroeper moet zien (zie de catch bij `chosen` hieronder).
 export async function researchWithTavily(
   topic: string,
-  opts?: { query?: string; maxResults?: number; detectOfficial?: boolean },
+  opts?: { query?: string; maxResults?: number; detectOfficial?: boolean; forcedOfficialUrl?: string },
 ): Promise<ResearchResult> {
   const apiKey = await getTavilyApiKey();
   if (!apiKey) throw new Error('Tavily is niet geconfigureerd. Voeg TAVILY_API_KEY toe aan de omgevingsvariabelen.');
@@ -231,12 +236,17 @@ export async function researchWithTavily(
   const resultUrls = results.map(r => r.url).filter((u): u is string => !!u);
   const geplakteUrl = topicUrl && !isAggregatorHost(topicUrl.href) && !competitorInHost(topicUrl.href)
     ? topicUrl.href : null;
-  const chosen = opts?.query && !opts.detectOfficial
-    ? null
-    : geplakteUrl
-      ?? resultUrls.find(u => looksOfficial(u, tokens))
-      ?? results.find(r => titleMatchesTopic(r, tokens))?.url
-      ?? null;
+  // Een door de redactie opgegeven website wint van de hele detectie-ladder:
+  // die is geverifieerd bij intake (topicValidation.ts) en hoeft niet nog eens
+  // te matchen op domeinlabel of paginatitel.
+  const chosen = opts?.forcedOfficialUrl
+    ? opts.forcedOfficialUrl
+    : opts?.query && !opts.detectOfficial
+      ? null
+      : geplakteUrl
+        ?? resultUrls.find(u => looksOfficial(u, tokens))
+        ?? results.find(r => titleMatchesTopic(r, tokens))?.url
+        ?? null;
   let officialUrl: string | null = null;
   let homepage: ResearchSource | null = null;
   if (chosen) {
@@ -245,11 +255,19 @@ export async function researchWithTavily(
       const text = (await extractPageText(origin)).trim();
       // officialUrl pas ná een geslaagde, niet-lege extract: een onleesbare of
       // lege pagina mag niet alsnog de canonieke website van het topic worden.
-      if (text) {
-        officialUrl = origin;
-        homepage = { title: `Officiële site — ${new URL(origin).hostname.replace(/^www\./, '')}`, url: origin, content: text.slice(0, 12_000) };
+      if (!text) throw new Error('lege pagina');
+      officialUrl = origin;
+      homepage = { title: `Officiële site — ${new URL(origin).hostname.replace(/^www\./, '')}`, url: origin, content: text.slice(0, 12_000) };
+    } catch {
+      if (opts?.forcedOfficialUrl) {
+        // Geen best-effort-terugval: de redactie gaf deze site expliciet op,
+        // dus onbereikbaar/onleesbaar is een echte fout (zie stepResearch).
+        throw new Error(
+          `De door de redactie opgegeven website (${opts.forcedOfficialUrl}) is niet bereikbaar of geeft geen leesbare content. Controleer de URL of verwijder 'm van het onderwerp.`
+        );
       }
-    } catch { /* best-effort: val terug op de zoekresultaten */ }
+      /* best-effort: val terug op de zoekresultaten */
+    }
   }
 
   // Dedupliceer op URL (zonder trailing slash) zodat de site-root niet dubbel

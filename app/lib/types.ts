@@ -84,6 +84,13 @@ export interface Topic {
   // leases), cap MAX_INFRA_RETRIES in lib/db.ts. Los van `attempts`, dat bij
   // elke fase-claim wordt opgehoogd en dus fase-stappen telt.
   infra_retries?: number;
+  // Door de redactie opgegeven officiële website (handmatige invoer, of de
+  // bord-herstelactie na "Entiteitscontrole faalt"). Leeg/afwezig = geen
+  // opgave, dan detecteert Tavily zelf de officiële site (ongewijzigd
+  // gedrag). Gevuld: stepResearch in writer.ts gebruikt 'm als autoritatieve
+  // officialUrl en de entiteitscontrole degradeert een mismatch tot
+  // waarschuwing in plaats van een harde fail (zie resolveEntityGate).
+  website?: string;
 }
 
 export function parseListState(topic: Topic): ListState | null {

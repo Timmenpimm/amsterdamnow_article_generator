@@ -94,7 +94,6 @@ export function validateTopicBasic(title: string, website: string): ValidationRe
     }
 
     // 4. Als website is ingevuld, valideer deze
-  if (cleanWebsite) {
     // 4a. Website moet http of https zijn
     if (!['http:', 'https:'].includes(url.protocol)) {
       return {
