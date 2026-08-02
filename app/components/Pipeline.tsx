@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Article, BoardData, Topic } from '@/lib/types';
 import { articlePhase, imageCount, listImagesReady, parseListState, REQUIRED_IMAGES } from '@/lib/types';
 import { classifyError, uitlegVoorKind, type ErrorKind } from '@/lib/errorKind';
+import { validateTopicBasic, formatValidationMessage, isFatalValidation } from '@/lib/topicValidation';
 import TopBar from './TopBar';
 import TopicForm from './TopicForm';
 import AuditPanel, { runTime, verdictStyle } from './AuditPanel';
@@ -192,6 +193,11 @@ export default function Pipeline() {
   const [reviewTopicId, setReviewTopicId] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editValue, setEditValue] = useState('');
+  // Bord-herstelactie na "Entiteitscontrole faalt": per topic de ingevoerde
+  // "juiste website" (zie fixWebsiteAndRetry hieronder) en welk topic op dit
+  // moment die actie aan het uitvoeren is (voor de knop-disabled-state).
+  const [websiteFix, setWebsiteFix] = useState<Record<number, string>>({});
+  const [websiteFixBusyId, setWebsiteFixBusyId] = useState<number | null>(null);
   const [writingNow, setWritingNow] = useState(false);
   const writingRef = useRef(false);
   const [autoOn, setAutoOn] = useState(false);
@@ -417,6 +423,39 @@ export default function Pipeline() {
     });
     toast('Opnieuw in wachtrij gezet — bovenaan');
     load();
+  }
+
+  // Bord-herstelactie na "Entiteitscontrole faalt": de redactie geeft alsnog
+  // de juiste officiële website op. Dezelfde basisvalidatie als bij
+  // handmatige invoer (geen aggregators/concurrenten) voorkomt dat een
+  // evident verkeerde URL de herkansing meteen weer laat stranden. Zet website
+  // én retry in één PATCH, zodat het topic met de nieuwe website bovenaan de
+  // wachtrij komt — exact zoals de gewone retryTopic hierboven.
+  async function fixWebsiteAndRetry(t: Topic) {
+    const website = (websiteFix[t.id] || '').trim();
+    if (!website) { toast('Vul eerst de juiste website in'); return; }
+    const validation = validateTopicBasic(t.title, website);
+    if (isFatalValidation(validation)) {
+      toast(formatValidationMessage(validation), { kind: 'error' });
+      return;
+    }
+    setWebsiteFixBusyId(t.id);
+    try {
+      const res = await fetch(`/api/topics/${t.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ website, action: 'retry' }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast(body.error || 'Website opslaan mislukt', { kind: 'error' });
+        return;
+      }
+      setWebsiteFix(v => { const next = { ...v }; delete next[t.id]; return next; });
+      toast('Website ingesteld — opnieuw in wachtrij gezet');
+      load();
+    } finally {
+      setWebsiteFixBusyId(null);
+    }
   }
 
   async function saveEdit(t: Topic) {
@@ -1122,6 +1161,35 @@ export default function Pipeline() {
                   >
                     {t.error_step ? `${t.error_step} · ` : ''}{t.error || 'Onbekende fout'}
                   </div>
+                  {/* Herstelactie specifiek voor een mislukte entiteitscontrole
+                      (writer.ts resolveEntityGate): de redactie geeft de juiste
+                      officiële website op, die wordt dan de autoriteit voor de
+                      volgende poging in plaats van Tavily's eigen detectie. */}
+                  {t.error?.includes('Entiteitscontrole faalt') && (
+                    <div style={{ marginTop: 8, padding: 9, background: 'var(--card)', border: '1px solid var(--border-light)', borderRadius: 8 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--gray)', marginBottom: 6 }}>
+                        Juiste website opgeven en opnieuw proberen
+                      </div>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <input
+                          type="url"
+                          value={websiteFix[t.id] || ''}
+                          onChange={e => setWebsiteFix(v => ({ ...v, [t.id]: e.target.value }))}
+                          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); fixWebsiteAndRetry(t); } }}
+                          placeholder="https://officielewebsite.nl"
+                          style={{ flex: 1, minWidth: 0, fontSize: 12.5, padding: '7px 9px', borderRadius: 6, border: '1px solid var(--ink)', background: 'var(--panel)' }}
+                        />
+                        <button
+                          className="btn-primary"
+                          style={{ fontSize: 12.5, fontWeight: 700, padding: '7px 10px', borderRadius: 6, whiteSpace: 'nowrap' }}
+                          disabled={websiteFixBusyId === t.id}
+                          onClick={() => fixWebsiteAndRetry(t)}
+                        >
+                          {websiteFixBusyId === t.id ? 'Bezig…' : 'Instellen + retry'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   {kind === 'definitief' ? (
                     <>
                       {/* Bewuste redactionele poort (event voorbij, duplicaat):

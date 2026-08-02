@@ -25,16 +25,20 @@ export async function POST(req: NextRequest) {
   // Voor bulk-import (bronnenscanner): geen validatie, oude gedrag behouden
   const skipValidation = body.skipValidation === true;
   
-  // Voor handmatige invoer: valideer elk onderwerp
+  // Voor handmatige invoer: valideer elk onderwerp, en neem de opgegeven
+  // officiële website mee — die wordt hieronder per titel opgeslagen en is
+  // straks in de pipeline (writer.ts stepResearch) de autoriteit voor de
+  // entiteitscontrole. Bulk/scanner (skipValidation of meerdere titels) laat
+  // dit veld bewust leeg, zoals voorheen.
+  const website = titles.length === 1 ? (body.website?.trim() || '') : '';
   if (!skipValidation && titles.length === 1) {
     const title = titles[0];
-    const website = body.website?.trim() || '';
-    
+
     // Basisvalidatie zonder netwerk-calls (snel, binnen request)
     const validation = validateTopicBasic(title, website);
     if (!validation.valid && validation.severity === 'error') {
       return NextResponse.json(
-        { 
+        {
           error: validation.reason,
           suggestion: validation.suggestion,
           validationFailed: true
@@ -43,6 +47,9 @@ export async function POST(req: NextRequest) {
       );
     }
   }
-  
-  return NextResponse.json(await addTopics(titles));
+
+  const websites = new Map<string, string>();
+  if (website && titles.length === 1) websites.set(titles[0].toLowerCase(), website);
+
+  return NextResponse.json(await addTopics(titles, undefined, undefined, websites));
 }
