@@ -1,11 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { deleteTopic, pushTopicToTop, retryTopic, updateTopicTitle } from '@/lib/db';
+import { deleteTopic, pushTopicToTop, retryTopic, setTopicWebsite, updateTopicTitle } from '@/lib/db';
+import { validateTopicBasic } from '@/lib/topicValidation';
 
 export const dynamic = 'force-dynamic';
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const body = await req.json();
+  // Bord-herstelactie na "Entiteitscontrole faalt" (zie Pipeline.tsx): de
+  // redactie geeft de juiste officiële website op. Zelfde basisvalidatie als
+  // bij handmatige invoer (geen aggregators/concurrenten); de titel is hier
+  // niet relevant voor die check, dus een placeholder van voldoende lengte
+  // volstaat om alleen de website-regels te laten gelden.
+  if (typeof body.website === 'string') {
+    const website = body.website.trim();
+    if (website) {
+      const validation = validateTopicBasic('website-herstel', website);
+      if (!validation.valid && validation.severity === 'error') {
+        return NextResponse.json(
+          { error: validation.reason, suggestion: validation.suggestion, validationFailed: true },
+          { status: 400 }
+        );
+      }
+    }
+    await setTopicWebsite(Number(id), website);
+  }
   if (body.action === 'retry') await retryTopic(Number(id));
   if (body.action === 'top') {
     const moved = await pushTopicToTop(Number(id));
