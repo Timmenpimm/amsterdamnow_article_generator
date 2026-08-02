@@ -127,14 +127,25 @@ export const ARTICLE_SCHEMA: Record<string, unknown> = {
 // naam_locatie, adres en website bij één en dezelfde echte entiteit horen,
 // gegeven de gecrawlde officiële homepage. Alle velden verplicht; lege string is
 // toegestaan (bv. geen waarschuwing).
+//
+// onderwerp_is_evenement/homepage_noemt_onderwerp (toegevoegd i.v.m. valse
+// afkeuringen bij events, zie writer.ts withEventHomepageWaarschuwing):
+// entiteit_consistent gaat sindsdien uitsluitend over de PARTIJ (hoort de
+// homepage bij dezelfde zaak/organisator als het onderwerp, of bij een ANDERE
+// partij — nieuwssite, aggregator, naamgenoot). Of die homepage het concrete,
+// tijdelijke evenement zelf noemt is een aparte vraag: een venue-homepage
+// vermeldt vrijwel nooit één specifiek toekomstig event, dus dat mag de
+// entiteit niet meer afkeuren — het wordt hooguit een waarschuwing.
 export const ENTITY_VERIFY_SCHEMA: Record<string, unknown> = {
   type: 'object',
   additionalProperties: false,
-  required: ['canonical_naam_locatie', 'entiteit_consistent', 'waarschuwing'],
+  required: ['canonical_naam_locatie', 'entiteit_consistent', 'waarschuwing', 'onderwerp_is_evenement', 'homepage_noemt_onderwerp'],
   properties: {
     canonical_naam_locatie: { type: 'string', description: 'De echte, beknopte merk-/organisatienaam. Strip Google-Maps-achtige toevoegingen (keukentype, gerecht, plaatsnaam, "Museum"). Leeg laten als je de naam niet betrouwbaar kunt bepalen.' },
-    entiteit_consistent: { type: 'boolean', description: 'True als naam, adres en website aantoonbaar bij dezelfde zaak horen.' },
+    entiteit_consistent: { type: 'boolean', description: 'True als naam, adres en website aantoonbaar bij dezelfde zaak/organiserende partij horen als het gevraagde onderwerp. Gaat over de PARTIJ, niet over of de homepage dit specifieke evenement noemt: een homepage van de juiste venue/organisator die het concrete evenement niet vermeldt is nog steeds consistent. Alleen false bij een ANDERE partij dan het onderwerp: een nieuwssite of blog die erover schrijft, een stadsgids, een ticket- of verzamelsite, een CDN, een naamgenoot.' },
     waarschuwing: { type: 'string', description: 'Korte NL-zin als er een probleem is (bv. adres en website horen niet bij elkaar), anders lege string.' },
+    onderwerp_is_evenement: { type: 'boolean', description: 'True als het gevraagde onderwerp een specifiek evenement, concert, festival of ander tijdelijk programma beschrijft, in plaats van de vaste zaak/instelling zelf.' },
+    homepage_noemt_onderwerp: { type: 'boolean', description: 'True als de aangeleverde homepage-tekst dit specifieke onderwerp (het evenement/programma zelf) daadwerkelijk noemt of bevestigt. False bij een lege of ontbrekende homepage-tekst, of als het onderwerp er simpelweg niet in voorkomt.' },
   },
 };
 

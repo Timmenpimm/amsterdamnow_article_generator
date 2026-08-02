@@ -22,7 +22,8 @@
     "test:tokenlog": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/tokenlog.test.mjs",
     "test:listitemimages": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/listitemimages.test.mjs",
     "test:failover": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/failover.test.mjs",
-    "test:topicwebsite": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/topicwebsite.test.mjs"
+    "test:topicwebsite": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/topicwebsite.test.mjs",
+    "test:evententity": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/evententity.test.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",
