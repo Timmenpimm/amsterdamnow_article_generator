@@ -20,7 +20,8 @@
     "test:competitors": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/competitors.test.mjs",
     "test:relevance": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/relevance.test.mjs",
     "test:tokenlog": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/tokenlog.test.mjs",
-    "test:listitemimages": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/listitemimages.test.mjs"
+    "test:listitemimages": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/listitemimages.test.mjs",
+    "test:failover": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/failover.test.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",
