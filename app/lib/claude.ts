@@ -1,5 +1,6 @@
 import { activeProvider, failoverProvider, anthropicFailoverProvider, type ActiveProvider, type ProviderId } from './modelConfig';
 import { usageLine, type ClaudeUsage } from './tokenCost';
+import { conformsToSchema } from './jsonShape';
 
 // claude-sonnet-4-20250514 is met pensioen (404 sinds juni 2026); Opus 4.8 is
 // het huidige aanbevolen model. Override mogelijk via ANTHROPIC_MODEL.
@@ -378,22 +379,32 @@ async function askJsonWith(
   // pad hieronder, ook als er een schema was meegegeven.
   if (useStructured) return JSON.parse(raw);
   const parsed = extractJson(raw);
-  if (parsed) return parsed;
+  // Schemaloze provider + schema meegegeven: de JSON kan geldig zijn maar niet
+  // aan het schema voldoen (bv. categories als string in plaats van array —
+  // gezien met het kleine lokale model, 2026-08-03). Zo'n vormfout laten we de
+  // corrigerende herkansing hieronder triggeren i.p.v. hem door te laten lekken
+  // naar een latere fase die dan pas met een cryptische validatie-fout knalt.
+  const shapeError = schema ? conformsToSchema(parsed ?? null, schema) : null;
+  if (parsed && !shapeError) return parsed;
 
   // Schemaloos vangnet — corrigerende herkansing: het model antwoordde met
-  // uitleg/redenering in lopende tekst in plaats van het gevraagde JSON-object
-  // — gebeurt af en toe, ook met een expliciete "alleen JSON"-instructie in de
-  // prompt. De eigen foute respons teruggeven en expliciet om alleen JSON
-  // vragen lost dit vrijwel altijd op, zonder dat elke aanroeper deze logica
-  // zelf hoeft te implementeren.
+  // uitleg/redenering in lopende tekst in plaats van het gevraagde JSON-object,
+  // óf met een JSON-object dat niet aan het schema voldoet — gebeurt af en toe,
+  // ook met een expliciete "alleen JSON"-instructie in de prompt. De eigen
+  // foute respons teruggeven en expliciet om alleen (correct) JSON vragen lost
+  // dit vrijwel altijd op, zonder dat elke aanroeper deze logica zelf hoeft te
+  // implementeren.
   messages.push({ role: 'assistant', content: raw });
   messages.push({
     role: 'user',
-    content: 'Dit is geen geldig JSON-object. Antwoord nu ALLEEN met het JSON-object uit de instructie hierboven — geen uitleg, geen tekst ervoor of erna, geen markdown-codeblok.',
+    content: shapeError
+      ? `Het JSON-object voldoet niet aan het gevraagde formaat: ${shapeError}. Antwoord nu ALLEEN met een correct JSON-object conform de instructie — geen uitleg, geen tekst ervoor of erna, geen markdown-codeblok.`
+      : 'Dit is geen geldig JSON-object. Antwoord nu ALLEEN met het JSON-object uit de instructie hierboven — geen uitleg, geen tekst ervoor of erna, geen markdown-codeblok.',
   });
   const retryRaw = await requestUntilDone('-json-retry');
   const retryParsed = extractJson(retryRaw);
-  if (retryParsed) return retryParsed;
+  const retryShapeError = schema ? conformsToSchema(retryParsed ?? null, schema) : null;
+  if (retryParsed && !retryShapeError) return retryParsed;
 
-  throw new Error(`Claude gaf geen geldige JSON terug, ook niet na een herkansing (respons begint met: ${retryRaw.slice(0, 120)}…)`);
+  throw new Error(`Claude gaf geen geldige JSON terug, ook niet na een herkansing${shapeError || retryShapeError ? ` (${shapeError || retryShapeError})` : ''} (respons begint met: ${retryRaw.slice(0, 120)}…)`);
 }

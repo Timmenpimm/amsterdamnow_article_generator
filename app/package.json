@@ -23,7 +23,9 @@
     "test:listitemimages": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/listitemimages.test.mjs",
     "test:failover": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/failover.test.mjs",
     "test:topicwebsite": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/topicwebsite.test.mjs",
-    "test:evententity": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/evententity.test.mjs"
+    "test:evententity": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/evententity.test.mjs",
+    "test:jsonshape": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/jsonShape.test.mjs",
+    "test:claudejson": "node --experimental-strip-types --import ./scripts/register-ts-resolve-hook.mjs scripts/claude-json.test.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",
