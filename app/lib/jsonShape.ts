@@ -47,12 +47,16 @@ export function conformsToSchema(value: unknown, schema: Record<string, unknown>
     }
   }
   if (types.includes('object')) {
-    const required = schema.required as string[] | undefined;
-    if (required) {
-      for (const key of required) {
-        if (!Object.prototype.hasOwnProperty.call(value, key)) return `${path}.${key} ontbreekt`;
-      }
-    }
+    // Bewust GEEN `required`-afdwinging: een ontbrekend veld wordt door de
+    // downstream validators netjes behandeld. Gezien op productie (2026-08-03):
+    // het kleine lokale model liet bv. `tag` weg als er geen tag pastte —
+    // singleTag() in wp.ts vangt dat op met '[]' (geen tag). Een harde
+    // required-check keurde zo'n leeg veld ten onrechte af, verspilde de
+    // corrigerende herkansing (die het model niet haalde) en liet het topic
+    // falen. De check richt zich op VORM: aanwezige velden moeten het juiste
+    // type hebben (bv. categories als string i.p.v. array — de fout die dit
+    // vangnet introduceerde). Wat écht verplicht is, bepalen de validators in
+    // writer.ts (string(), nonEmptyStrings(), validateArticle()).
     const props = (schema.properties ?? {}) as Record<string, Record<string, unknown>>;
     const obj = value as Record<string, unknown>;
     for (const key of Object.keys(props)) {

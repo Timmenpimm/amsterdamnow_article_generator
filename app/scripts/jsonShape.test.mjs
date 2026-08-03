@@ -43,16 +43,20 @@ assert.equal(conformsToSchema(ok, researchSchema), null, 'geldig object: geen fo
 assert.match(conformsToSchema({ ...ok, categories: 'Uit eten' }, researchSchema), /\$\.categories moet array zijn/);
 // Lege-array is qua vorm geldig (niet-lege-eis is downstream, nonEmptyStrings).
 assert.equal(conformsToSchema({ ...ok, categories: [] }, researchSchema), null);
-// Ontbrekend verplicht veld.
+// Ontbrekend verplicht veld: mag door de shape-check (required wordt bewust
+// niet afgedwongen — een ontbrekende tag bv. vangt singleTag() op als []);
+// downstream validators bepalen wat écht verplicht is.
 const zonderFlag = { ...ok };
 delete zonderFlag.flag;
-assert.match(conformsToSchema(zonderFlag, researchSchema), /\$\.flag ontbreekt/);
+assert.equal(conformsToSchema(zonderFlag, researchSchema), null, 'ontbrekend veld is geen vormfout');
+// Aanwezig maar verkeerd type van een verplicht veld: wél een vormfout.
+assert.match(conformsToSchema({ ...ok, flag: 'ja' }, researchSchema), /\$\.flag moet boolean zijn/);
 // quote: null mag (anyOf-null), een getal niet.
 assert.equal(conformsToSchema({ ...ok, quote: null }, researchSchema), null);
 assert.match(conformsToSchema({ ...ok, quote: 42 }, researchSchema), /\$\.quote/);
 // Array-items: verkeerd type element.
 assert.match(conformsToSchema({ ...ok, tags: ['a', 5] }, researchSchema), /\$\.tags\[1\] moet string zijn/);
-// boolean / integer / enum.
+// boolean / enum.
 assert.match(conformsToSchema({ ...ok, flag: 'ja' }, researchSchema), /\$\.flag moet boolean zijn/);
 assert.match(conformsToSchema({ ...ok, count: 2.5 }, researchSchema), /\$\.count moet integer zijn/);
 assert.match(conformsToSchema({ ...ok, status: 'cap' }, researchSchema), /\$\.status moet een van/);
