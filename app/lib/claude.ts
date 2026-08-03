@@ -92,13 +92,15 @@ async function request(body: Record<string, unknown>, prov: ActiveProvider, labe
       body: JSON.stringify(body),
       cache: 'no-store',
       // Zonder timeout kan één hangende provider-call de hele fase-stap over de
-      // 60s-functielimiet duwen: de functie wordt dan hard afgekapt en de
+      // functielimiet duwen: de functie wordt dan hard afgekapt en de
       // catch-blokken die het topic netjes op "mislukt" zetten worden nooit
-      // bereikt. 55s ligt onder die limiet en boven elke legitieme call
-      // (gemeten: de zwaarste schrijfcall haalt ~50s bij een op hol geslagen
-      // generatie), dus een hang wordt een leesbare fout in plaats van een
-      // FUNCTION_INVOCATION_TIMEOUT.
-      signal: AbortSignal.timeout(55_000),
+      // bereikt. De wachtrij-routes draaien met maxDuration=300 (zie de
+      // proces/worker-routes): 250s ligt daar ruim onder en boven elke
+      // legitieme call. Die ruimte is nodig sinds de Omniroute-gateway achter
+      // een lokaal model draait (~56 tok/s): een heel artikel kost daar
+      // makkelijk 100-200s, waar de oude 55s-limiet een artikel stelselmatig
+      // afkapte (of de call als "onbereikbaar" afbrak).
+      signal: AbortSignal.timeout(250_000),
     });
   } catch (e) {
     // Meest voorkomende Omniroute-fout: de gateway draait niet of is (op
@@ -315,9 +317,13 @@ async function askJsonWith(
     // gezien op productie: het model liep hier soms tot 58s over voordat de
     // limiet werd geraakt, wat de 60s-functielimiet in gevaar bracht. Direct
     // falen i.p.v. de afgekapte tekst te laten stranden op een JSON-parsefout
-    // (die alsnog een 2e, even lange poging zou triggeren).
-    if (response.stop_reason === 'max_tokens') {
-      throw new Error(`Claude-respons afgekapt op max_tokens (${maxTokens}) — antwoord werd te lang.`);
+    // (die alsnog een 2e, even lange poging zou triggeren). Anthropic meldt
+    // dit als stop_reason 'max_tokens'; de Omniroute-gateway rapporteert
+    // hetzelfde als 'length' (OpenAI-stijl). Zonder 'length' te herkennen
+    // glipt een afgekapte respons door deze guard heen en faalt het
+    // extractJson-vangnet daarna (plus een tweede, even afgekapte herkansing).
+    if (response.stop_reason === 'max_tokens' || response.stop_reason === 'length') {
+      throw new Error(`Claude-respons afgekapt op max_tokens (${maxTokens}) — het antwoord werd te lang.`);
     }
     return textFrom(response);
   }

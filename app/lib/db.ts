@@ -29,9 +29,11 @@ const PG_URL = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || proces
 // legitiem lopende stap dus sowieso uiterlijk na 60s. Een lease van 5 minuten
 // betekende dat één weggevallen tik (afgesloten tabblad, netwerkhikje) de
 // hele wachtrij tot 5 minuten blokkeerde, want er mag maar 1 taak tegelijk
-// 'writing' zijn. 90s laat ruim marge over de 60s-limiet zonder dat gebruikers
-// het gevoel krijgen dat de wachtrij "hangt".
-const JOB_LEASE_MS = 90 * 1000;
+// 'writing' zijn. De lease moet nu ruim boven de 300s-functielimiet liggen
+// (zie de proces/worker-routes): een fase-stap van een lokaal Omniroute-model
+// kost makkelijk 100-200s, en die mag nooit als "stale" worden teruggegooid
+// terwijl hij nog legitiem draait. 330s = 300s limiet + marge.
+const JOB_LEASE_MS = 330 * 1000;
 // Cap op transiënte herkansingen (infra-fouten én verlopen leases) per topic.
 // Bewust een eigen teller (kolom infra_retries), NIET het bestaande
 // `attempts`-veld: attempts wordt bij ELKE fase-claim opgehoogd (zie

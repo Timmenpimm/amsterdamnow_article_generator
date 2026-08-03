@@ -28,10 +28,14 @@ import { competitorInTekst } from './competitors';
 // De schrijfcall denkt bewust NIET (zie lib/claude.ts): op productie getest
 // (2026-07-20) kapte adaptive thinking + structured outputs élk artikel af,
 // zelfs op 4500 tokens. Zonder thinking is een artikel ~1100 output-tokens;
-// 4500 geeft ruim marge voor lange legitieme artikelen terwijl een op hol
-// geslagen generatie (~50s bij ~90 tokens/s) nog net binnen de
-// 60s-functielimiet stopt. De max_tokens-throw in claude.ts is het vangnet.
-const WRITE_MAX_TOKENS = 4500;
+// 4500 gaf marge op het snelle directe Anthropic-pad. Sinds Omniroute achter
+// een lokaal model draait (~56 tok/s) is de output ruim groter: de cap van
+// 4500 werd dáár structureel geraakt (stop_reason 'length'), waardoor hele
+// artikelen als "geen geldige JSON" faalden. Met maxDuration=300 (zie de
+// proces/worker-routes) en een fetch-timeout van 250s past 8000 tokens (~140s)
+// ruim binnen het budget — ook voor een lang artikel van het trage model.
+// De max_tokens-throw in claude.ts is het vangnet.
+const WRITE_MAX_TOKENS = 8000;
 // Maximaal aantal herschrijfrondes na de eerste schrijfpoging.
 const MAX_SCHRIJF_HERKANSINGEN = 2;
 // Hoeveel bronnen en hoeveel tekst per bron er mee mogen naar de schrijffase.
