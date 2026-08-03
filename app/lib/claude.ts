@@ -169,8 +169,46 @@ function textFrom(response: ClaudeResponse): string {
 // parsen (na het strippen van een eventueel markdown-codeblok), anders het
 // object tussen de eerste { en de laatste } isoleren (voor het geval er
 // tekst omheen staat). Geeft null als er geen geldig object in zit.
+// Repareert ontsnappingsloze control karakters die het lokale Omniroute-model
+// (huihui-qwen3.5-35b) in JSON-strings zet (letterlijke newlines/tabs/CR in
+// content-tekst). Die zijn in JSON ongeldig en laten JSON.parse klappen, ook na
+// het isoleren van het object. Loop met een string-state-machine: buiten een
+// string onveranderd doorgeven, binnen een string elke control char (<0x20)
+// vervangen door zijn escaped vorm (\\n, \\t, \\r of \\uXXXX).
+function repairControlChars(s: string): string {
+  let out = '';
+  let inString = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (inString) {
+      if (c === '\\') {
+        out += c + (s[i + 1] ?? '');
+        i++;
+        continue;
+      }
+      if (c === '"') {
+        inString = false;
+        out += c;
+        continue;
+      }
+      const code = c.charCodeAt(0);
+      if (code < 0x20) {
+        out += code === 0x0a ? '\\n' : code === 0x0d ? '\\r' : code === 0x09 ? '\\t' : `\\u${code.toString(16).padStart(4, '0')}`;
+        continue;
+      }
+      out += c;
+    } else if (c === '"') {
+      inString = true;
+      out += c;
+    } else {
+      out += c;
+    }
+  }
+  return out;
+}
+
 function extractJson(raw: string): Record<string, unknown> | null {
-  const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+  const cleaned = repairControlChars(raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, ''));
   try {
     return JSON.parse(cleaned);
   } catch { /* probeer te isoleren */ }
@@ -191,6 +229,11 @@ function extractJson(raw: string): Record<string, unknown> | null {
 // resultaten. Eén zo'n URL liet de hele batch-call klappen. De aanroeper
 // haalt de beelden dus zelf op en levert base64 aan.
 export type ClaudeImage = { media_type: string; data: string };
+
+// Extractie van JSON uit een modelrespons, geëxporteerd voor de hermetische
+// test (scripts/claude-json.test.mjs). Nieuwe responsvormen uitproberen via
+// die test i.p.v. live op de schrijffase.
+export { extractJson };
 
 // Structured outputs van de Messages API: met output_config.format garandeert
 // de API dat het (enige) text-block geldige JSON is conform het schema — dus
