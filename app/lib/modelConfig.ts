@@ -189,3 +189,19 @@ export async function failoverProvider(): Promise<ActiveProvider | null> {
   return omnirouteProviderFromSettings(s);
 }
 
+// Spiegelbeeld van failoverProvider(): geeft de directe Anthropic-provider
+// terug als automatische failover aan staat én er een ANTHROPIC_API_KEY is,
+// anders null. claude.ts gebruikt dit om na een Omniroute-infra-fout
+// (onbereikbaar/timeout/gateway-5xx) éénmalig naar het directe Anthropic-pad
+// over te schakelen. Dezelfde failover-setting geldt dus voor beide
+// richtingen: met failover uit mag een Omniroute-storing nooit stilzwijgend
+// als een Anthropic-call worden afgehandeld (die rekent bv. tegen een account
+// zonder tegoed, wat de wachtrij op "Claude-tegoed is op" zet terwijl
+// Omniroute het probleem is).
+export async function anthropicFailoverProvider(): Promise<ActiveProvider | null> {
+  const s = await getModelSettings();
+  if (!s.failover) return null;
+  if (!process.env.ANTHROPIC_API_KEY) return null;
+  return directAnthropicProvider();
+}
+

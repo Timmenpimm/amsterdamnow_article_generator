@@ -53,11 +53,12 @@ function jsonResponse(status, body) {
   return { ok: status >= 200 && status < 300, status, json: async () => body };
 }
 
-async function withOmnirouteActive(fn) {
+async function withOmnirouteActive(fn, settings = {}) {
   await saveModelSettings({
     provider: 'omniroute',
     omniroute: { baseUrl: OMNIROUTE_BASE, apiKey: '', model: 'test/model', visionModel: 'test/vision' },
     failover: true,
+    ...settings,
   });
   const originalFetch = globalThis.fetch;
   const originalWarn = console.warn;
@@ -167,6 +168,24 @@ await test('infra-fout op Omniroute zonder ANTHROPIC_API_KEY -> huidig foutgedra
     );
     assert.equal(calls, 1, 'geen retry naar Anthropic zonder API-key');
   });
+});
+
+await test('infra-fout op Omniroute + failover UIT (wel API-key) -> geen failover, fout propageert', async () => {
+  await withOmnirouteActive(async ({ setFetch }) => {
+    process.env.ANTHROPIC_API_KEY = 'test-key';
+    let calls = 0;
+    setFetch(async (url) => {
+      calls += 1;
+      if (url === OMNIROUTE_URL) throw new TypeError('fetch failed');
+      throw new Error(`onverwachte URL in test: ${url}`);
+    });
+
+    await assert.rejects(
+      () => askClaudeJson('systeem', 'vraag', 'test-model', 100),
+      /Omniroute onbereikbaar/,
+    );
+    assert.equal(calls, 1, 'geen retry naar Anthropic wanneer failover uit staat');
+  }, { failover: false });
 });
 
 // ---------- samenvatting ----------

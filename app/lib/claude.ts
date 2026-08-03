@@ -1,4 +1,4 @@
-import { activeProvider, failoverProvider, directAnthropicProvider, type ActiveProvider, type ProviderId } from './modelConfig';
+import { activeProvider, failoverProvider, anthropicFailoverProvider, type ActiveProvider, type ProviderId } from './modelConfig';
 import { usageLine, type ClaudeUsage } from './tokenCost';
 
 // claude-sonnet-4-20250514 is met pensioen (404 sinds juni 2026); Opus 4.8 is
@@ -129,11 +129,13 @@ async function request(body: Record<string, unknown>, prov: ActiveProvider, labe
 // die fout ongewijzigd):
 //   - Anthropic direct actief + credit-/rate-fout + failover aan
 //     -> éénmalig opnieuw via de Omniroute-provider (bestaand gedrag).
-//   - Omniroute actief + infra-fout (onbereikbaar/timeout/gateway-5xx) + er is
-//     een ANTHROPIC_API_KEY -> éénmalig opnieuw via het bestaande directe
-//     Anthropic-pad. Géén failover bij een 4xx van Omniroute zelf (auth-,
-//     validatie- of quotafouten — die zijn betekenisvol) en géén failover
-//     zonder Anthropic-key (dan blijft het huidige foutgedrag gewoon gelden).
+//   - Omniroute actief + infra-fout (onbereikbaar/timeout/gateway-5xx) + de
+//     failover-instelling aan -> éénmalig opnieuw via het bestaande directe
+//     Anthropic-pad (alleen als er een ANTHROPIC_API_KEY is). Géén failover bij
+//     een 4xx van Omniroute zelf (auth-, validatie- of quotafouten — die zijn
+//     betekenisvol) en géén failover met failover uit: een Omniroute-storing
+//     wordt dan netjes als infra-fout doorgegeven (herkansing i.p.v. een
+//     misleidende "Claude-tegoed is op"-pauze).
 // `run` leidt zijn model/capability-vlaggen af uit de meegegeven `prov`, dus
 // bij een retry gelden automatisch de capabilities van de nieuwe provider
 // (bv. Omniroute's ontbrekende output_config, of Anthropic's model-override).
@@ -146,9 +148,12 @@ async function withFailover<T>(run: (prov: ActiveProvider) => Promise<T>): Promi
       const fallback = await failoverProvider();
       if (fallback) return run(fallback);
     }
-    if (prov.id === 'omniroute' && isOmnirouteInfraError(e) && process.env.ANTHROPIC_API_KEY) {
-      console.warn(`[claude] Omniroute infra-fout, val terug op directe Anthropic-provider (provider=omniroute -> anthropic). Reden: ${(e as Error)?.message || e}`);
-      return run(directAnthropicProvider());
+    if (prov.id === 'omniroute' && isOmnirouteInfraError(e)) {
+      const fallback = await anthropicFailoverProvider();
+      if (fallback) {
+        console.warn(`[claude] Omniroute infra-fout, val terug op directe Anthropic-provider (provider=omniroute -> anthropic). Reden: ${(e as Error)?.message || e}`);
+        return run(fallback);
+      }
     }
     throw e;
   }
