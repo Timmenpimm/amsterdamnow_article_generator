@@ -106,6 +106,52 @@ function listProgress(t: Topic): string {
   return '';
 }
 
+// Echt fase-label voor standaard-artikelen. De board-API levert `phase` (de
+// actuele stap); het oude vaste "Research → schrijven → SEO…" zei dus niets
+// over waar een artikel nou eigenlijk stond.
+function faseLabel(t: Topic): string {
+  switch (t.phase) {
+    case 'research': return 'Onderzoeken…';
+    case 'research-aanvullend': return 'Extra onderzoek…';
+    case 'invalshoek': return 'Invalshoek bepalen…';
+    case 'schrijf': return 'Artikel schrijven…';
+    case 'schrijf-retry': return 'Herschrijven…';
+    case 'curator': return 'Stijl en feiten checken…';
+    case 'seo': return 'SEO en draft klaarzetten…';
+    case 'select': return 'Kandidaat-items selecteren…';
+    case 'verify': return 'Items verifiëren…';
+    case 'compose': return 'Artikel schrijven…';
+    case 'finalize': return 'Valideren en SEO…';
+    default: return 'Bezig met voorbereiden…';
+  }
+}
+
+function elapsedLabel(iso: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso.includes('T') || iso.includes(' ') ? iso.replace(' ', 'T') : iso);
+  if (isNaN(d.getTime())) return '';
+  const mins = Math.max(0, Math.floor((Date.now() - d.getTime()) / 60000));
+  if (mins < 1) return 'net bezig';
+  return `${mins} min bezig`;
+}
+
+// Een topic is "in de maak" wanneer het systeem er op dit moment aan werkt
+// (status 'writing') óf er halverwege aan is. Tussen fase-stappen zet de writer
+// een standaard-artikel terug op 'queued' mét een volgende fase (research-
+// aanvullend, invalshoek, schrijf, schrijf-retry, curator, seo) — zónder deze
+// regel verdwenen die onderwerpen in "In wachtrij" zonder enige aanwijzing dat
+// er al aan gewerkt werd. Nieuw toegevoegde onderwerpen (phase research/select)
+// en na een retry geresette (phase NULL) tellen pas mee zodra ze geclaimd zijn.
+function inDeMaak(t: Topic): boolean {
+  if (t.status === 'writing') return true;
+  if (t.status !== 'queued') return false;
+  if (t.started_at == null) return false;
+  if (!t.phase) return false;
+  if (t.type === 'standaard' && t.phase === 'research') return false;
+  if (t.type === 'lijst' && t.phase === 'select') return false;
+  return true;
+}
+
 // Eén complete autofill-run voor één artikel. De server doet per aanroep één
 // stap (zoeken → scoren → plaatsen, daarna per lijstitem één itemfoto), dus we
 // blijven tikken tot done. Zonder opts.force gaat er géén body mee: dat is de
@@ -357,8 +403,8 @@ export default function Pipeline() {
   }, [load]);
 
   const topics = data?.topics || [];
-  const queued = topics.filter(t => t.status === 'queued');
-  const writing = topics.filter(t => t.status === 'writing');
+  const queued = topics.filter(t => t.status === 'queued' && !inDeMaak(t));
+  const writing = topics.filter(inDeMaak);
   const review = topics.filter(t => t.status === 'review');
   const failed = topics.filter(t => t.status === 'failed');
   const reviewTopic = review.find(t => t.id === reviewTopicId) || null;
@@ -477,7 +523,7 @@ export default function Pipeline() {
   function reorderLocally(order: (queued: Topic[]) => Topic[]) {
     setData(d => {
       if (!d) return d;
-      const q = d.topics.filter(t => t.status === 'queued');
+      const q = d.topics.filter(t => t.status === 'queued' && !inDeMaak(t));
       return { ...d, topics: [...order(q), ...d.topics.filter(t => t.status !== 'queued')] };
     });
   }
@@ -790,6 +836,26 @@ export default function Pipeline() {
         </div>
       )}
 
+      {/* Live schrijf-status: meteen zichtbaar of er iets in de maak is, wát er
+          in de maak is en hoe lang al. Buiten desktop-only, dus ook op mobiel.
+          Idem zoals de pauze-banner: één duidelijke melding i.p.v. losse
+          kaartjes die je mist. */}
+      {data && writing.length > 0 && (
+        <div
+          style={{
+            display: 'flex', alignItems: 'center', gap: 10, padding: '9px 20px',
+            background: 'var(--blue-bg)', borderBottom: '1px solid var(--blue-border)',
+            fontSize: 12.5, color: 'var(--blue-dark)', flexWrap: 'wrap',
+          }}
+        >
+          <span className="dot progress-pulse" style={{ background: 'var(--blue)', flexShrink: 0 }} />
+          <span style={{ fontWeight: 800 }}>Bezig met schrijven</span>
+          <span>
+            {writing.map(t => t.title).join(' · ')} — {writing.map(faseLabel).join(' · ')}
+          </span>
+        </div>
+      )}
+
       {/* ============ desktop kanban ============ */}
       <div className="desktop-only">
         <div style={{ display: 'flex', gap: 12, padding: '16px 20px 20px', alignItems: 'flex-start', overflowX: 'auto', flex: 1 }}>
@@ -887,15 +953,19 @@ export default function Pipeline() {
                 </span>
                 <div style={{ fontSize: 13, fontWeight: 700 }}>De wachtrij is leeg</div>
                 <div style={{ fontSize: 12, color: 'var(--gray)', lineHeight: 1.5 }}>
-                  De AI heeft niets te doen. Typ een onderwerp bovenaan of plak een lijst.
+                  {writing.length > 0
+                    ? 'Alle onderwerpen zijn al in de maak.'
+                    : 'De AI heeft niets te doen. Typ een onderwerp bovenaan of plak een lijst.'}
                 </div>
-                <button
-                  className="btn-primary"
-                  style={{ fontSize: 12.5, padding: '8px 14px' }}
-                  onClick={() => setBulkOpen(true)}
-                >
-                  Onderwerp toevoegen
-                </button>
+                {writing.length === 0 && (
+                  <button
+                    className="btn-primary"
+                    style={{ fontSize: 12.5, padding: '8px 14px' }}
+                    onClick={() => setBulkOpen(true)}
+                  >
+                    Onderwerp toevoegen
+                  </button>
+                )}
               </div>
             )}
           </Column>
@@ -932,34 +1002,51 @@ export default function Pipeline() {
                 </div>
               );
             })}
-            {writing.map(t => (
-              <div key={t.id} className="card" style={{ padding: 12 }}>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-                  <div style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 600, lineHeight: 1.35 }}>
-                    {t.type === 'lijst' && <><ListBadge />{' '}</>}
-                    {t.title}
-                  </div>
-                  <span
-                    style={{ cursor: 'pointer', fontSize: 12, color: 'var(--gray)', flexShrink: 0 }}
-                    title="Annuleren"
-                    onClick={() => cancelWriting(t)}
-                  >
-                    ✕
-                  </span>
-                </div>
-                <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <div style={{ height: 4, background: '#eceae5', borderRadius: 2, overflow: 'hidden' }}>
-                    <div className="progress-pulse" style={{ width: '62%', height: '100%', background: 'var(--blue)', borderRadius: 2 }} />
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, color: 'var(--gray)' }}>
-                    <span style={{ fontWeight: 600, color: 'var(--blue-dark)' }}>
-                      {t.type === 'lijst' ? listProgress(t) : 'Research → schrijven → SEO…'}
+            {writing.map(t => {
+              const isLijst = t.type === 'lijst';
+              const label = isLijst ? (listProgress(t) || faseLabel(t)) : faseLabel(t);
+              // Halverwege de pipeline maar met een fout (bv. een verlopen
+              // lease of een infra-probleem) staat het onderwerp klaar om
+              // hervat te worden, niet om nep-voortgang te tonen.
+              const stuck = !!t.error;
+              // Pauze is accountbreed (Tavily/Claude-tegoed): óók de actieve
+              // onderwerpen liggen stil tot de pauze verloopt.
+              const paused = !!data?.queuePause;
+              return (
+                <div key={t.id} className="card" style={{ padding: 12 }}>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                    <div style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 600, lineHeight: 1.35 }}>
+                      {isLijst && <><ListBadge />{' '}</>}
+                      {t.title}
+                    </div>
+                    <span
+                      style={{ cursor: 'pointer', fontSize: 12, color: 'var(--gray)', flexShrink: 0 }}
+                      title="Annuleren"
+                      onClick={() => cancelWriting(t)}
+                    >
+                      ✕
                     </span>
-                    <span>{t.started_at ? `gestart ${timeLabel(t.started_at)}` : ''}</span>
+                  </div>
+                  <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {stuck || paused ? (
+                      <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--amber-dark)' }}>
+                        {stuck ? '⏸ wacht op hervatting' : '⏸ gepauzeerd'} · {label}
+                      </div>
+                    ) : (
+                      <div style={{ height: 4, background: '#eceae5', borderRadius: 2, overflow: 'hidden' }}>
+                        <div className="progress-pulse" style={{ width: '100%', height: '100%', background: 'var(--blue)', borderRadius: 2 }} />
+                      </div>
+                    )}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 11.5, color: 'var(--gray)' }}>
+                      <span style={{ fontWeight: 600, color: stuck || paused ? 'var(--amber-dark)' : 'var(--blue-dark)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {label}
+                      </span>
+                      <span style={{ flexShrink: 0 }}>{elapsedLabel(t.started_at)}</span>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
             {writing.length === 0 && (
               <div style={{ fontSize: 11.5, color: 'var(--muted)', textAlign: 'center', padding: '14px 6px' }}>
                 nu geen artikel in de maak
@@ -1323,8 +1410,11 @@ function MobileHome({
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 13.5, fontWeight: 600, lineHeight: 1.35 }}>{t.title}</div>
               <div style={{ fontSize: 11, fontWeight: 700, color: t.status === 'review' ? 'var(--amber-dark)' : 'var(--blue-dark)', marginTop: 3 }}>
-                {t.status === 'review' ? 'Itemcontrole nodig — doe je op desktop' : 'Wordt geschreven…'}
+                {t.status === 'review'
+                  ? 'Itemcontrole nodig — doe je op desktop'
+                  : `${faseLabel(t)}${t.error ? ' · ⏸ wacht op hervatting' : ''}`}
               </div>
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>{elapsedLabel(t.started_at)}</div>
             </div>
             <span className="dot" style={{ background: t.status === 'review' ? 'var(--amber)' : 'var(--blue)' }} />
           </div>
