@@ -1,97 +1,43 @@
-# Briefing: visualisatie "NOW OS" — agentic OS voor Amsterdam NOW
+# NOW OS — omschrijving voor een visual
 
-Deze briefing is bedoeld om letterlijk in een beeldmodel (ChatGPT/Gemini) te plakken. Volg de specificatie exact; verzin geen extra lagen, agents of labels.
+Plak dit in ChatGPT, Gemini of een ander beeldmodel. Het beschrijft **wat het systeem is**; hoe je het verbeeldt, is aan jou. Kies zelf de metafoor, de compositie en de stijl die het verhaal het beste vertelt.
 
-## 1. Context (één alinea)
+---
 
-De AmsterdamNOW artikel-tool is nu een redactionele pipeline-app: onderwerpen komen binnen, worden onderzocht, geschreven, van beeld voorzien en gepubliceerd naar WordPress en Instagram, zichtbaar op een kanban-bord. De volgende stap is **NOW OS**: dezelfde redactie, maar als agentic besturingssysteem — negen gespecialiseerde AI-agents die via een event-bus samenwerken, met per agent een instelbaar autonomieniveau, een gedeeld geheugen van de stad, een register van koppelingen en één Mission Control-dashboard erboven. De visual moet die evolutie van "tool" naar "OS" in één oogopslag overbrengen, in de nuchtere krantenhuisstijl van Amsterdam NOW.
+## Wat is NOW OS?
 
-## 2. Hoofdvisual: gelaagd architectuurdiagram
+Amsterdam NOW is een online stadsmagazine over Amsterdam: restaurants, events, buurten, stadsleven. De redactie draait nu op een slimme pipeline-tool die artikelen schrijft en publiceert. De volgende stap heet **NOW OS**: die tool groeit uit tot een volwaardig agentic besturingssysteem — een digitale redactie die grotendeels zelfstandig draait, terwijl de hoofdredacteur (één mens) de regie houdt.
 
-Eén liggend diagram (16:9) van zes horizontale lagen, gestapeld van onder (fundament) naar boven (bediening). Elke laag is een volle-breedte band met linksboven een klein laagnummer + laagnaam in kapitalen. Tussen de lagen dunne scheidingslijnen, krantachtig. Titel bovenaan: **"NOW OS"** groot, met eronder klein: *"Het agentic besturingssysteem van Amsterdam NOW"*.
+Stel je een redactielokaal voor waarin negen AI-collega's samenwerken, elk met een eigen vak:
 
-Volgorde van onder naar boven (teken ze precies zo, met deze letterlijke Nederlandse labels):
+- **Scout** struint agenda's en bronnen af en ontdekt wat er in de stad gebeurt.
+- **Researcher** duikt in een onderwerp en verzamelt de feiten.
+- **Schrijver** maakt er een artikel van.
+- **Beeldredacteur** zoekt en kiest de foto's.
+- **Stijlcurator** bewaakt de toon en de schrijfkwaliteit.
+- **Auditor** controleert of alles klopt voordat het naar buiten gaat.
+- **Publisher** zet het artikel live op de website.
+- **Socials-agent** maakt er Instagram-carousels van.
+- **SEO-agent** zorgt dat het gevonden wordt.
 
-**Laag 1 — KERNEL / AGENT-RUNTIME** (onderste, breedste band)
-Negen gelijkvormige blokjes op een rij, elk met naam + minimaal lijn-icoon:
-`Scout` · `Researcher` · `Schrijver` · `Beeldredacteur` · `Stijlcurator` · `Auditor` · `Publisher` · `Socials-agent` · `SEO-agent`
+Ze werken niet in een vaste lopende band, maar reageren op elkaar via **gebeurtenissen**: zodra de Scout iets vindt, pakt de Researcher het op; zodra een artikel af is, gaan Beeldredacteur en SEO-agent aan de slag. Het werk stroomt door het systeem zoals nieuws door een redactie stroomt.
 
-**Laag 2 — EVENT-BUS & WERKGRAAF**
-Eén horizontale dikke lijn ("de bus") waarop vijf event-labels als kleine kaartjes staan, verbonden met pijlen van links naar rechts:
-`topic.created` → `article.drafted` → `images.ready` → `published` → `social.published`
-Rechts in deze band een klein kanban-icoontje met het label `Kanban blijft als view`. Verticale dunne pijlen omlaag naar de agents in laag 1 (agents abonneren zich op events) — teken er 3 à 4, niet allemaal.
+Het belangrijkste principe is **vertrouwen in stappen**: elke agent heeft een instelbaar autonomieniveau. Sommige mogen alleen voorstellen doen, andere mogen handelen na een akkoord, en wie zich bewezen heeft mag volledig autonoom werken. Alles wat gevoelig is — publiceren bijvoorbeeld — komt langs een goedkeuringen-inbox van de hoofdredacteur. Die kan per agent de teugels vieren of aanhalen.
 
-**Laag 3 — MANDAATMODEL**
-Drie stappen als oplopende schuifjes/segmenten met labels: `Voorstellen` → `Na goedkeuring` → `Autonoom`. Rechts ernaast een inbox-icoon met label `Goedkeuringen-inbox`. Onderschrift in de band: *"Per agent instelbaar autonomieniveau"*.
+Daaronder ligt een **gedeeld geheugen van de stad**: alle venues, events en buurten die de redactie ooit beschreef, plus wat wél en niet werkte. Elke agent put eruit en voegt eraan toe — het systeem wordt slimmer met elk artikel.
 
-**Laag 4 — GEHEUGEN & KENNISLAAG**
-Drie blokken: `Entiteiten (venues · events · buurten)` · `Stijlgeheugen` · `Dedup`. Teken dit als een lade/archief-metafoor (kaartenbak), passend bij print.
+Naar buiten toe verbindt het OS zich via **koppelingen**: WordPress, Instagram, research-diensten, AI-modellen — en dat rijtje is uitbreidbaar (nieuwsbrief, andere platforms).
 
-**Laag 5 — CONNECTORREGISTER**
-Vier stekker-blokjes op een rij: `WordPress` · `Instagram / socials-engine` · `Tavily (research)` · `Modelproviders (Claude · Omniroute)`. Rechts een leeg gestippeld blokje met een `+` en het label `Uitbreidbaar`.
+Boven alles zweeft **Mission Control**: één scherm waarop de hoofdredacteur ziet wat elke agent nú doet, wat het kost, wat er klaarstaat ter goedkeuring en of alle verbindingen gezond zijn. Van daaruit bestuur je de hele digitale redactie.
 
-**Laag 6 — CONTROL PLANE** (bovenste band)
-Vier blokken: `Mission Control` (dashboard-icoon) · `Agent-instellingen` · `Observability` · `Scheduler` (klok-icoon). Deze band mag iets donkerder/inkt-gevuld zijn dan de rest, als "cockpit".
+## Het gevoel dat de visual moet overbrengen
 
-**Pijlen/stromen over lagen heen (exact deze drie, meer niet):**
-1. Eén doorlopende verticale pijl links langs het hele diagram, van laag 6 omlaag naar laag 1, label: `stuurt & bewaakt`.
-2. Eén verticale pijl van laag 1 omhoog naar laag 2, label: `agents publiceren events`.
-3. Eén pijl van laag 5 zijwaarts de rand van het beeld uit (naar rechts), label: `naar buitenwereld`.
+- Van *tool* naar *organisme*: niet één machine die stappen afwerkt, maar een samenwerkende redactie die zelfstandig ademt — met één mens duidelijk aan het stuur.
+- Nuchter en redactioneel, geen sci-fi. Amsterdam NOW voelt als een goed gemaakte krant: warm papier, inkt, vakmanschap. (Huisstijl ter inspiratie, geen verplichting: gebroken wit `#e9e8e4`, donkere inkt, spaarzaam rood/groen/amber, strakke grotesque-typografie.)
+- Amsterdam mag voelbaar zijn: de stad is de grondstof waar dit systeem op draait.
 
-## 3. Tweede visual (optioneel): de reis van één onderwerp
+## Praktisch
 
-Horizontaal journey-diagram, zelfde stijl, zes stations op één lijn van links naar rechts, elk station = agent-blokje boven de lijn + event-label onder de lijn:
-
-1. `Scout` vindt onderwerp → event `topic.created`
-2. `Researcher` verrijkt met bronnen (klein Tavily-tandwiel)
-3. `Schrijver` + `Stijlcurator` maken het artikel → `article.drafted`
-4. `Beeldredacteur` levert beeld → `images.ready`
-5. `Auditor` keurt; hier een klein pauze-symbool met label `Goedkeuring (mandaat)` — de enige onderbreking op de lijn
-6. `Publisher` → WordPress (`published`), gevolgd door `Socials-agent` → Instagram (`social.published`)
-
-Eindpunt rechts: een klein krantje + Instagram-post naast elkaar. Titel: *"Van signaal tot post — één onderwerp door NOW OS"*.
-
-## 4. Stijlrichtlijnen (huisstijl, verplicht)
-
-1. Achtergrond: warm papier `#e9e8e4`, vlak, eventueel héél subtiele papierstructuur.
-2. Inkt: bijna-zwart `#1a1a1a` voor lijnen, tekst en iconen.
-3. Accenten spáárzaam: rood (events/bus mag rood), groen (goedkeuring/`Autonoom`), amber (wacht-op-goedkeuring). Nergens meer dan ±10% van het beeld gekleurd.
-4. Typografie: **Archivo** of vergelijkbare grotesque; laagnamen in kapitalen, labels letterlijk overnemen in het Nederlands.
-5. Vormtaal: platte vlakken, dunne lijnen (1–2 pt), rechte hoeken of minimale afronding, lijn-iconen. Denk krantenkatern/printontwerp, redactioneel en nuchter.
-6. Verboden: 3D, gradients, schaduwen, glow, stockfoto-stijl, robotjes/mascottes, Engelse laagnamen, glassmorphism.
-
-## 5. Formaat
-
-- Liggend **16:9** (bv. 1920×1080).
-- Kleinste tekst nog leesbaar op laptopscherm; labels niet afbreken.
-- Ruime marges rondom; het diagram vult het beeld, geen decoratieve opvulling.
-
-## 6. Kant-en-klaar prompt-blok (plak dit in het beeldmodel)
-
-```
-Create a flat, editorial, newspaper-style layered architecture infographic, landscape 16:9.
-
-Title top: "NOW OS", subtitle "Het agentic besturingssysteem van Amsterdam NOW".
-
-STYLE: warm paper background #e9e8e4; near-black ink #1a1a1a for all lines, text and icons; sparse accent colors only (red for the event bus, green for approval/autonomy, amber for pending approval), max ~10% of the image colored. Typeface: Archivo or a similar grotesque sans; layer names in caps. Flat shapes, thin 1-2pt lines, line icons, square corners. Dutch newspaper print design: sober, editorial. NO 3D, NO gradients, NO shadows, NO glow, NO stock-photo look, NO robots or mascots.
-
-DIAGRAM: six full-width horizontal layers stacked bottom (foundation) to top (control), thin rules between them, each with a small layer number + name top-left. Keep ALL labels exactly in Dutch as written:
-
-Layer 1 (bottom) "KERNEL / AGENT-RUNTIME": nine equal blocks in a row, each with a small line icon: Scout, Researcher, Schrijver, Beeldredacteur, Stijlcurator, Auditor, Publisher, Socials-agent, SEO-agent.
-
-Layer 2 "EVENT-BUS & WERKGRAAF": one thick horizontal bus line (red accent) with five small event cards connected left-to-right by arrows: topic.created -> article.drafted -> images.ready -> published -> social.published. At the right a small kanban icon labeled "Kanban blijft als view". Three or four thin vertical arrows down to the agents.
-
-Layer 3 "MANDAATMODEL": three ascending segments labeled Voorstellen -> Na goedkeuring -> Autonoom (green on "Autonoom"), plus an inbox icon labeled "Goedkeuringen-inbox". Caption: "Per agent instelbaar autonomieniveau".
-
-Layer 4 "GEHEUGEN & KENNISLAAG": three blocks drawn as a card-index/archive drawer: "Entiteiten (venues · events · buurten)", "Stijlgeheugen", "Dedup".
-
-Layer 5 "CONNECTORREGISTER": four plug-style blocks: WordPress, Instagram / socials-engine, Tavily (research), Modelproviders (Claude · Omniroute); plus one dotted empty block with "+" labeled "Uitbreidbaar".
-
-Layer 6 (top) "CONTROL PLANE", slightly ink-filled/darker band: Mission Control (dashboard icon), Agent-instellingen, Observability, Scheduler (clock icon).
-
-Exactly three cross-layer arrows, no more: (1) one vertical arrow on the far left from layer 6 down to layer 1 labeled "stuurt & bewaakt"; (2) one vertical arrow from layer 1 up to layer 2 labeled "agents publiceren events"; (3) one arrow from layer 5 exiting the right edge labeled "naar buitenwereld".
-
-All text large enough to stay readable on a laptop screen; generous margins; no decorative filler.
-```
-
-*(Voor de optionele tweede visual: zelfde stijlblok hergebruiken en het diagram uit §3 beschrijven als "horizontal journey diagram with six stations".)*
+- Liggend formaat (16:9), tekst leesbaar op een scherm.
+- Nederlandse labels waar je labels gebruikt.
+- Verder: verras me.
