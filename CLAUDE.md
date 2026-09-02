@@ -46,3 +46,10 @@ way that would have deleted an already-shipped feature. Don't repeat this:
   merge (e.g. it's missing a feature that's already on `main`) will look
   like it "deletes" that feature in the diff — that's staleness, not
   intentional removal. Rebase onto current `main` before merging.
+
+## Werkingskaart: `docs/SYSTEM.md`
+
+1. Lees `docs/SYSTEM.md` als eerste bij elke taak, vóór PROGRESS.md en vóór je code opent. Verkennen van de codebase alleen als SYSTEM.md de vraag niet beantwoordt; dat is dan een signaal dat SYSTEM.md moet worden aangevuld.
+2. Elke PR die een onderdeel, datastroom, sleutelbestand, omgeving, cron of valkuil toevoegt, wijzigt of verwijdert, werkt `docs/SYSTEM.md` in dezelfde PR bij. Niet bijgewerkt = PR niet af (zelfde regel als PROGRESS.md).
+3. Max ±120 regels: verwijs naar detaildocs, kopieer ze niet. Datum en commit bovenaan bijwerken.
+4. Poort: `scripts/check-system-md.sh` (elk `pad` in SYSTEM.md moet bestaan) draait mee in de verificatiepoort.
